@@ -39,6 +39,18 @@ exactly how you work.
   match highlighting and next/previous navigation.
 - **Themes** — 22 built-in schemes with full per-color overrides.
 
+## Install
+
+On macOS, install with Homebrew:
+
+```sh
+brew install --cask wess/packages/prompt
+```
+
+Or grab the latest `Prompt.dmg` from the
+[releases page](https://github.com/wess/prompt/releases) and drag it to
+Applications.
+
 ## Get started
 
 Build and launch from source:
@@ -50,6 +62,16 @@ cargo run -p app --release
 
 That's it — Prompt opens with sensible defaults. On first run it looks for a
 config file (see below); if there isn't one, it uses built-in defaults.
+
+To build a distributable macOS app yourself:
+
+```sh
+scripts/bundle.sh   # cargo build --release + assemble dist/Prompt.app
+scripts/dmg.sh      # package dist/Prompt.dmg
+```
+
+See [`docs/release.md`](docs/release.md) for signing, notarization, and how
+tagged releases are cut.
 
 ## Configure
 
@@ -131,6 +153,7 @@ Override any color in config (`background`, `foreground`,
 
 - [`docs/roadmap.md`](docs/roadmap.md) — what's built and what's planned.
 - [`docs/parity.md`](docs/parity.md) — feature coverage and known gaps.
+- [`docs/release.md`](docs/release.md) — how releases are built and shipped.
 
 ## License
 
