@@ -1,0 +1,21 @@
+[package]
+name = "app"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "prompt"
+path = "src/main.rs"
+
+[dependencies]
+config = { path = "../config" }
+futures = "0.3"
+gpui = { git = "https://github.com/zed-industries/zed", rev = "96285fc1" }
+gpui_platform = { git = "https://github.com/zed-industries/zed", rev = "96285fc1", features = ["font-kit", "wayland", "x11"] }
+input = { path = "../input" }
+pty = { path = "../pty" }
+terminal = { path = "../terminal" }
+theme = { path = "../theme" }
+vt = { path = "../vt" }
+workspace = { path = "../workspace" }

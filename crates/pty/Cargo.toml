@@ -1,0 +1,8 @@
+[package]
+name = "pty"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+rustix = { version = "0.38", features = ["pty", "process", "termios", "fs", "event", "stdio"] }
