@@ -38,6 +38,13 @@ exactly how you work.
 - **Search** — ⌘F opens an incremental search across scrollback with live
   match highlighting and next/previous navigation.
 - **Themes** — 22 built-in schemes with full per-color overrides.
+- **Plugins** — load `plugin.toml` manifests from your config directory to add
+  command actions and default keybindings.
+- **Macros** — record the commands you type, name them, and replay them with a
+  keybinding; replay paces itself off shell-integration prompt marks.
+- **MCP server** — `prompt mcp` exposes the running terminal to Model Context
+  Protocol clients (Claude Desktop, Claude Code) so an agent can run commands,
+  read the screen, replay macros, and switch tabs.
 
 ## Install
 
@@ -113,11 +120,81 @@ keybind = ctrl+shift+page_up=scroll_page_up
 Mistakes are reported as friendly diagnostics on launch — a bad line never
 stops the rest of your config from loading.
 
+## Plugins
+
+Prompt loads plugins from `~/.config/prompt/plugins/*/plugin.toml` (or
+`$XDG_CONFIG_HOME/prompt/plugins/*/plugin.toml`). You can also point at a
+plugin directory or manifest directly:
+
+```ini
+plugin = ~/dev/prompttools
+keybind = cmd+shift+l=plugin_command:tools/logs
+```
+
+A plugin manifest contributes commands:
+
+```toml
+id = "tools"
+name = "Tools"
+version = "0.1.0"
+
+[[command]]
+id = "logs"
+title = "Tail logs"
+run = "tail -f /tmp/app.log"
+mode = "split-right"
+keybind = "cmd+shift+l"
+```
+
+Command modes are `pane`, `tab`, `split-right`, and `split-down`. A plugin
+keybinding is just a default; your config can override it or unbind it.
+
+## Macros
+
+Record a sequence of commands and replay it later. Bind `macro_record` to a
+key, trigger it to start recording, type your commands at the shell, then
+trigger it again to stop — a small window asks you to name the macro. A
+floating pill (red ● REC while recording, blue ▶ REPLAY while replaying) shows
+the current state. Replay it by binding the `macro:<name>` action:
+
+```ini
+keybind = cmd+shift+r=macro_record
+keybind = cmd+shift+1=macro:deploy
+```
+
+Macros are stored as plain text under `~/.config/prompt/macros/<name>.macro`
+(one command per line, `#` comments allowed), so you can edit, rename, or
+version-control them by hand. Names use lowercase letters, digits, `.`, or
+`-`. Replay sends one command per line and, when your shell emits OSC 133
+prompt marks (shell integration), waits for each command to finish before
+sending the next; without shell integration it uses a short fixed delay.
+
+## MCP server
+
+`prompt mcp` runs a [Model Context Protocol](https://modelcontextprotocol.io)
+server over stdio that bridges to the already-running Prompt instance. Point an
+MCP client at it — for Claude Desktop, in `claude_desktop_config.json`:
+
+```json
+{
+  "mcpServers": {
+    "prompt": { "command": "prompt", "args": ["mcp"] }
+  }
+}
+```
+
+Tools exposed: `run_command` (into the focused pane, a new tab, or a split),
+`read_screen`, `list_macros`, `run_macro`, `list_tabs`, and `focus_tab`. The
+`prompt mcp` process is a thin stdio bridge; the live terminal window does the
+work, reached over the same per-user socket used for `--toggle-quick`.
+
 ## Default keys
 
 | Keys | Action |
 |------|--------|
-| ⌘T / ⌘W | New tab / close pane |
+| ⌘N / ⌘T | New window / new tab |
+| ⌘W | Close pane |
+| ⌘⌥W / ⌘⇧W / ⌘⌥⇧W | Close tab / window / all windows |
 | ⌘1…⌘9 | Go to tab |
 | ⌘⇧[ / ⌘⇧] | Previous / next tab |
 | ⌘D / ⌘⇧D | Split right / down |

@@ -92,6 +92,7 @@ confirm-close-surface = false
 mouse-hide-while-typing = true
 palette = 0=#1d1f21
 palette = 1=#cc6666
+plugin = ~/.config/prompt/plugins/tools
 keybind = ctrl+shift+c=copy_to_clipboard
 keybind = ctrl+shift+v=paste_from_clipboard
 "#;
@@ -116,11 +117,9 @@ keybind = ctrl+shift+v=paste_from_clipboard
         assert!(o.mouse_hide_while_typing);
         assert_eq!(
             o.palette,
-            vec![
-                (0, "#1d1f21".to_string()),
-                (1, "#cc6666".to_string()),
-            ]
+            vec![(0, "#1d1f21".to_string()), (1, "#cc6666".to_string()),]
         );
+        assert_eq!(o.plugin, vec!["~/.config/prompt/plugins/tools".to_string()]);
         assert_eq!(
             o.keybind,
             vec![
@@ -152,6 +151,7 @@ keybind = ctrl+shift+v=paste_from_clipboard
                    command = /bin/fish\ncommand = \n\
                    copy-on-select = true\ncopy-on-select =\n\
                    palette = 0=#000000\npalette =\n\
+                   plugin = /tmp/plugin\nplugin =\n\
                    keybind = a=b\nkeybind =\n";
         let (o, diags) = parse_str(src);
         assert!(diags.is_empty(), "{diags:?}");

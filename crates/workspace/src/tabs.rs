@@ -7,11 +7,17 @@ use crate::tree::PaneTree;
 pub struct Tab {
     pub tree: PaneTree,
     pub focused: PaneId,
+    /// User-set tab label; overrides the focused pane's title when present.
+    pub title: Option<String>,
 }
 
 impl Tab {
     pub fn new(root: PaneId) -> Self {
-        Self { tree: PaneTree::new(root), focused: root }
+        Self {
+            tree: PaneTree::new(root),
+            focused: root,
+            title: None,
+        }
     }
 }
 
@@ -24,7 +30,10 @@ pub struct Tabs {
 
 impl Tabs {
     pub fn new(root: PaneId) -> Self {
-        Self { tabs: vec![Tab::new(root)], active: 0 }
+        Self {
+            tabs: vec![Tab::new(root)],
+            active: 0,
+        }
     }
 
     pub fn len(&self) -> usize {
@@ -123,6 +132,18 @@ impl Tabs {
     /// The focused pane of the active tab.
     pub fn focused(&self) -> PaneId {
         self.active().focused
+    }
+
+    /// Override the label of the tab at `index` (empty/None reverts to the
+    /// focused pane's title). `false` if `index` is out of range.
+    pub fn set_title(&mut self, index: usize, title: Option<String>) -> bool {
+        match self.tabs.get_mut(index) {
+            Some(tab) => {
+                tab.title = title;
+                true
+            }
+            None => false,
+        }
     }
 }
 
@@ -233,7 +254,10 @@ mod tests {
     fn focus_only_panes_in_active_tab() {
         let p = ids(3);
         let mut tabs = Tabs::new(p[0]);
-        tabs.active_mut().tree.split(p[0], Axis::Horizontal, p[1], false).unwrap();
+        tabs.active_mut()
+            .tree
+            .split(p[0], Axis::Horizontal, p[1], false)
+            .unwrap();
         assert!(tabs.focus(p[1]));
         assert_eq!(tabs.focused(), p[1]);
         assert!(!tabs.focus(p[2]));

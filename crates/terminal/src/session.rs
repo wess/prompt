@@ -55,12 +55,14 @@ impl Session {
         let wakeup_pending = Arc::new(AtomicBool::new(false));
         let (events, receiver) = mpsc::channel();
 
-        let reader = thread::Builder::new().name("ptyreader".to_string()).spawn({
-            let pty = Arc::clone(&pty);
-            let term = Arc::clone(&term);
-            let pending = Arc::clone(&wakeup_pending);
-            move || read_loop(output, replies, pty, term, pending, events)
-        })?;
+        let reader = thread::Builder::new()
+            .name("ptyreader".to_string())
+            .spawn({
+                let pty = Arc::clone(&pty);
+                let term = Arc::clone(&term);
+                let pending = Arc::clone(&wakeup_pending);
+                move || read_loop(output, replies, pty, term, pending, events)
+            })?;
 
         Ok((
             Session {
@@ -182,7 +184,10 @@ fn apply_chunk(
         let _ = events.send(Event::Bell);
     }
     if let Some(clip) = clipboard {
-        let _ = events.send(Event::Clipboard { kind: clip.kind, data: clip.data });
+        let _ = events.send(Event::Clipboard {
+            kind: clip.kind,
+            data: clip.data,
+        });
     }
     // Coalesce: queue a Wakeup only when none is pending; the embedder
     // re-arms via with_term/clear_wakeup.
@@ -229,8 +234,7 @@ mod tests {
 
     #[test]
     fn exit_event_carries_exit_code() {
-        let (_session, rx) =
-            Session::spawn(command(&["/bin/sh", "-c", "exit 7"])).expect("spawn");
+        let (_session, rx) = Session::spawn(command(&["/bin/sh", "-c", "exit 7"])).expect("spawn");
         let (_, code) = drain_until_exit(&rx);
         assert_eq!(code, Some(7));
     }
@@ -248,12 +252,9 @@ mod tests {
     fn wakeup_is_coalesced_until_term_access() {
         // Two output bursts, but the embedder never observes the terminal,
         // so exactly one Wakeup may be queued.
-        let (_session, rx) = Session::spawn(command(&[
-            "/bin/sh",
-            "-c",
-            "printf a; sleep 1; printf b",
-        ]))
-        .expect("spawn");
+        let (_session, rx) =
+            Session::spawn(command(&["/bin/sh", "-c", "printf a; sleep 1; printf b"]))
+                .expect("spawn");
         let (seen, _) = drain_until_exit(&rx);
         let wakeups = seen.iter().filter(|e| **e == Event::Wakeup).count();
         assert_eq!(wakeups, 1, "events: {seen:?}");
@@ -268,12 +269,14 @@ mod tests {
         ]))
         .expect("spawn");
         assert_eq!(
-            rx.recv_timeout(Duration::from_secs(10)).expect("first wakeup"),
+            rx.recv_timeout(Duration::from_secs(10))
+                .expect("first wakeup"),
             Event::Wakeup
         );
         session.with_term(|_| ()); // re-arms the pending flag
         assert_eq!(
-            rx.recv_timeout(Duration::from_secs(10)).expect("second wakeup"),
+            rx.recv_timeout(Duration::from_secs(10))
+                .expect("second wakeup"),
             Event::Wakeup
         );
     }
@@ -297,12 +300,9 @@ mod tests {
     #[test]
     fn osc52_surfaces_clipboard_event() {
         // base64("hi") = "aGk="
-        let (_session, rx) = Session::spawn(command(&[
-            "/bin/sh",
-            "-c",
-            "printf '\\033]52;c;aGk=\\007'",
-        ]))
-        .expect("spawn");
+        let (_session, rx) =
+            Session::spawn(command(&["/bin/sh", "-c", "printf '\\033]52;c;aGk=\\007'"]))
+                .expect("spawn");
         let (seen, _) = drain_until_exit(&rx);
         assert!(
             seen.contains(&Event::Clipboard {
@@ -324,8 +324,7 @@ mod tests {
 
     #[test]
     fn shutdown_kills_and_reports_exit() {
-        let (session, rx) =
-            Session::spawn(command(&["/bin/sh", "-c", "sleep 30"])).expect("spawn");
+        let (session, rx) = Session::spawn(command(&["/bin/sh", "-c", "sleep 30"])).expect("spawn");
         session.shutdown();
         let (_, code) = drain_until_exit(&rx);
         assert_eq!(code, None); // killed by signal, no exit code

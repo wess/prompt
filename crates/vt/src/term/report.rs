@@ -28,7 +28,12 @@ pub struct Clipboard {
 /// replication (0xAB -> 0xABAB), matching xterm's query answers.
 pub fn format_rgb(rgb: (u8, u8, u8)) -> String {
     let wide = |c: u8| (c as u16) * 0x101;
-    format!("rgb:{:04x}/{:04x}/{:04x}", wide(rgb.0), wide(rgb.1), wide(rgb.2))
+    format!(
+        "rgb:{:04x}/{:04x}/{:04x}",
+        wide(rgb.0),
+        wide(rgb.1),
+        wide(rgb.2)
+    )
 }
 
 /// Decode standard base64 (RFC 4648, no line breaks). Whitespace is
@@ -56,8 +61,7 @@ pub fn base64_decode(input: &[u8]) -> Option<Vec<u8>> {
 /// Encode bytes as standard base64 with padding. Used to answer OSC 52
 /// clipboard queries.
 pub fn base64_encode(input: &[u8]) -> String {
-    const ALPHABET: &[u8; 64] =
-        b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let mut out = String::with_capacity(input.len().div_ceil(3) * 4);
     for chunk in input.chunks(3) {
         let b0 = chunk[0] as u32;
@@ -128,7 +132,16 @@ mod tests {
 
     #[test]
     fn base64_roundtrips() {
-        for s in ["", "f", "fo", "foo", "foob", "fooba", "foobar", "hello, world"] {
+        for s in [
+            "",
+            "f",
+            "fo",
+            "foo",
+            "foob",
+            "fooba",
+            "foobar",
+            "hello, world",
+        ] {
             let enc = base64_encode(s.as_bytes());
             assert_eq!(base64_decode(enc.as_bytes()).unwrap(), s.as_bytes(), "{s}");
         }

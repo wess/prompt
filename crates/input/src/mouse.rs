@@ -77,7 +77,11 @@ pub fn encode_mouse(
     let motion = if action == MouseAction::Motion { 32 } else { 0 };
     let code = base_code(button) + motion + mod_bits(mods);
     if sgr {
-        let fin = if action == MouseAction::Release { 'm' } else { 'M' };
+        let fin = if action == MouseAction::Release {
+            'm'
+        } else {
+            'M'
+        };
         return Some(format!("\x1b[<{code};{col};{row}{fin}").into_bytes());
     }
     let code = if action == MouseAction::Release {
@@ -87,7 +91,14 @@ pub fn encode_mouse(
     };
     let col = col.clamp(1, LEGACY_MAX) as u8;
     let row = row.clamp(1, LEGACY_MAX) as u8;
-    Some(vec![csi::ESC, b'[', b'M', 32 + code as u8, 32 + col, 32 + row])
+    Some(vec![
+        csi::ESC,
+        b'[',
+        b'M',
+        32 + code as u8,
+        32 + col,
+        32 + row,
+    ])
 }
 
 /// Alternate-scroll (mode 1007) in the alt screen: a wheel tick becomes
@@ -114,7 +125,10 @@ mod tests {
         ctrl: false,
         cmd: false,
     };
-    const SHIFT: Mods = Mods { shift: true, ..NONE };
+    const SHIFT: Mods = Mods {
+        shift: true,
+        ..NONE
+    };
     const ALT: Mods = Mods { alt: true, ..NONE };
     const CTRL: Mods = Mods { ctrl: true, ..NONE };
     const ALL: Mods = Mods {

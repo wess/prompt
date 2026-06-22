@@ -63,11 +63,23 @@ fn csi_u(codepoint: u32, mods: Mods) -> Vec<u8> {
 mod tests {
     use super::*;
 
-    const NONE: Mods = Mods { shift: false, alt: false, ctrl: false, cmd: false };
-    const SHIFT: Mods = Mods { shift: true, ..NONE };
+    const NONE: Mods = Mods {
+        shift: false,
+        alt: false,
+        ctrl: false,
+        cmd: false,
+    };
+    const SHIFT: Mods = Mods {
+        shift: true,
+        ..NONE
+    };
     const CTRL: Mods = Mods { ctrl: true, ..NONE };
     const ALT: Mods = Mods { alt: true, ..NONE };
-    const CTRL_SHIFT: Mods = Mods { ctrl: true, shift: true, ..NONE };
+    const CTRL_SHIFT: Mods = Mods {
+        ctrl: true,
+        shift: true,
+        ..NONE
+    };
 
     const DIS: u8 = kitty_flags::DISAMBIGUATE;
     const ALL: u8 = kitty_flags::REPORT_ALL_KEYS_AS_ESCAPE_CODES;

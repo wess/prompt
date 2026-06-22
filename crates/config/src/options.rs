@@ -166,6 +166,8 @@ pub struct Options {
     pub mouse_hide_while_typing: bool,
     /// File key: `palette`, repeated `N=#rrggbb` entries (accumulated).
     pub palette: Vec<(u8, String)>,
+    /// File key: `plugin`, repeated plugin directories or manifest paths.
+    pub plugin: Vec<String>,
     /// File key: `keybind`, raw strings (accumulated, parsed later).
     pub keybind: Vec<String>,
 }
@@ -176,7 +178,10 @@ pub const DEFAULT_FONT: &str = "Menlo";
 impl Options {
     /// The primary font family (first configured, else the built-in default).
     pub fn primary_font(&self) -> &str {
-        self.font_family.first().map(String::as_str).unwrap_or(DEFAULT_FONT)
+        self.font_family
+            .first()
+            .map(String::as_str)
+            .unwrap_or(DEFAULT_FONT)
     }
 
     /// Fallback families after the primary, in order.
@@ -225,6 +230,7 @@ impl Default for Options {
             confirm_close_surface: true,
             mouse_hide_while_typing: false,
             palette: Vec::new(),
+            plugin: Vec::new(),
             keybind: Vec::new(),
         }
     }
@@ -256,6 +262,7 @@ mod tests {
         assert!(o.confirm_close_surface);
         assert!(!o.mouse_hide_while_typing);
         assert!(o.palette.is_empty());
+        assert!(o.plugin.is_empty());
         assert!(o.keybind.is_empty());
         assert_eq!(o.font_style, FontStyle::Normal);
         assert!(o.font_feature.is_empty());
@@ -283,10 +290,7 @@ mod tests {
         assert_eq!(FontStyle::parse("normal"), Some(FontStyle::Normal));
         assert_eq!(FontStyle::parse("Bold"), Some(FontStyle::Bold));
         assert_eq!(FontStyle::parse("ITALIC"), Some(FontStyle::Italic));
-        assert_eq!(
-            FontStyle::parse("bold-italic"),
-            Some(FontStyle::BoldItalic)
-        );
+        assert_eq!(FontStyle::parse("bold-italic"), Some(FontStyle::BoldItalic));
         assert_eq!(FontStyle::parse("bold italic"), None);
         assert_eq!(FontStyle::parse(""), None);
     }
@@ -310,10 +314,7 @@ mod tests {
             Some(ClipboardAccess::Allow)
         );
         assert_eq!(ClipboardAccess::parse("Ask"), Some(ClipboardAccess::Ask));
-        assert_eq!(
-            ClipboardAccess::parse("DENY"),
-            Some(ClipboardAccess::Deny)
-        );
+        assert_eq!(ClipboardAccess::parse("DENY"), Some(ClipboardAccess::Deny));
         assert_eq!(ClipboardAccess::parse("never"), None);
         assert_eq!(ClipboardAccess::parse(""), None);
     }

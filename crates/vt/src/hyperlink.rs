@@ -38,7 +38,10 @@ impl Hyperlinks {
         }
         let next = u16::try_from(self.links.len() + 1).ok()?;
         let hid = HyperlinkId(NonZeroU16::new(next)?);
-        self.links.push(Hyperlink { id: key.0.clone(), uri: key.1.clone() });
+        self.links.push(Hyperlink {
+            id: key.0.clone(),
+            uri: key.1.clone(),
+        });
         self.interned.insert(key, hid);
         Some(hid)
     }

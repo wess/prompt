@@ -77,7 +77,11 @@ pub fn cell_rgb(
     match color {
         vt::Color::Default => default,
         vt::Color::Indexed(index) => {
-            let index = if brighten && index < 8 { index + 8 } else { index };
+            let index = if brighten && index < 8 {
+                index + 8
+            } else {
+                index
+            };
             match term_override(index) {
                 Some((r, g, b)) => Rgb::new(r, g, b),
                 None => palette.get(index),
@@ -137,12 +141,30 @@ mod tests {
     fn cube_and_grayscale_resolve() {
         let c = colors();
         // 16 + 36*5 + 6*0 + 0 = 196 -> pure red in the xterm cube.
-        let red = cell_rgb(vt::Color::Indexed(196), c.fg, false, &c.palette, no_override);
+        let red = cell_rgb(
+            vt::Color::Indexed(196),
+            c.fg,
+            false,
+            &c.palette,
+            no_override,
+        );
         assert_eq!(red, Rgb::new(255, 0, 0));
         // Grayscale ramp: 232 -> #080808, 255 -> #eeeeee.
-        let lo = cell_rgb(vt::Color::Indexed(232), c.fg, false, &c.palette, no_override);
+        let lo = cell_rgb(
+            vt::Color::Indexed(232),
+            c.fg,
+            false,
+            &c.palette,
+            no_override,
+        );
         assert_eq!(lo, Rgb::new(8, 8, 8));
-        let hi = cell_rgb(vt::Color::Indexed(255), c.fg, false, &c.palette, no_override);
+        let hi = cell_rgb(
+            vt::Color::Indexed(255),
+            c.fg,
+            false,
+            &c.palette,
+            no_override,
+        );
         assert_eq!(hi, Rgb::new(0xee, 0xee, 0xee));
     }
 
@@ -173,7 +195,13 @@ mod tests {
     #[test]
     fn truecolor_passes_through() {
         let c = colors();
-        let got = cell_rgb(vt::Color::Rgb(12, 34, 56), c.fg, true, &c.palette, no_override);
+        let got = cell_rgb(
+            vt::Color::Rgb(12, 34, 56),
+            c.fg,
+            true,
+            &c.palette,
+            no_override,
+        );
         assert_eq!(got, Rgb::new(12, 34, 56));
     }
 

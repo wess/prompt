@@ -167,8 +167,11 @@ mod tests {
 
     #[test]
     fn kill_terminates_child() {
-        let opts =
-            SpawnOptions::command(vec!["/bin/sh".to_string(), "-c".to_string(), "sleep 30".to_string()]);
+        let opts = SpawnOptions::command(vec![
+            "/bin/sh".to_string(),
+            "-c".to_string(),
+            "sleep 30".to_string(),
+        ]);
         let mut pty = Pty::spawn(&opts).expect("spawn sleeper");
         pty.kill().expect("kill child");
         let status = pty.wait().expect("wait killed child");

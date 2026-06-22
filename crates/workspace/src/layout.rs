@@ -36,7 +36,10 @@ impl Layout {
 
 /// Lay out `tree` inside `rect`, reserving `divider` thickness per split.
 pub fn compute_layout(tree: &PaneTree, rect: Rect, divider: f32) -> Layout {
-    let mut layout = Layout { panes: Vec::new(), dividers: Vec::new() };
+    let mut layout = Layout {
+        panes: Vec::new(),
+        dividers: Vec::new(),
+    };
     walk(tree.root(), rect, divider, &mut layout);
     layout
 }
@@ -44,7 +47,13 @@ pub fn compute_layout(tree: &PaneTree, rect: Rect, divider: f32) -> Layout {
 fn walk(node: &Node, rect: Rect, divider: f32, out: &mut Layout) {
     match node {
         Node::Leaf(pane) => out.panes.push((*pane, rect)),
-        Node::Split { id, axis, ratio, first, second } => {
+        Node::Split {
+            id,
+            axis,
+            ratio,
+            first,
+            second,
+        } => {
             let (frect, drect, srect) = match axis {
                 Axis::Horizontal => {
                     let avail = (rect.w - divider).max(0.0);
@@ -98,8 +107,14 @@ mod tests {
         let mut tree = PaneTree::new(p[0]);
         let s = tree.split(p[0], Axis::Horizontal, p[1], false).unwrap();
         let layout = compute_layout(&tree, Rect::new(0.0, 0.0, 100.0, 50.0), 4.0);
-        assert_eq!(layout.pane_rect(p[0]), Some(Rect::new(0.0, 0.0, 48.0, 50.0)));
-        assert_eq!(layout.pane_rect(p[1]), Some(Rect::new(52.0, 0.0, 48.0, 50.0)));
+        assert_eq!(
+            layout.pane_rect(p[0]),
+            Some(Rect::new(0.0, 0.0, 48.0, 50.0))
+        );
+        assert_eq!(
+            layout.pane_rect(p[1]),
+            Some(Rect::new(52.0, 0.0, 48.0, 50.0))
+        );
         assert_eq!(
             layout.dividers,
             vec![(s, Rect::new(48.0, 0.0, 4.0, 50.0), Axis::Horizontal)]
@@ -112,8 +127,14 @@ mod tests {
         let mut tree = PaneTree::new(p[0]);
         let s = tree.split(p[0], Axis::Vertical, p[1], false).unwrap();
         let layout = compute_layout(&tree, Rect::new(0.0, 0.0, 80.0, 110.0), 10.0);
-        assert_eq!(layout.pane_rect(p[0]), Some(Rect::new(0.0, 0.0, 80.0, 50.0)));
-        assert_eq!(layout.pane_rect(p[1]), Some(Rect::new(0.0, 60.0, 80.0, 50.0)));
+        assert_eq!(
+            layout.pane_rect(p[0]),
+            Some(Rect::new(0.0, 0.0, 80.0, 50.0))
+        );
+        assert_eq!(
+            layout.pane_rect(p[1]),
+            Some(Rect::new(0.0, 60.0, 80.0, 50.0))
+        );
         assert_eq!(
             layout.dividers,
             vec![(s, Rect::new(0.0, 50.0, 80.0, 10.0), Axis::Vertical)]
@@ -129,10 +150,22 @@ mod tests {
         tree.split(p[1], Axis::Vertical, p[2], false).unwrap();
         tree.split(p[2], Axis::Horizontal, p[3], false).unwrap();
         let layout = compute_layout(&tree, Rect::new(0.0, 0.0, 100.0, 100.0), 0.0);
-        assert_eq!(layout.pane_rect(p[0]), Some(Rect::new(0.0, 0.0, 50.0, 100.0)));
-        assert_eq!(layout.pane_rect(p[1]), Some(Rect::new(50.0, 0.0, 50.0, 50.0)));
-        assert_eq!(layout.pane_rect(p[2]), Some(Rect::new(50.0, 50.0, 25.0, 50.0)));
-        assert_eq!(layout.pane_rect(p[3]), Some(Rect::new(75.0, 50.0, 25.0, 50.0)));
+        assert_eq!(
+            layout.pane_rect(p[0]),
+            Some(Rect::new(0.0, 0.0, 50.0, 100.0))
+        );
+        assert_eq!(
+            layout.pane_rect(p[1]),
+            Some(Rect::new(50.0, 0.0, 50.0, 50.0))
+        );
+        assert_eq!(
+            layout.pane_rect(p[2]),
+            Some(Rect::new(50.0, 50.0, 25.0, 50.0))
+        );
+        assert_eq!(
+            layout.pane_rect(p[3]),
+            Some(Rect::new(75.0, 50.0, 25.0, 50.0))
+        );
         assert_eq!(layout.dividers.len(), 3);
     }
 
@@ -143,13 +176,22 @@ mod tests {
         let s = tree.split(p[0], Axis::Horizontal, p[1], false).unwrap();
         tree.set_ratio(s, 0.25);
         let layout = compute_layout(&tree, Rect::new(0.0, 0.0, 100.0, 100.0), 0.0);
-        assert_eq!(layout.pane_rect(p[0]), Some(Rect::new(0.0, 0.0, 25.0, 100.0)));
-        assert_eq!(layout.pane_rect(p[1]), Some(Rect::new(25.0, 0.0, 75.0, 100.0)));
+        assert_eq!(
+            layout.pane_rect(p[0]),
+            Some(Rect::new(0.0, 0.0, 25.0, 100.0))
+        );
+        assert_eq!(
+            layout.pane_rect(p[1]),
+            Some(Rect::new(25.0, 0.0, 75.0, 100.0))
+        );
 
         // Clamped ratio bounds the first pane at 90%.
         tree.set_ratio(s, 1.5);
         let layout = compute_layout(&tree, Rect::new(0.0, 0.0, 100.0, 100.0), 0.0);
-        assert_eq!(layout.pane_rect(p[0]), Some(Rect::new(0.0, 0.0, 90.0, 100.0)));
+        assert_eq!(
+            layout.pane_rect(p[0]),
+            Some(Rect::new(0.0, 0.0, 90.0, 100.0))
+        );
     }
 
     #[test]
@@ -160,9 +202,18 @@ mod tests {
         let outer = tree.split(p[0], Axis::Horizontal, p[1], false).unwrap();
         let inner = tree.split(p[1], Axis::Vertical, p[2], false).unwrap();
         let layout = compute_layout(&tree, Rect::new(0.0, 0.0, 104.0, 104.0), 4.0);
-        assert_eq!(layout.pane_rect(p[0]), Some(Rect::new(0.0, 0.0, 50.0, 104.0)));
-        assert_eq!(layout.pane_rect(p[1]), Some(Rect::new(54.0, 0.0, 50.0, 50.0)));
-        assert_eq!(layout.pane_rect(p[2]), Some(Rect::new(54.0, 54.0, 50.0, 50.0)));
+        assert_eq!(
+            layout.pane_rect(p[0]),
+            Some(Rect::new(0.0, 0.0, 50.0, 104.0))
+        );
+        assert_eq!(
+            layout.pane_rect(p[1]),
+            Some(Rect::new(54.0, 0.0, 50.0, 50.0))
+        );
+        assert_eq!(
+            layout.pane_rect(p[2]),
+            Some(Rect::new(54.0, 54.0, 50.0, 50.0))
+        );
         assert_eq!(
             layout.dividers,
             vec![

@@ -10,11 +10,10 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use gpui::{
-    App, Bounds, ContentMask, DispatchPhase, Element, ElementId, FontStyle, FontWeight,
-    GlobalElementId, Hsla, InspectorElementId, IntoElement, LayoutId, MouseDownEvent,
-    MouseMoveEvent, MouseUpEvent, Pixels, Point, ScrollWheelEvent, ShapedLine,
-    StrikethroughStyle, Style, TextAlign, TextRun, UnderlineStyle, Window, fill, point, px,
-    relative, size,
+    fill, point, px, relative, size, App, Bounds, ContentMask, DispatchPhase, Element, ElementId,
+    FontStyle, FontWeight, GlobalElementId, Hsla, InspectorElementId, IntoElement, LayoutId,
+    MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, ScrollWheelEvent, ShapedLine,
+    StrikethroughStyle, Style, TextAlign, TextRun, UnderlineStyle, Window,
 };
 use terminal::Session;
 use theme::Rgb;
@@ -161,11 +160,10 @@ fn snapshot(term: &mut vt::Terminal, colors: &Colors, search: Option<&SearchQuer
     if let Some(sq) = search.filter(|s| !s.query.is_empty()) {
         let hits = term.search(&sq.query, false);
         for (i, m) in hits.iter().enumerate() {
-            search_map.entry(m.line).or_default().push((
-                m.start_col,
-                m.end_col,
-                i == sq.current,
-            ));
+            search_map
+                .entry(m.line)
+                .or_default()
+                .push((m.start_col, m.end_col, i == sq.current));
         }
     }
 
@@ -231,7 +229,12 @@ fn snapshot(term: &mut vt::Terminal, colors: &Colors, search: Option<&SearchQuer
             // Box-drawing/block glyphs render with custom geometry so lines
             // join and blocks tile exactly; they bypass text shaping.
             if crate::boxdraw::covers(cell.ch) {
-                boxes.push(BoxCell { row: row_i, col, ch: cell.ch, fg });
+                boxes.push(BoxCell {
+                    row: row_i,
+                    col,
+                    ch: cell.ch,
+                    fg,
+                });
                 continue;
             }
             // OSC 8 hyperlinks render underlined so they are discoverable.
@@ -240,7 +243,8 @@ fn snapshot(term: &mut vt::Terminal, colors: &Colors, search: Option<&SearchQuer
                 style.insert(CellFlags::UNDERLINE);
             }
             // Skip plain spaces; they only matter for decorations.
-            if cell.ch == ' ' && !style.intersects(CellFlags::ANY_UNDERLINE | CellFlags::STRIKETHROUGH)
+            if cell.ch == ' '
+                && !style.intersects(CellFlags::ANY_UNDERLINE | CellFlags::STRIKETHROUGH)
             {
                 continue;
             }
@@ -318,7 +322,9 @@ fn scroll_indicator(
     }
     let height = f32::from(bounds.size.height);
     let total = (scrollback + rows) as f32;
-    let thumb = (height * rows as f32 / total).max(INDICATOR_MIN).min(height);
+    let thumb = (height * rows as f32 / total)
+        .max(INDICATOR_MIN)
+        .min(height);
     // Fraction of history above the viewport: 0 at the very top.
     let above = (scrollback - offset) as f32 / scrollback as f32;
     let y = (height - thumb) * above;
@@ -381,13 +387,13 @@ impl TerminalElement {
                 color: Some(color),
                 wavy: span.flags.contains(CellFlags::CURLY_UNDERLINE),
             });
-        let strikethrough = span
-            .flags
-            .contains(CellFlags::STRIKETHROUGH)
-            .then(|| StrikethroughStyle {
-                thickness: px(1.0),
-                color: Some(color),
-            });
+        let strikethrough =
+            span.flags
+                .contains(CellFlags::STRIKETHROUGH)
+                .then(|| StrikethroughStyle {
+                    thickness: px(1.0),
+                    color: Some(color),
+                });
         TextRun {
             len: span.text.len(),
             font,
@@ -537,7 +543,10 @@ impl Element for TerminalElement {
         window: &mut Window,
         _cx: &mut App,
     ) -> Frame {
-        let origin = point(bounds.origin.x + px(self.pad.x), bounds.origin.y + px(self.pad.y));
+        let origin = point(
+            bounds.origin.x + px(self.pad.x),
+            bounds.origin.y + px(self.pad.y),
+        );
         let (cols, rows) = metrics::grid_size(
             f32::from(bounds.size.width),
             f32::from(bounds.size.height),
@@ -834,7 +843,7 @@ mod tests {
         let colors = test_colors();
         let mut term = vt::Terminal::new(10, 2, 10);
         term.feed(b"old\r\na\r\nb\r\nc"); // pushes rows into scrollback
-        // Select the scrollback line holding "old" (line -2).
+                                          // Select the scrollback line holding "old" (line -2).
         term.start_selection(vt::SelectionMode::Cell, vt::Point::new(-2, 0));
         term.update_selection(vt::Point::new(-2, 2));
         // At the live bottom the selected row is off screen: no override.

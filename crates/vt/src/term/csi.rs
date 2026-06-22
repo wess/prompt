@@ -15,7 +15,10 @@ pub(crate) fn dispatch(
 ) {
     let private = intermediates.contains(&b'?');
     // First subparameter of each parameter; enough for everything but SGR.
-    let p: Vec<u16> = params.iter().map(|s| s.first().copied().unwrap_or(0)).collect();
+    let p: Vec<u16> = params
+        .iter()
+        .map(|s| s.first().copied().unwrap_or(0))
+        .collect();
 
     match (action, intermediates) {
         ('A', []) => inner.cursor_up(count(&p, 0)),
@@ -84,7 +87,9 @@ pub(crate) fn dispatch(
         // Kitty keyboard protocol negotiation.
         ('u', [b'?']) => {
             let flags = inner.screen().kitty.current();
-            inner.output.extend_from_slice(format!("\x1b[?{flags}u").as_bytes());
+            inner
+                .output
+                .extend_from_slice(format!("\x1b[?{flags}u").as_bytes());
         }
         ('u', [b'>']) => inner.screen_mut().kitty.push(arg(&p, 0, 0) as u8),
         ('u', [b'<']) => inner.screen_mut().kitty.pop(count(&p, 0)),

@@ -348,7 +348,7 @@ mod tests {
         let g = wide_grid();
         let (s, e) = expand_word(&g, Point::new(0, 0), EXTRA);
         assert_eq!((s, e), span((0, 0), (0, 2))); // spans head + spacer
-        // Starting on the spacer itself classifies as the head.
+                                                  // Starting on the spacer itself classifies as the head.
         let (s, e) = expand_word(&g, Point::new(0, 2), EXTRA);
         assert_eq!((s, e), span((0, 0), (0, 2)));
     }

@@ -90,7 +90,10 @@ mod tests {
 
     #[test]
     fn parses_long_form_with_hash() {
-        assert_eq!("#1a2b3c".parse::<Rgb>().unwrap(), Rgb::new(0x1a, 0x2b, 0x3c));
+        assert_eq!(
+            "#1a2b3c".parse::<Rgb>().unwrap(),
+            Rgb::new(0x1a, 0x2b, 0x3c)
+        );
     }
 
     #[test]
@@ -107,7 +110,10 @@ mod tests {
 
     #[test]
     fn parses_uppercase() {
-        assert_eq!("#1A2B3C".parse::<Rgb>().unwrap(), Rgb::new(0x1a, 0x2b, 0x3c));
+        assert_eq!(
+            "#1A2B3C".parse::<Rgb>().unwrap(),
+            Rgb::new(0x1a, 0x2b, 0x3c)
+        );
     }
 
     #[test]

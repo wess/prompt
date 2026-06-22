@@ -10,12 +10,14 @@ pub mod parse;
 pub mod value;
 pub mod watch;
 
-pub use action::{Action, SplitDirection, SplitFocus};
-pub use edit::upsert;
-pub use keybind::{Keybind, Mods, default_keybinds, parse_keybind, resolve};
+pub use action::{Action, ResizeDir, SplitDirection, SplitFocus};
+pub use edit::{set_list, upsert};
+pub use keybind::{
+    default_keybinds, diff_from_defaults, format_trigger, parse_keybind, resolve, Keybind, Mods,
+};
 pub use options::{ClipboardAccess, CursorStyle, FontStyle, OptionAsAlt, Options};
-pub use parse::{Diagnostic, parse_str};
-pub use watch::{WatchHandle, watch};
+pub use parse::{parse_str, Diagnostic};
+pub use watch::{watch, WatchHandle};
 
 use std::path::PathBuf;
 
@@ -31,7 +33,12 @@ pub fn default_path() -> Option<PathBuf> {
     if home.is_empty() {
         return None;
     }
-    Some(PathBuf::from(home).join(".config").join("prompt").join("config"))
+    Some(
+        PathBuf::from(home)
+            .join(".config")
+            .join("prompt")
+            .join("config"),
+    )
 }
 
 /// Load configuration from an explicit path. A missing or unreadable file
@@ -57,18 +64,14 @@ mod tests {
 
     #[test]
     fn missing_file_yields_defaults() {
-        let (opts, diags) =
-            load_path(std::path::Path::new("/nonexistent/prompt/config"));
+        let (opts, diags) = load_path(std::path::Path::new("/nonexistent/prompt/config"));
         assert_eq!(opts, Options::default());
         assert!(diags.is_empty());
     }
 
     #[test]
     fn load_path_reads_file() {
-        let dir = std::env::temp_dir().join(format!(
-            "promptconfigtest{}",
-            std::process::id()
-        ));
+        let dir = std::env::temp_dir().join(format!("promptconfigtest{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let file = dir.join("config");
         std::fs::write(&file, "font-size = 17\nbogus = 1\n").unwrap();

@@ -9,12 +9,12 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use gpui::{
-    AnyElement, App, AvailableSpace, Bounds, DispatchPhase, Element, ElementId, GlobalElementId,
-    Hitbox, HitboxBehavior, Hsla, InspectorElementId, IntoElement, LayoutId, MouseDownEvent,
-    MouseMoveEvent, MouseUpEvent, Pixels, Style, WeakEntity, Window, fill, point, px, relative,
-    size,
+    fill, point, px, relative, size, AnyElement, App, AvailableSpace, Bounds, DispatchPhase,
+    Element, ElementId, GlobalElementId, Hitbox, HitboxBehavior, Hsla, InspectorElementId,
+    IntoElement, LayoutId, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Style, WeakEntity,
+    Window,
 };
-use workspace::{Axis, Node, PaneId, PaneTree, Rect, SplitId, clamp_ratio, compute_layout};
+use workspace::{clamp_ratio, compute_layout, Axis, Node, PaneId, PaneTree, Rect, SplitId};
 
 use crate::root::WorkspaceView;
 
@@ -38,7 +38,14 @@ pub fn splitrect(tree: &PaneTree, rect: Rect, divider: f32, target: SplitId) -> 
 }
 
 fn noderect(node: &Node, rect: Rect, divider: f32, target: SplitId) -> Option<Rect> {
-    let Node::Split { id, axis, ratio, first, second } = node else {
+    let Node::Split {
+        id,
+        axis,
+        ratio,
+        first,
+        second,
+    } = node
+    else {
         return None;
     };
     if *id == target {
@@ -99,7 +106,15 @@ impl SplitsElement {
         drag: Rc<RefCell<Option<Drag>>>,
         root: WeakEntity<WorkspaceView>,
     ) -> Self {
-        Self { tree, focused, children, dividercolor, focuscolor, drag, root }
+        Self {
+            tree,
+            focused,
+            children,
+            dividercolor,
+            focuscolor,
+            drag,
+            root,
+        }
     }
 }
 
@@ -197,7 +212,11 @@ impl Element for SplitsElement {
             })
             .collect();
 
-        SplitsFrame { rect, panes, dividers }
+        SplitsFrame {
+            rect,
+            panes,
+            dividers,
+        }
     }
 
     fn paint(
@@ -254,7 +273,10 @@ impl Element for SplitsElement {
             }
             for (split, axis, hitbox) in &hitboxes {
                 if hitbox.is_hovered(window) {
-                    drag.replace(Some(Drag { split: *split, axis: *axis }));
+                    drag.replace(Some(Drag {
+                        split: *split,
+                        axis: *axis,
+                    }));
                     cx.stop_propagation();
                     return;
                 }
@@ -273,7 +295,8 @@ impl Element for SplitsElement {
                 if bounds.contains(&event.position) {
                     if *pane != focused {
                         let pane = *pane;
-                        root.update(cx, |this, cx| this.focuspane(pane, window, cx)).ok();
+                        root.update(cx, |this, cx| this.focuspane(pane, window, cx))
+                            .ok();
                     }
                     return;
                 }
@@ -301,7 +324,8 @@ impl Element for SplitsElement {
                 DIVIDER,
                 (f32::from(event.position.x), f32::from(event.position.y)),
             );
-            root.update(cx, |this, cx| this.setratio(d.split, ratio, cx)).ok();
+            root.update(cx, |this, cx| this.setratio(d.split, ratio, cx))
+                .ok();
         });
 
         // Release ends the drag.

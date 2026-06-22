@@ -20,7 +20,11 @@ pub enum OverrideError {
 impl fmt::Display for OverrideError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            OverrideError::Hex { field, value, error } => {
+            OverrideError::Hex {
+                field,
+                value,
+                error,
+            } => {
                 write!(f, "invalid color {value:?} for {field}: {error}")
             }
             OverrideError::Index(index) => {
@@ -148,8 +152,8 @@ mod tests {
 
     #[test]
     fn bad_hex_is_reported() {
-        let err = apply_overrides(base(), Some("nope"), None, None, None, None, None, &[])
-            .unwrap_err();
+        let err =
+            apply_overrides(base(), Some("nope"), None, None, None, None, None, &[]).unwrap_err();
         match err {
             OverrideError::Hex { field, value, .. } => {
                 assert_eq!(field, "background");
@@ -162,8 +166,7 @@ mod tests {
     #[test]
     fn bad_ansi_hex_is_reported() {
         let ansi = [(3u8, "#zzz".to_string())];
-        let err =
-            apply_overrides(base(), None, None, None, None, None, None, &ansi).unwrap_err();
+        let err = apply_overrides(base(), None, None, None, None, None, None, &ansi).unwrap_err();
         match err {
             OverrideError::Hex { field, .. } => assert_eq!(field, "ansi[3]"),
             other => panic!("unexpected error: {other:?}"),
@@ -173,16 +176,15 @@ mod tests {
     #[test]
     fn out_of_range_index_is_reported() {
         let ansi = [(16u8, "#ffffff".to_string())];
-        let err =
-            apply_overrides(base(), None, None, None, None, None, None, &ansi).unwrap_err();
+        let err = apply_overrides(base(), None, None, None, None, None, None, &ansi).unwrap_err();
         assert_eq!(err, OverrideError::Index(16));
     }
 
     #[test]
     fn errors_display() {
         assert!(OverrideError::Index(200).to_string().contains("200"));
-        let err = apply_overrides(base(), None, Some("xx"), None, None, None, None, &[])
-            .unwrap_err();
+        let err =
+            apply_overrides(base(), None, Some("xx"), None, None, None, None, &[]).unwrap_err();
         let msg = err.to_string();
         assert!(msg.contains("foreground") && msg.contains("xx"));
     }

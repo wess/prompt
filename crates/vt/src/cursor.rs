@@ -68,12 +68,30 @@ mod tests {
 
     #[test]
     fn decscusr_mapping() {
-        assert_eq!(CursorStyle::from_decscusr(0), Some(CursorStyle::BlinkingBlock));
-        assert_eq!(CursorStyle::from_decscusr(1), Some(CursorStyle::BlinkingBlock));
-        assert_eq!(CursorStyle::from_decscusr(2), Some(CursorStyle::SteadyBlock));
-        assert_eq!(CursorStyle::from_decscusr(3), Some(CursorStyle::BlinkingUnderline));
-        assert_eq!(CursorStyle::from_decscusr(4), Some(CursorStyle::SteadyUnderline));
-        assert_eq!(CursorStyle::from_decscusr(5), Some(CursorStyle::BlinkingBar));
+        assert_eq!(
+            CursorStyle::from_decscusr(0),
+            Some(CursorStyle::BlinkingBlock)
+        );
+        assert_eq!(
+            CursorStyle::from_decscusr(1),
+            Some(CursorStyle::BlinkingBlock)
+        );
+        assert_eq!(
+            CursorStyle::from_decscusr(2),
+            Some(CursorStyle::SteadyBlock)
+        );
+        assert_eq!(
+            CursorStyle::from_decscusr(3),
+            Some(CursorStyle::BlinkingUnderline)
+        );
+        assert_eq!(
+            CursorStyle::from_decscusr(4),
+            Some(CursorStyle::SteadyUnderline)
+        );
+        assert_eq!(
+            CursorStyle::from_decscusr(5),
+            Some(CursorStyle::BlinkingBar)
+        );
         assert_eq!(CursorStyle::from_decscusr(6), Some(CursorStyle::SteadyBar));
         assert_eq!(CursorStyle::from_decscusr(7), None);
     }

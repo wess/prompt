@@ -79,6 +79,12 @@ Conventions (non-negotiable):
 - [x] **12. Ghostty parity audit** — feature-by-feature coverage map in
   `docs/parity.md`, with implemented areas, partial areas, and the
   remaining gaps prioritized.
+- [x] **13. Plugin foundation** — Zed-style manifest plugins under
+  `~/.config/prompt/plugins/*/plugin.toml` (plus explicit `plugin = path`
+  config entries). Plugins contribute command actions with optional default
+  keybindings, resolved through the same keymap pipeline as built-ins. Command
+  targets: focused pane, new tab, right split, down split. Deferred: richer
+  extension hosts for themes, languages, and UI surfaces.
 
 ## Status log
 
@@ -177,3 +183,15 @@ Conventions (non-negotiable):
   search query (caret + cursor keys). Keymap now emits gpui's `secondary`
   modifier for `cmd`, so every ⌘ binding is ⌘ on macOS / Ctrl on
   Linux+Windows. 539 tests green.
+- 2026-06-18: command macros + MCP server. New `macros` crate: a keystroke
+  `Recorder` (captures typed command lines, segmented on Enter) and plain
+  per-macro text storage under `~/.config/prompt/macros`. Actions
+  `macro_record` (toggle capture; names/saves via the rename modal) and
+  `macro:<name>` (replay into the focused pane, paced off OSC 133 prompt
+  marks with a fixed-delay fallback). New `mcp` crate: a dependency-light
+  Model Context Protocol server over stdio (`initialize`/`tools/list`/
+  `tools/call`). `prompt mcp` bridges tool calls to the running instance over
+  the existing single-instance socket (`ipc.rs` grew a JSON request/response
+  protocol; `mcpbridge.rs` maps ops onto the active `WorkspaceView`). Tools:
+  run_command, read_screen, list_macros, run_macro, list_tabs, focus_tab.
+  575 tests green.

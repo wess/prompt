@@ -2,8 +2,8 @@
 //! mtime and fires a callback when it changes. No external dependencies.
 
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::thread::JoinHandle;
 use std::time::{Duration, SystemTime};
 
@@ -61,7 +61,10 @@ pub fn watch(
             }
         }
     });
-    WatchHandle { stop, thread: Some(thread) }
+    WatchHandle {
+        stop,
+        thread: Some(thread),
+    }
 }
 
 #[cfg(test)]
@@ -71,8 +74,7 @@ mod tests {
     use std::time::Instant;
 
     fn tempfile(tag: &str) -> PathBuf {
-        let dir = std::env::temp_dir()
-            .join(format!("promptwatchtest{}{tag}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("promptwatchtest{}{tag}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         dir.join("config")
     }

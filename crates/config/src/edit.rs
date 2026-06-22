@@ -23,6 +23,35 @@ pub fn upsert(text: &str, key: &str, value: &str) -> String {
     out
 }
 
+/// Return `text` with every line for `key` replaced by one `key = value`
+/// line per entry, in order. The block lands where the first existing entry
+/// was (preserving surrounding lines and comments), or is appended when the
+/// key is absent. An empty `values` removes every line for `key`.
+pub fn set_list(text: &str, key: &str, values: &[String]) -> String {
+    let mut out = String::with_capacity(text.len() + 16);
+    let mut emitted = false;
+    for line in text.lines() {
+        if line_key(line) == Some(key) {
+            if !emitted {
+                for v in values {
+                    out.push_str(&format!("{key} = {v}\n"));
+                }
+                emitted = true;
+            }
+            // Drop the original line; the block above replaces all of them.
+        } else {
+            out.push_str(line);
+            out.push('\n');
+        }
+    }
+    if !emitted {
+        for v in values {
+            out.push_str(&format!("{key} = {v}\n"));
+        }
+    }
+    out
+}
+
 /// The key of a `key = value` line, or `None` for comments/blanks/malformed.
 fn line_key(line: &str) -> Option<&str> {
     let trimmed = line.trim_start();
@@ -67,6 +96,32 @@ mod tests {
     fn only_replaces_first_occurrence() {
         let src = "theme = a\ntheme = b\n";
         assert_eq!(upsert(src, "theme", "c"), "theme = c\ntheme = b\n");
+    }
+
+    #[test]
+    fn set_list_appends_when_absent() {
+        let got = set_list(
+            "font-size = 14\n",
+            "keybind",
+            &["cmd+t=new_tab".into(), "cmd+w=close_surface".into()],
+        );
+        assert_eq!(
+            got,
+            "font-size = 14\nkeybind = cmd+t=new_tab\nkeybind = cmd+w=close_surface\n"
+        );
+    }
+
+    #[test]
+    fn set_list_replaces_block_in_place() {
+        let src = "# top\nplugin = a\nfont-size = 12\nplugin = b\nplugin = c\n";
+        let got = set_list(src, "plugin", &["x".into(), "y".into()]);
+        assert_eq!(got, "# top\nplugin = x\nplugin = y\nfont-size = 12\n");
+    }
+
+    #[test]
+    fn set_list_empty_removes_every_entry() {
+        let src = "keybind = cmd+t=new_tab\nfont-size = 12\nkeybind = cmd+w=quit\n";
+        assert_eq!(set_list(src, "keybind", &[]), "font-size = 12\n");
     }
 
     #[test]

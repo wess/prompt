@@ -26,7 +26,12 @@ impl Terminal {
     /// Begin a selection at `point` (clamped to content), expanding it per
     /// `mode`. Replaces any existing selection.
     pub fn start_selection(&mut self, mode: SelectionMode, point: Point) {
-        let span = expand(&self.inner.screen().grid, mode, point, &self.inner.word_chars);
+        let span = expand(
+            &self.inner.screen().grid,
+            mode,
+            point,
+            &self.inner.word_chars,
+        );
         self.inner.selection = Some(Selection::new(mode, span));
         self.inner.full_damage = true;
     }
@@ -36,7 +41,12 @@ impl Terminal {
         let Some(mode) = self.inner.selection.as_ref().map(|s| s.mode()) else {
             return;
         };
-        let span = expand(&self.inner.screen().grid, mode, point, &self.inner.word_chars);
+        let span = expand(
+            &self.inner.screen().grid,
+            mode,
+            point,
+            &self.inner.word_chars,
+        );
         if let Some(sel) = &mut self.inner.selection {
             sel.update(span);
             self.inner.full_damage = true;
@@ -67,12 +77,7 @@ impl Terminal {
     }
 }
 
-fn expand(
-    grid: &Grid,
-    mode: SelectionMode,
-    point: Point,
-    extra: &[char],
-) -> (Point, Point) {
+fn expand(grid: &Grid, mode: SelectionMode, point: Point, extra: &[char]) -> (Point, Point) {
     match mode {
         SelectionMode::Cell => {
             let p = selection::clamp_point(grid, point);

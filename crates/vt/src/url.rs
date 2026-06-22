@@ -59,7 +59,10 @@ fn is_url_char(c: char) -> bool {
 
 /// Punctuation often trailing a URL in prose, trimmed from the match.
 fn is_trailing(c: char) -> bool {
-    matches!(c, '.' | ',' | ';' | ':' | '!' | '?' | ')' | ']' | '\'' | '"')
+    matches!(
+        c,
+        '.' | ',' | ';' | ':' | '!' | '?' | ')' | ']' | '\'' | '"'
+    )
 }
 
 /// Whether parentheses in `s` are balanced (so a trailing `)` belongs).

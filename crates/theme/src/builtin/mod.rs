@@ -166,7 +166,13 @@ mod tests {
     fn normalized_names_are_unique() {
         for (i, a) in ALL.iter().enumerate() {
             for b in &ALL[i + 1..] {
-                assert_ne!(normalize(a.name), normalize(b.name), "{} vs {}", a.name, b.name);
+                assert_ne!(
+                    normalize(a.name),
+                    normalize(b.name),
+                    "{} vs {}",
+                    a.name,
+                    b.name
+                );
             }
         }
     }
@@ -255,9 +261,17 @@ mod tests {
 
     #[test]
     fn darkness_matches_variant() {
-        let lights = ["light", "gruvboxlight", "solarizedlight", "catppuccinlatte", "githublight"];
+        let lights = [
+            "light",
+            "gruvboxlight",
+            "solarizedlight",
+            "catppuccinlatte",
+            "githublight",
+        ];
         for scheme in ALL {
-            let expect_light = lights.iter().any(|l| builtin(l).unwrap().name == scheme.name);
+            let expect_light = lights
+                .iter()
+                .any(|l| builtin(l).unwrap().name == scheme.name);
             assert_eq!(scheme.is_dark(), !expect_light, "{}", scheme.name);
         }
     }

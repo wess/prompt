@@ -163,13 +163,28 @@ mod tests {
         ctrl: false,
         cmd: false,
     };
-    const SHIFT: Mods = Mods { shift: true, ..NONE };
+    const SHIFT: Mods = Mods {
+        shift: true,
+        ..NONE
+    };
     const ALT: Mods = Mods { alt: true, ..NONE };
     const CTRL: Mods = Mods { ctrl: true, ..NONE };
     const CMD: Mods = Mods { cmd: true, ..NONE };
-    const CTRL_ALT: Mods = Mods { ctrl: true, alt: true, ..NONE };
-    const CTRL_SHIFT: Mods = Mods { ctrl: true, shift: true, ..NONE };
-    const ALT_SHIFT: Mods = Mods { alt: true, shift: true, ..NONE };
+    const CTRL_ALT: Mods = Mods {
+        ctrl: true,
+        alt: true,
+        ..NONE
+    };
+    const CTRL_SHIFT: Mods = Mods {
+        ctrl: true,
+        shift: true,
+        ..NONE
+    };
+    const ALT_SHIFT: Mods = Mods {
+        alt: true,
+        shift: true,
+        ..NONE
+    };
     const ALL: Mods = Mods {
         shift: true,
         alt: true,
@@ -340,7 +355,12 @@ mod tests {
 
     #[test]
     fn arrows_normal_and_app_mode() {
-        let cases: &[(&str, u8)] = &[("up", b'A'), ("down", b'B'), ("right", b'C'), ("left", b'D')];
+        let cases: &[(&str, u8)] = &[
+            ("up", b'A'),
+            ("down", b'B'),
+            ("right", b'C'),
+            ("left", b'D'),
+        ];
         for (key, fin) in cases {
             assert_eq!(
                 enc(key, None, NONE, NORMAL).unwrap(),
@@ -389,12 +409,7 @@ mod tests {
 
     #[test]
     fn tilde_keys() {
-        let cases: &[(&str, u8)] = &[
-            ("insert", 2),
-            ("delete", 3),
-            ("pageup", 5),
-            ("pagedown", 6),
-        ];
+        let cases: &[(&str, u8)] = &[("insert", 2), ("delete", 3), ("pageup", 5), ("pagedown", 6)];
         for (key, n) in cases {
             assert_eq!(
                 enc(key, None, NONE, NORMAL).unwrap(),

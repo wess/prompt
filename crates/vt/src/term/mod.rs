@@ -413,6 +413,25 @@ impl Terminal {
         out
     }
 
+    /// Text rows across scrollback + live grid in global-row order. Each
+    /// tuple is `(line, text, prompt_marked)`, using the same line index
+    /// space as [`Terminal::prompt_lines`].
+    pub fn text_lines(&self) -> Vec<(usize, String, bool)> {
+        let grid = &self.inner.screen().grid;
+        let sb = grid.scrollback();
+        let mut out = Vec::with_capacity(sb.len() + grid.rows());
+        for i in 0..sb.len() {
+            if let Some(row) = sb.get(i) {
+                out.push((i, row.text(), row.prompt));
+            }
+        }
+        for r in 0..grid.rows() {
+            let row = grid.row(r);
+            out.push((sb.len() + r, row.text(), row.prompt));
+        }
+        out
+    }
+
     /// The URL under viewport row/col, if the text there is a detectable
     /// URL (used for click-to-open when there is no OSC 8 hyperlink).
     pub fn visible_url_at(&self, row: usize, col: usize) -> Option<String> {

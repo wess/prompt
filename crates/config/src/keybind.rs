@@ -23,6 +23,91 @@ pub struct Keybind {
     pub action: Action,
 }
 
+impl Keybind {
+    /// The trigger as a config string, e.g. `cmd+shift+t`.
+    pub fn trigger(&self) -> String {
+        format_trigger(self.mods, &self.key)
+    }
+
+    /// The full `trigger=action` config value for this binding.
+    pub fn config_line(&self) -> String {
+        format!("{}={}", self.trigger(), self.action.to_config())
+    }
+}
+
+/// Format a trigger from modifiers and a normalized key, producing a string
+/// that [`parse_trigger`] reads back. Punctuation keys use their named form
+/// so the result never collides with the `+`/`=` trigger/action separators.
+pub fn format_trigger(mods: Mods, key: &str) -> String {
+    let mut s = String::new();
+    if mods.cmd {
+        push_part(&mut s, "cmd");
+    }
+    if mods.ctrl {
+        push_part(&mut s, "ctrl");
+    }
+    if mods.alt {
+        push_part(&mut s, "alt");
+    }
+    if mods.shift {
+        push_part(&mut s, "shift");
+    }
+    push_part(&mut s, key_to_name(key));
+    s
+}
+
+fn push_part(s: &mut String, part: &str) {
+    if !s.is_empty() {
+        s.push('+');
+    }
+    s.push_str(part);
+}
+
+/// The config name for a normalized key. Named keys and alphanumerics pass
+/// through; punctuation maps back to the spelled-out name.
+fn key_to_name(key: &str) -> &str {
+    match key {
+        "+" => "plus",
+        "-" => "minus",
+        "=" => "equal",
+        "," => "comma",
+        "." => "period",
+        "/" => "slash",
+        "\\" => "backslash",
+        ";" => "semicolon",
+        "'" => "apostrophe",
+        "`" => "grave_accent",
+        "[" => "bracket_left",
+        "]" => "bracket_right",
+        other => other,
+    }
+}
+
+/// Given the desired full keybind set, produce the minimal `keybind` config
+/// values that transform [`default_keybinds`] into it: an override line for
+/// each binding that differs from (or is absent among) the defaults, and an
+/// `=unbind` line for each default the set drops.
+pub fn diff_from_defaults(desired: &[Keybind]) -> Vec<String> {
+    let defaults = default_keybinds();
+    let mut out = Vec::new();
+    for kb in desired {
+        let default_action = defaults
+            .iter()
+            .find(|d| d.mods == kb.mods && d.key == kb.key)
+            .map(|d| &d.action);
+        if default_action != Some(&kb.action) {
+            out.push(kb.config_line());
+        }
+    }
+    for d in &defaults {
+        let kept = desired.iter().any(|kb| kb.mods == d.mods && kb.key == d.key);
+        if !kept {
+            out.push(format!("{}=unbind", format_trigger(d.mods, &d.key)));
+        }
+    }
+    out
+}
+
 /// Parse one keybind value, e.g. `ctrl+shift+c=copy_to_clipboard`.
 pub fn parse_keybind(s: &str) -> Result<Keybind, String> {
     let (trigger, action) = s
@@ -63,8 +148,7 @@ pub fn parse_trigger(s: &str) -> Result<(Mods, String), String> {
             }
         }
     }
-    let key = normalize_key(key_part.trim())
-        .ok_or_else(|| format!("unknown key `{key_part}`"))?;
+    let key = normalize_key(key_part.trim()).ok_or_else(|| format!("unknown key `{key_part}`"))?;
     Ok((mods, key))
 }
 
@@ -102,24 +186,69 @@ fn normalize_key(s: &str) -> Option<String> {
 
 /// Ghostty key names accepted verbatim.
 const NAMED_KEYS: &[&str] = &[
-    "enter", "tab", "escape", "space", "backspace", "delete", "insert", "up",
-    "down", "left", "right", "home", "end", "page_up", "page_down", "f1",
-    "f2", "f3", "f4", "f5", "f6", "f7", "f8", "f9", "f10", "f11", "f12",
+    "enter",
+    "tab",
+    "escape",
+    "space",
+    "backspace",
+    "delete",
+    "insert",
+    "up",
+    "down",
+    "left",
+    "right",
+    "home",
+    "end",
+    "page_up",
+    "page_down",
+    "f1",
+    "f2",
+    "f3",
+    "f4",
+    "f5",
+    "f6",
+    "f7",
+    "f8",
+    "f9",
+    "f10",
+    "f11",
+    "f12",
 ];
 
 /// The built-in bindings, mirroring the app's hardcoded set.
 pub fn default_keybinds() -> Vec<Keybind> {
-    let cmd = Mods { cmd: true, ..Mods::default() };
-    let cmd_shift = Mods { cmd: true, shift: true, ..Mods::default() };
-    let cmd_alt = Mods { cmd: true, alt: true, ..Mods::default() };
+    let cmd = Mods {
+        cmd: true,
+        ..Mods::default()
+    };
+    let cmd_shift = Mods {
+        cmd: true,
+        shift: true,
+        ..Mods::default()
+    };
+    let cmd_alt = Mods {
+        cmd: true,
+        alt: true,
+        ..Mods::default()
+    };
+    let cmd_alt_shift = Mods {
+        cmd: true,
+        alt: true,
+        shift: true,
+        ..Mods::default()
+    };
     let kb = |mods: Mods, key: &str, action: Action| Keybind {
         mods,
         key: key.to_string(),
         action,
     };
     let mut binds = vec![
+        kb(cmd, "n", Action::NewWindow),
         kb(cmd, "t", Action::NewTab),
         kb(cmd, "w", Action::CloseSurface),
+        kb(cmd_alt, "w", Action::CloseTab),
+        kb(cmd_shift, "w", Action::CloseWindow),
+        kb(cmd_alt_shift, "w", Action::CloseAllWindows),
         kb(cmd, "d", Action::NewSplit(SplitDirection::Right)),
         kb(cmd_shift, "d", Action::NewSplit(SplitDirection::Down)),
         kb(cmd_shift, "[", Action::PreviousTab),
@@ -136,10 +265,14 @@ pub fn default_keybinds() -> Vec<Keybind> {
         kb(cmd, "0", Action::ResetFontSize),
         kb(cmd, "k", Action::ClearScreen),
         kb(cmd, "f", Action::ToggleSearch),
+        kb(cmd_shift, "f", Action::ToggleSemanticSearch),
+        kb(cmd_shift, "e", Action::ExplainOutput),
+        kb(cmd_shift, "g", Action::ComposeCommand),
         kb(cmd, "up", Action::JumpToPrompt(-1)),
         kb(cmd, "down", Action::JumpToPrompt(1)),
         kb(cmd, ",", Action::ToggleSettings),
         kb(cmd_shift, ",", Action::ReloadConfig),
+        kb(cmd_alt, "t", Action::ToggleQuickTerminal),
         kb(cmd, "q", Action::Quit),
     ];
     for n in 1..=9 {
@@ -178,7 +311,12 @@ mod tests {
     use super::*;
 
     fn mods(ctrl: bool, shift: bool, alt: bool, cmd: bool) -> Mods {
-        Mods { ctrl, shift, alt, cmd }
+        Mods {
+            ctrl,
+            shift,
+            alt,
+            cmd,
+        }
     }
 
     fn trigger(s: &str) -> (Mods, String) {
@@ -218,10 +356,25 @@ mod tests {
 
     #[test]
     fn named_keys() {
-        for name in ["enter", "tab", "escape", "backspace", "delete", "up",
-            "down", "left", "right", "home", "end", "page_up", "page_down",
-            "space", "insert", "f1", "f12"]
-        {
+        for name in [
+            "enter",
+            "tab",
+            "escape",
+            "backspace",
+            "delete",
+            "up",
+            "down",
+            "left",
+            "right",
+            "home",
+            "end",
+            "page_up",
+            "page_down",
+            "space",
+            "insert",
+            "f1",
+            "f12",
+        ] {
             assert_eq!(trigger(&format!("ctrl+{name}")).1, name, "{name}");
         }
     }
@@ -238,7 +391,10 @@ mod tests {
 
     #[test]
     fn trailing_plus_is_the_plus_key() {
-        assert_eq!(trigger("cmd++"), (mods(false, false, false, true), "+".to_string()));
+        assert_eq!(
+            trigger("cmd++"),
+            (mods(false, false, false, true), "+".to_string())
+        );
         assert_eq!(trigger("+"), (Mods::default(), "+".to_string()));
     }
 
@@ -289,15 +445,21 @@ mod tests {
         let cmd = mods(false, false, false, true);
         let cmd_shift = mods(false, true, false, true);
         let cmd_alt = mods(false, false, true, true);
+        let cmd_alt_shift = mods(false, true, true, true);
         let find = |m: Mods, k: &str| {
             binds
                 .iter()
                 .find(|b| b.mods == m && b.key == k)
                 .unwrap_or_else(|| panic!("missing {m:?}+{k}"))
                 .action
+                .clone()
         };
+        assert_eq!(find(cmd, "n"), Action::NewWindow);
         assert_eq!(find(cmd, "t"), Action::NewTab);
         assert_eq!(find(cmd, "w"), Action::CloseSurface);
+        assert_eq!(find(cmd_alt, "w"), Action::CloseTab);
+        assert_eq!(find(cmd_shift, "w"), Action::CloseWindow);
+        assert_eq!(find(cmd_alt_shift, "w"), Action::CloseAllWindows);
         assert_eq!(find(cmd, "d"), Action::NewSplit(SplitDirection::Right));
         assert_eq!(find(cmd_shift, "d"), Action::NewSplit(SplitDirection::Down));
         assert_eq!(find(cmd_shift, "["), Action::PreviousTab);
@@ -353,10 +515,7 @@ mod tests {
 
     #[test]
     fn later_user_bind_wins_over_earlier() {
-        let raw = vec![
-            "ctrl+x=new_tab".to_string(),
-            "ctrl+x=quit".to_string(),
-        ];
+        let raw = vec!["ctrl+x=new_tab".to_string(), "ctrl+x=quit".to_string()];
         let (binds, _) = resolve(&raw);
         let hits: Vec<_> = binds
             .iter()
@@ -413,6 +572,54 @@ mod tests {
             .iter()
             .any(|b| b.key == "t" && b.action == Action::NewTab));
         assert_eq!(binds.len(), default_keybinds().len() + 1);
+    }
+
+    #[test]
+    fn format_trigger_round_trips() {
+        let cmd_shift = mods(false, true, false, true);
+        assert_eq!(format_trigger(cmd_shift, "t"), "cmd+shift+t");
+        assert_eq!(parse_trigger("cmd+shift+t").unwrap(), (cmd_shift, "t".into()));
+        // Punctuation keys spell out so the line never mis-splits.
+        assert_eq!(format_trigger(mods(false, false, false, true), "+"), "cmd+plus");
+        assert_eq!(format_trigger(mods(false, false, false, true), "="), "cmd+equal");
+        assert_eq!(format_trigger(mods(false, false, false, true), "["), "cmd+bracket_left");
+        for key in ["plus", "equal", "bracket_left", "comma"] {
+            let (m, k) = parse_trigger(&format!("cmd+{key}")).unwrap();
+            assert_eq!(format_trigger(m, &k), format!("cmd+{key}"));
+        }
+    }
+
+    #[test]
+    fn diff_round_trips_through_resolve() {
+        // Start from defaults, change one action, drop one, add one new.
+        let mut desired = default_keybinds();
+        for kb in &mut desired {
+            if kb.mods == mods(false, false, false, true) && kb.key == "t" {
+                kb.action = Action::Quit; // change cmd+t
+            }
+        }
+        desired.retain(|kb| !(kb.mods == mods(false, false, false, true) && kb.key == "q")); // drop cmd+q
+        desired.push(Keybind {
+            mods: mods(true, true, false, false),
+            key: "page_up".into(),
+            action: Action::ScrollPageUp,
+        }); // add new
+
+        let lines = diff_from_defaults(&desired);
+        let (resolved, diags) = resolve(&lines);
+        assert!(diags.is_empty(), "{diags:?}");
+
+        let key = |b: &Keybind| (b.mods, b.key.clone());
+        let mut got: Vec<_> = resolved.iter().map(|b| (key(b), b.action.clone())).collect();
+        let mut want: Vec<_> = desired.iter().map(|b| (key(b), b.action.clone())).collect();
+        got.sort_by(|a, b| format!("{a:?}").cmp(&format!("{b:?}")));
+        want.sort_by(|a, b| format!("{a:?}").cmp(&format!("{b:?}")));
+        assert_eq!(got, want);
+    }
+
+    #[test]
+    fn diff_of_defaults_is_empty() {
+        assert!(diff_from_defaults(&default_keybinds()).is_empty());
     }
 
     #[test]

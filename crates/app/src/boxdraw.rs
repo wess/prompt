@@ -48,17 +48,17 @@ fn lines(ch: char, w: f32, h: f32) -> Option<Vec<(f32, f32, f32, f32)>> {
     let arm_top = (vx, 0.0, t, vy + t);
     let arm_bottom = (vx, vy, t, h - vy);
     let set: &[(f32, f32, f32, f32)] = match ch {
-        '\u{2500}' => &[h_full],                          // ─
-        '\u{2502}' => &[v_full],                          // │
-        '\u{250C}' => &[arm_right, arm_bottom],           // ┌
-        '\u{2510}' => &[arm_left, arm_bottom],            // ┐
-        '\u{2514}' => &[arm_right, arm_top],              // └
-        '\u{2518}' => &[arm_left, arm_top],               // ┘
-        '\u{251C}' => &[v_full, arm_right],               // ├
-        '\u{2524}' => &[v_full, arm_left],                // ┤
-        '\u{252C}' => &[h_full, arm_bottom],              // ┬
-        '\u{2534}' => &[h_full, arm_top],                 // ┴
-        '\u{253C}' => &[h_full, v_full],                  // ┼
+        '\u{2500}' => &[h_full],                // ─
+        '\u{2502}' => &[v_full],                // │
+        '\u{250C}' => &[arm_right, arm_bottom], // ┌
+        '\u{2510}' => &[arm_left, arm_bottom],  // ┐
+        '\u{2514}' => &[arm_right, arm_top],    // └
+        '\u{2518}' => &[arm_left, arm_top],     // ┘
+        '\u{251C}' => &[v_full, arm_right],     // ├
+        '\u{2524}' => &[v_full, arm_left],      // ┤
+        '\u{252C}' => &[h_full, arm_bottom],    // ┬
+        '\u{2534}' => &[h_full, arm_top],       // ┴
+        '\u{253C}' => &[h_full, v_full],        // ┼
         _ => return None,
     };
     Some(set.to_vec())
@@ -69,15 +69,24 @@ fn blocks(ch: char, w: f32, h: f32) -> Option<BoxGlyph> {
     let solid = |rects: Vec<(f32, f32, f32, f32)>| BoxGlyph { rects, alpha: 1.0 };
     let full = (0.0, 0.0, w, h);
     Some(match ch {
-        '\u{2588}' => solid(vec![full]),                              // █
-        '\u{2580}' => solid(vec![(0.0, 0.0, w, h / 2.0)]),           // ▀ upper half
-        '\u{2584}' => solid(vec![(0.0, h / 2.0, w, h / 2.0)]),       // ▄ lower half
-        '\u{258C}' => solid(vec![(0.0, 0.0, w / 2.0, h)]),          // ▌ left half
-        '\u{2590}' => solid(vec![(w / 2.0, 0.0, w / 2.0, h)]),      // ▐ right half
+        '\u{2588}' => solid(vec![full]),                       // █
+        '\u{2580}' => solid(vec![(0.0, 0.0, w, h / 2.0)]),     // ▀ upper half
+        '\u{2584}' => solid(vec![(0.0, h / 2.0, w, h / 2.0)]), // ▄ lower half
+        '\u{258C}' => solid(vec![(0.0, 0.0, w / 2.0, h)]),     // ▌ left half
+        '\u{2590}' => solid(vec![(w / 2.0, 0.0, w / 2.0, h)]), // ▐ right half
         // Shades: full fill at reduced alpha.
-        '\u{2591}' => BoxGlyph { rects: vec![full], alpha: 0.25 },   // ░
-        '\u{2592}' => BoxGlyph { rects: vec![full], alpha: 0.5 },    // ▒
-        '\u{2593}' => BoxGlyph { rects: vec![full], alpha: 0.75 },   // ▓
+        '\u{2591}' => BoxGlyph {
+            rects: vec![full],
+            alpha: 0.25,
+        }, // ░
+        '\u{2592}' => BoxGlyph {
+            rects: vec![full],
+            alpha: 0.5,
+        }, // ▒
+        '\u{2593}' => BoxGlyph {
+            rects: vec![full],
+            alpha: 0.75,
+        }, // ▓
         // Lower eighths ▁..▇ (1/8..7/8 from the bottom).
         '\u{2581}'..='\u{2587}' => {
             let n = (ch as u32 - 0x2580) as f32; // 1..7
@@ -127,10 +136,22 @@ mod tests {
 
     #[test]
     fn halves_cover_their_side() {
-        assert_eq!(rects('\u{2580}', 8.0, 16.0).unwrap().rects, vec![(0.0, 0.0, 8.0, 8.0)]);
-        assert_eq!(rects('\u{2584}', 8.0, 16.0).unwrap().rects, vec![(0.0, 8.0, 8.0, 8.0)]);
-        assert_eq!(rects('\u{258C}', 8.0, 16.0).unwrap().rects, vec![(0.0, 0.0, 4.0, 16.0)]);
-        assert_eq!(rects('\u{2590}', 8.0, 16.0).unwrap().rects, vec![(4.0, 0.0, 4.0, 16.0)]);
+        assert_eq!(
+            rects('\u{2580}', 8.0, 16.0).unwrap().rects,
+            vec![(0.0, 0.0, 8.0, 8.0)]
+        );
+        assert_eq!(
+            rects('\u{2584}', 8.0, 16.0).unwrap().rects,
+            vec![(0.0, 8.0, 8.0, 8.0)]
+        );
+        assert_eq!(
+            rects('\u{258C}', 8.0, 16.0).unwrap().rects,
+            vec![(0.0, 0.0, 4.0, 16.0)]
+        );
+        assert_eq!(
+            rects('\u{2590}', 8.0, 16.0).unwrap().rects,
+            vec![(4.0, 0.0, 4.0, 16.0)]
+        );
     }
 
     #[test]
@@ -143,17 +164,29 @@ mod tests {
     #[test]
     fn lower_eighths_grow_from_bottom() {
         // ▁ = 1/8 tall at the bottom.
-        assert_eq!(rects('\u{2581}', 8.0, 16.0).unwrap().rects, vec![(0.0, 14.0, 8.0, 2.0)]);
+        assert_eq!(
+            rects('\u{2581}', 8.0, 16.0).unwrap().rects,
+            vec![(0.0, 14.0, 8.0, 2.0)]
+        );
         // ▇ = 7/8 tall.
-        assert_eq!(rects('\u{2587}', 8.0, 16.0).unwrap().rects, vec![(0.0, 2.0, 8.0, 14.0)]);
+        assert_eq!(
+            rects('\u{2587}', 8.0, 16.0).unwrap().rects,
+            vec![(0.0, 2.0, 8.0, 14.0)]
+        );
     }
 
     #[test]
     fn left_eighths_grow_from_left() {
         // ▏ = 1/8 wide on the left.
-        assert_eq!(rects('\u{258F}', 8.0, 16.0).unwrap().rects, vec![(0.0, 0.0, 1.0, 16.0)]);
+        assert_eq!(
+            rects('\u{258F}', 8.0, 16.0).unwrap().rects,
+            vec![(0.0, 0.0, 1.0, 16.0)]
+        );
         // ▉ = 7/8 wide.
-        assert_eq!(rects('\u{2589}', 8.0, 16.0).unwrap().rects, vec![(0.0, 0.0, 7.0, 16.0)]);
+        assert_eq!(
+            rects('\u{2589}', 8.0, 16.0).unwrap().rects,
+            vec![(0.0, 0.0, 7.0, 16.0)]
+        );
     }
 
     #[test]

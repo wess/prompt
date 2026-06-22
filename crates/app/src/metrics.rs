@@ -68,7 +68,11 @@ pub fn selection_point(row: usize, col: usize, display_offset: usize) -> vt::Poi
 
 /// Measure the cell box for a font: advance width of `M` and the terminal
 /// line height. Falls back to a fixed ratio when the glyph is missing.
-pub fn measure(text_system: &gpui::TextSystem, font: &gpui::Font, font_size: gpui::Pixels) -> CellSize {
+pub fn measure(
+    text_system: &gpui::TextSystem,
+    font: &gpui::Font,
+    font_size: gpui::Pixels,
+) -> CellSize {
     let font_id = text_system.resolve_font(font);
     let width = text_system
         .advance(font_id, font_size, 'M')
@@ -108,10 +112,7 @@ mod tests {
     #[test]
     fn pixel_size_includes_padding_on_both_sides() {
         assert_eq!(pixel_size(80, 24, PAD, CELL), (644.0, 412.0));
-        assert_eq!(
-            pixel_size(80, 24, Padding::default(), CELL),
-            (640.0, 408.0)
-        );
+        assert_eq!(pixel_size(80, 24, Padding::default(), CELL), (640.0, 408.0));
     }
 
     #[test]
@@ -128,12 +129,31 @@ mod tests {
     #[test]
     fn cell_at_accounts_for_origin_and_padding() {
         // Window origin (100, 50), pad 2: cell (0,0) spans x 102..110.
-        assert_eq!(cell_at((102.0, 52.0), (100.0, 50.0), PAD, CELL, 80, 24), (0, 0));
-        assert_eq!(cell_at((109.9, 68.9), (100.0, 50.0), PAD, CELL, 80, 24), (0, 0));
+        assert_eq!(
+            cell_at((102.0, 52.0), (100.0, 50.0), PAD, CELL, 80, 24),
+            (0, 0)
+        );
+        assert_eq!(
+            cell_at((109.9, 68.9), (100.0, 50.0), PAD, CELL, 80, 24),
+            (0, 0)
+        );
         // One pixel into the next cell each way.
-        assert_eq!(cell_at((110.0, 69.0), (100.0, 50.0), PAD, CELL, 80, 24), (1, 1));
+        assert_eq!(
+            cell_at((110.0, 69.0), (100.0, 50.0), PAD, CELL, 80, 24),
+            (1, 1)
+        );
         // Mid-grid.
-        assert_eq!(cell_at((102.0 + 8.0 * 10.0, 52.0 + 17.0 * 3.0), (100.0, 50.0), PAD, CELL, 80, 24), (3, 10));
+        assert_eq!(
+            cell_at(
+                (102.0 + 8.0 * 10.0, 52.0 + 17.0 * 3.0),
+                (100.0, 50.0),
+                PAD,
+                CELL,
+                80,
+                24
+            ),
+            (3, 10)
+        );
     }
 
     #[test]
@@ -141,9 +161,15 @@ mod tests {
         // Inside the padding band, above/left of cell 0.
         assert_eq!(cell_at((0.0, 0.0), (0.0, 0.0), PAD, CELL, 80, 24), (0, 0));
         // Way past the bottom-right corner.
-        assert_eq!(cell_at((9999.0, 9999.0), (0.0, 0.0), PAD, CELL, 80, 24), (23, 79));
+        assert_eq!(
+            cell_at((9999.0, 9999.0), (0.0, 0.0), PAD, CELL, 80, 24),
+            (23, 79)
+        );
         // Negative positions (drag left/above the window).
-        assert_eq!(cell_at((-50.0, -50.0), (0.0, 0.0), PAD, CELL, 80, 24), (0, 0));
+        assert_eq!(
+            cell_at((-50.0, -50.0), (0.0, 0.0), PAD, CELL, 80, 24),
+            (0, 0)
+        );
         // Degenerate grid never underflows.
         assert_eq!(cell_at((5.0, 5.0), (0.0, 0.0), PAD, CELL, 0, 0), (0, 0));
     }

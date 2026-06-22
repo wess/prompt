@@ -1,7 +1,7 @@
 //! Minimal Ghostty-style tab bar: rendered only with more than one tab.
 
 use gpui::prelude::*;
-use gpui::{ClickEvent, Context, SharedString, div, px};
+use gpui::{div, px, ClickEvent, Context, SharedString};
 use theme::Rgb;
 
 use crate::colors::{self, Colors};
@@ -94,7 +94,10 @@ mod tests {
 
     #[test]
     fn height_is_one_cell_plus_padding() {
-        let cell = CellSize { width: 8.0, height: 17.0 };
+        let cell = CellSize {
+            width: 8.0,
+            height: 17.0,
+        };
         assert_eq!(height(cell), 17.0 + PAD);
     }
 

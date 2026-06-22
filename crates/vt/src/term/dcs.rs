@@ -90,7 +90,10 @@ mod tests {
         // "TN" -> 544e.
         t.feed(b"\x1bP+q544e\x1b\\");
         let out = t.take_output();
-        let want = format!("\x1bP1+r544e={}\x1b\\", super::hex_encode(b"xterm-256color"));
+        let want = format!(
+            "\x1bP1+r544e={}\x1b\\",
+            super::hex_encode(b"xterm-256color")
+        );
         assert_eq!(out, want.as_bytes());
     }
 

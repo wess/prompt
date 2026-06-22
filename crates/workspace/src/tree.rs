@@ -41,7 +41,10 @@ pub struct PaneTree {
 
 impl PaneTree {
     pub fn new(root: PaneId) -> Self {
-        Self { root: Node::Leaf(root), splits: 0 }
+        Self {
+            root: Node::Leaf(root),
+            splits: 0,
+        }
     }
 
     pub fn root(&self) -> &Node {
@@ -82,6 +85,12 @@ impl PaneTree {
     /// Current ratio of a split, if it exists.
     pub fn ratio(&self, split: SplitId) -> Option<f32> {
         rationode(&self.root, split)
+    }
+
+    /// The nearest ancestor split of `pane` whose divider runs along `axis`.
+    /// Used to resize the split adjacent to the focused pane in a direction.
+    pub fn nearest_split(&self, pane: PaneId, axis: Axis) -> Option<SplitId> {
+        nearestnode(&self.root, pane, axis)
     }
 
     /// All dividers in layout order (depth first, parent before children).
@@ -150,7 +159,14 @@ fn removenode(node: &mut Node, pane: PaneId) -> bool {
 }
 
 fn setrationode(node: &mut Node, split: SplitId, clamped: f32) -> bool {
-    let Node::Split { id, ratio, first, second, .. } = node else {
+    let Node::Split {
+        id,
+        ratio,
+        first,
+        second,
+        ..
+    } = node
+    else {
         return false;
     };
     if *id == split {
@@ -160,8 +176,37 @@ fn setrationode(node: &mut Node, split: SplitId, clamped: f32) -> bool {
     setrationode(first, split, clamped) || setrationode(second, split, clamped)
 }
 
+fn nearestnode(node: &Node, pane: PaneId, axis: Axis) -> Option<SplitId> {
+    let Node::Split {
+        id,
+        axis: a,
+        first,
+        second,
+        ..
+    } = node
+    else {
+        return None;
+    };
+    let child: &Node = if containsnode(first, pane) {
+        first
+    } else if containsnode(second, pane) {
+        second
+    } else {
+        return None;
+    };
+    // A deeper split of the right axis is closer to the pane, so it wins.
+    nearestnode(child, pane, axis).or(if *a == axis { Some(*id) } else { None })
+}
+
 fn rationode(node: &Node, split: SplitId) -> Option<f32> {
-    let Node::Split { id, ratio, first, second, .. } = node else {
+    let Node::Split {
+        id,
+        ratio,
+        first,
+        second,
+        ..
+    } = node
+    else {
         return None;
     };
     if *id == split {
@@ -171,7 +216,14 @@ fn rationode(node: &Node, split: SplitId) -> Option<f32> {
 }
 
 fn dividers(node: &Node, out: &mut Vec<(SplitId, Axis)>) {
-    if let Node::Split { id, axis, first, second, .. } = node {
+    if let Node::Split {
+        id,
+        axis,
+        first,
+        second,
+        ..
+    } = node
+    {
         out.push((*id, *axis));
         dividers(first, out);
         dividers(second, out);
@@ -291,6 +343,23 @@ mod tests {
         assert!(tree.set_ratio(s, 0.3));
         assert_eq!(tree.ratio(s), Some(0.3));
         assert!(!tree.set_ratio(SplitId(999), 0.5));
+    }
+
+    #[test]
+    fn nearest_split_picks_closest_matching_axis() {
+        // A | (B / C): root horizontal split, right child vertical split.
+        let p = ids(4);
+        let mut tree = PaneTree::new(p[0]);
+        let outer = tree.split(p[0], Axis::Horizontal, p[1], false).unwrap();
+        let inner = tree.split(p[1], Axis::Vertical, p[2], false).unwrap();
+        // B's nearest vertical divider is the inner split; horizontal is outer.
+        assert_eq!(tree.nearest_split(p[1], Axis::Vertical), Some(inner));
+        assert_eq!(tree.nearest_split(p[1], Axis::Horizontal), Some(outer));
+        // A only sits under the outer horizontal split.
+        assert_eq!(tree.nearest_split(p[0], Axis::Horizontal), Some(outer));
+        assert_eq!(tree.nearest_split(p[0], Axis::Vertical), None);
+        // Missing pane has no split.
+        assert_eq!(tree.nearest_split(p[3], Axis::Horizontal), None);
     }
 
     #[test]

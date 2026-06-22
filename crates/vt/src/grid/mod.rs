@@ -76,7 +76,9 @@ impl Grid {
             self.lines.get(line as usize)
         } else {
             let idx = self.scrollback.len() as isize + line;
-            usize::try_from(idx).ok().and_then(|i| self.scrollback.get(i))
+            usize::try_from(idx)
+                .ok()
+                .and_then(|i| self.scrollback.get(i))
         }
     }
 

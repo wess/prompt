@@ -26,7 +26,7 @@ pub use grid::Grid;
 pub use hyperlink::{Hyperlink, HyperlinkId, Hyperlinks};
 pub use kitty::KittyKeyboard;
 pub use mode::{Modes, MouseMode};
-pub use search::Match;
 pub use screen::Screen;
+pub use search::Match;
 pub use selection::{Point, Selection, SelectionMode};
 pub use term::{Clipboard, ReportColors, Terminal};

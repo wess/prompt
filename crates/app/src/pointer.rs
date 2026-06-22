@@ -7,8 +7,8 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use gpui::{
-    App, Bounds, ClipboardItem, Modifiers, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels,
-    ScrollDelta, ScrollWheelEvent, TouchPhase, Window, px,
+    px, App, Bounds, ClipboardItem, Modifiers, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
+    Pixels, ScrollDelta, ScrollWheelEvent, TouchPhase, Window,
 };
 use input::{MouseAction, MouseButton};
 use terminal::Session;
@@ -59,7 +59,14 @@ fn cell_at(p: &Pointer, pos: gpui::Point<Pixels>) -> (usize, usize) {
 }
 
 /// Send one encoded mouse report, 1-based coordinates.
-fn report(p: &Pointer, action: MouseAction, btn: MouseButton, cell: (usize, usize), m: input::Mods, sgr: bool) {
+fn report(
+    p: &Pointer,
+    action: MouseAction,
+    btn: MouseButton,
+    cell: (usize, usize),
+    m: input::Mods,
+    sgr: bool,
+) {
     let (row, col) = cell;
     if let Some(bytes) = input::encode_mouse(action, btn, col as u32 + 1, row as u32 + 1, m, sgr) {
         let _ = p.session.write(&bytes);
@@ -90,7 +97,8 @@ pub fn down(p: &Pointer, e: &MouseDownEvent, window: &mut Window, _cx: &mut App)
     }
     let select_mode = mouse::click_mode(e.click_count);
     let point = metrics::selection_point(cell.0, cell.1, offset);
-    p.session.with_term(|t| t.start_selection(select_mode, point));
+    p.session
+        .with_term(|t| t.start_selection(select_mode, point));
     let mut s = p.state.borrow_mut();
     s.selecting = true;
     // Multi-clicks select a word/line outright; a single click only keeps
@@ -144,7 +152,14 @@ pub fn moved(p: &Pointer, e: &MouseMoveEvent, window: &mut Window, _cx: &mut App
     if p.state.borrow().last_motion == Some(cell) {
         return; // coalesce duplicate-cell motion
     }
-    report(p, MouseAction::Motion, held.unwrap_or(MouseButton::None), cell, m, sgr);
+    report(
+        p,
+        MouseAction::Motion,
+        held.unwrap_or(MouseButton::None),
+        cell,
+        m,
+        sgr,
+    );
     p.state.borrow_mut().last_motion = Some(cell);
 }
 

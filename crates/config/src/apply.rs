@@ -30,8 +30,7 @@ pub fn apply(opts: &mut Options, key: &str, val: &str) -> Result<(), String> {
             opts.font_style = if empty {
                 d.font_style
             } else {
-                FontStyle::parse(val)
-                    .ok_or_else(|| bad("normal|bold|italic|bold-italic", val))?
+                FontStyle::parse(val).ok_or_else(|| bad("normal|bold|italic|bold-italic", val))?
             };
         }
         "font-feature" => {
@@ -61,10 +60,18 @@ pub fn apply(opts: &mut Options, key: &str, val: &str) -> Result<(), String> {
             opts.theme = if empty { d.theme } else { val.to_string() };
         }
         "background" => {
-            opts.background = if empty { d.background } else { Some(val.to_string()) };
+            opts.background = if empty {
+                d.background
+            } else {
+                Some(val.to_string())
+            };
         }
         "foreground" => {
-            opts.foreground = if empty { d.foreground } else { Some(val.to_string()) };
+            opts.foreground = if empty {
+                d.foreground
+            } else {
+                Some(val.to_string())
+            };
         }
         "cursor-style" => {
             opts.cursor_style = if empty {
@@ -81,10 +88,18 @@ pub fn apply(opts: &mut Options, key: &str, val: &str) -> Result<(), String> {
             };
         }
         "cursor-color" => {
-            opts.cursor_color = if empty { d.cursor_color } else { Some(color(val)?) };
+            opts.cursor_color = if empty {
+                d.cursor_color
+            } else {
+                Some(color(val)?)
+            };
         }
         "cursor-text" => {
-            opts.cursor_text = if empty { d.cursor_text } else { Some(color(val)?) };
+            opts.cursor_text = if empty {
+                d.cursor_text
+            } else {
+                Some(color(val)?)
+            };
         }
         "selection-foreground" => {
             opts.selection_foreground = if empty {
@@ -111,8 +126,7 @@ pub fn apply(opts: &mut Options, key: &str, val: &str) -> Result<(), String> {
             opts.minimum_contrast = if empty {
                 d.minimum_contrast
             } else {
-                value::parse_f32_range(val, 1.0, 21.0)
-                    .ok_or_else(|| bad("number in 1..21", val))?
+                value::parse_f32_range(val, 1.0, 21.0).ok_or_else(|| bad("number in 1..21", val))?
             };
         }
         "unfocused-split-opacity" => {
@@ -160,7 +174,11 @@ pub fn apply(opts: &mut Options, key: &str, val: &str) -> Result<(), String> {
             };
         }
         "title" => {
-            opts.title = if empty { d.title } else { Some(val.to_string()) };
+            opts.title = if empty {
+                d.title
+            } else {
+                Some(val.to_string())
+            };
         }
         "clipboard-read" => {
             opts.clipboard_read = if empty {
@@ -212,7 +230,11 @@ pub fn apply(opts: &mut Options, key: &str, val: &str) -> Result<(), String> {
             };
         }
         "command" => {
-            opts.shell = if empty { d.shell } else { Some(val.to_string()) };
+            opts.shell = if empty {
+                d.shell
+            } else {
+                Some(val.to_string())
+            };
         }
         "working-directory" => {
             opts.working_directory = if empty {
@@ -246,9 +268,15 @@ pub fn apply(opts: &mut Options, key: &str, val: &str) -> Result<(), String> {
             if empty {
                 opts.palette = d.palette;
             } else {
-                let entry =
-                    value::parse_palette(val).ok_or_else(|| bad("N=#rrggbb", val))?;
+                let entry = value::parse_palette(val).ok_or_else(|| bad("N=#rrggbb", val))?;
                 opts.palette.push(entry);
+            }
+        }
+        "plugin" => {
+            if empty {
+                opts.plugin = d.plugin;
+            } else {
+                opts.plugin.push(val.to_string());
             }
         }
         "keybind" => {
@@ -303,7 +331,10 @@ clipboard-write = ask
         let (o, diags) = parse_str(src);
         assert!(diags.is_empty(), "{diags:?}");
         assert_eq!(o.font_style, FontStyle::BoldItalic);
-        assert_eq!(o.font_feature, vec!["-liga".to_string(), "+ss01".to_string()]);
+        assert_eq!(
+            o.font_feature,
+            vec!["-liga".to_string(), "+ss01".to_string()]
+        );
         assert_eq!(o.adjust_cell_width, 2);
         assert_eq!(o.adjust_cell_height, -1);
         assert_eq!(o.cursor_color.as_deref(), Some("#ff0000"));

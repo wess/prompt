@@ -9,13 +9,14 @@ use std::collections::HashMap;
 use std::rc::Rc;
 use std::sync::Arc;
 
-use config::{Action, Keybind, SplitDirection, SplitFocus};
+use config::{Action, Keybind, ResizeDir, SplitDirection, SplitFocus};
 use futures::StreamExt;
 use gpui::prelude::*;
 use gpui::{
-    AnyElement, App, Context, Entity, FocusHandle, Focusable as _, KeyBinding, KeyDownEvent, Menu,
-    MenuItem, MouseButton, SharedString, Subscription, WeakEntity, Window, div, px,
+    div, px, size, AnyElement, App, Context, Entity, Focusable as _, KeyBinding, Menu, MenuItem,
+    SharedString, Subscription, WeakEntity, Window,
 };
+use serde_json::{json, Value};
 use terminal::Session;
 use workspace::{Axis, Direction, PaneId, PaneIds, Rect, SplitId, Tabs};
 
@@ -26,7 +27,6 @@ use crate::metrics::{CellSize, Padding};
 use crate::session;
 use crate::splits::{self, Drag, SplitsElement};
 use crate::tabbar;
-use crate::textedit;
 use crate::view::{TerminalView, ViewEvent};
 
 /// One keybind dispatch: the index into the workspace's resolved keybind
@@ -36,60 +36,46 @@ use crate::view::{TerminalView, ViewEvent};
 #[action(namespace = prompt, no_json)]
 pub struct RunBind(pub usize);
 
-/// A change the settings panel can make. Each maps to one config key that
-/// is written back to the config file and live-reloaded.
-#[derive(Clone, Copy)]
-enum Setting {
-    ThemeCycle(i32),
-    FontSize(i32),
-    CursorStyleCycle,
-    FontStyleCycle,
-    PaddingX(i32),
-    PaddingY(i32),
-    Scrollback(i32),
-    ToggleCopyOnSelect,
-}
+/// Open the documentation window. Its own action (rather than a `RunBind`) so
+/// the Help menu item works without depending on a configured keybind.
+#[derive(Clone, PartialEq, Default, Debug, gpui::Action)]
+#[action(namespace = prompt, no_json)]
+pub struct ShowDocs;
 
-/// A free-text setting edited via the in-panel text field.
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum SettingsField {
-    FontFamily,
-    Shell,
-    Foreground,
-    Background,
-}
+/// Dispatch a menu item that has no keybind: the index into the workspace's
+/// `menu_actions` table built alongside the native menu.
+#[derive(Clone, PartialEq, Default, Debug, gpui::Action)]
+#[action(namespace = prompt, no_json)]
+pub struct MenuPick(pub usize);
 
-impl SettingsField {
-    fn key(self) -> &'static str {
-        match self {
-            SettingsField::FontFamily => "font-family",
-            SettingsField::Shell => "shell",
-            SettingsField::Foreground => "foreground",
-            SettingsField::Background => "background",
-        }
-    }
+/// App-global command-macro recorder. Recording is a single, app-wide mode
+/// (one capture at a time), so it lives in a gpui global that the focused
+/// pane's key handler feeds and the workspace toggles.
+pub struct MacroRecorder(pub macros::Recorder);
+impl gpui::Global for MacroRecorder {}
 
-    fn label(self) -> &'static str {
-        match self {
-            SettingsField::FontFamily => "Font family",
-            SettingsField::Shell => "Shell",
-            SettingsField::Foreground => "Foreground",
-            SettingsField::Background => "Background",
-        }
-    }
+/// App-global count of panes currently replaying a macro. Tracked in a global
+/// (rather than per-workspace state) so a detached replay task can clear it
+/// even after its pane is closed.
+#[derive(Default)]
+pub struct MacroReplays(pub usize);
+impl gpui::Global for MacroReplays {}
 
-    fn placeholder(self) -> &'static str {
-        match self {
-            SettingsField::FontFamily => "(default)",
-            SettingsField::Shell => "(login shell)",
-            SettingsField::Foreground | SettingsField::Background => "(theme)",
-        }
-    }
+/// Adjust the in-flight replay count by `delta` and repaint so every
+/// workspace's indicator reflects the change.
+pub fn replays_changed(cx: &mut App, delta: i32) {
+    let count = cx.try_global::<MacroReplays>().map_or(0, |r| r.0);
+    let next = (count as i64 + delta as i64).max(0) as usize;
+    cx.set_global(MacroReplays(next));
+    cx.refresh_windows();
 }
 
 /// Grid for a fresh pane until its first layout pass resizes it.
 const SPAWN_COLS: usize = 80;
 const SPAWN_ROWS: usize = 24;
+
+/// Fraction a divider moves per "Resize Split" step.
+const RESIZE_STEP: f32 = 0.05;
 
 struct Pane {
     view: Entity<TerminalView>,
@@ -110,14 +96,16 @@ pub struct WorkspaceView {
     drag: Rc<RefCell<Option<Drag>>>,
     /// Resolved keybindings (defaults + user config); `RunBind` indexes here.
     keybinds: Vec<Keybind>,
+    /// Loaded manifest plugins.
+    plugins: Vec<plugin::Plugin>,
+    /// Saved command macros, loaded from the macro directory.
+    macros: Vec<macros::Macro>,
+    /// Config actions for keybind-less menu items, indexed by [`MenuPick`].
+    menu_actions: Vec<Action>,
+    /// When set, the focused pane fills the tab (Window > Zoom Split).
+    zoomed: bool,
     /// Configured font size, restored by `reset_font_size`.
     base_font_size: gpui::Pixels,
-    /// Whether the settings panel is open.
-    settings_open: bool,
-    /// In-progress edit of a free-text setting (field + buffer).
-    editing: Option<(SettingsField, textedit::TextEdit)>,
-    /// Focus target that captures keys while a settings field is edited.
-    settings_focus: FocusHandle,
     /// Config-file watcher; kept alive so live reload keeps working.
     _watch: Option<config::WatchHandle>,
 }
@@ -136,15 +124,18 @@ impl WorkspaceView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let (keybinds, diags) = config::resolve(&opts.keybind);
+        let plugins = loadplugins(&opts);
+        let (keybinds, diags) = resolvekeys(&opts, &plugins);
         for d in &diags {
             eprintln!("prompt: {}: {}", d.key, d.message);
         }
+        // One app-wide recorder, shared across windows. Guard so opening a
+        // second window never clobbers a capture in progress.
+        if cx.try_global::<MacroRecorder>().is_none() {
+            cx.set_global(MacroRecorder(macros::Recorder::new()));
+        }
         let mut this = Self {
             base_font_size: font_size,
-            settings_open: false,
-            editing: None,
-            settings_focus: cx.focus_handle(),
             opts,
             colors,
             font,
@@ -157,6 +148,10 @@ impl WorkspaceView {
             panes: HashMap::new(),
             drag: Rc::new(RefCell::new(None)),
             keybinds,
+            plugins,
+            macros: loadmacros(),
+            menu_actions: Vec::new(),
+            zoomed: false,
             _watch: None,
         };
         this.applykeybinds(cx);
@@ -189,73 +184,186 @@ impl WorkspaceView {
         cx.bind_keys(bindings);
     }
 
-    /// A native menu item driving the same action as the keybind for
-    /// `action`; gpui shows that binding's shortcut automatically. `None`
-    /// when nothing is bound to the action (so it would have no shortcut and
-    /// no dispatch path).
-    fn menu_item(&self, label: &str, action: Action) -> Option<MenuItem> {
-        let index = self.keybinds.iter().position(|k| k.action == action)?;
-        Some(MenuItem::action(label.to_string(), RunBind(index)))
+    /// A native menu item for `action`. When the action has a bound keybind
+    /// the item dispatches through [`RunBind`] so gpui shows the shortcut;
+    /// otherwise it falls back to a [`MenuPick`] index into `actions` so the
+    /// item still works without a binding. Used for every menu entry so the
+    /// menu and keymap never drift.
+    fn pick(&self, actions: &mut Vec<Action>, label: &str, action: Action) -> Option<MenuItem> {
+        Some(self.pick_checked(actions, label, action, false))
+    }
+
+    /// Like [`Self::pick`] but with an explicit checkmark, for toggle items.
+    fn pick_checked(
+        &self,
+        actions: &mut Vec<Action>,
+        label: &str,
+        action: Action,
+        checked: bool,
+    ) -> MenuItem {
+        let dispatch: Box<dyn gpui::Action> =
+            match self.keybinds.iter().position(|k| k.action == action) {
+                Some(index) => Box::new(RunBind(index)),
+                None => {
+                    let index = actions.len();
+                    actions.push(action);
+                    Box::new(MenuPick(index))
+                }
+            };
+        MenuItem::Action {
+            name: label.to_string().into(),
+            action: dispatch,
+            os_action: None,
+            checked,
+            disabled: false,
+        }
     }
 
     /// Install the native application menu bar (macOS). Items reuse the
     /// config-driven actions, so the menu and keymap never drift. Re-run
-    /// after a reload since keybind indices may change.
-    fn setmenus(&self, cx: &mut Context<Self>) {
-        let menu = |name: &str, items: Vec<Option<MenuItem>>| Menu {
+    /// after a reload since keybind indices may change, and after toggles
+    /// (read-only) so the checkmark stays in sync.
+    fn setmenus(&mut self, cx: &mut Context<Self>) {
+        // Actions for menu items that have no keybind, indexed by `MenuPick`.
+        let mut actions: Vec<Action> = Vec::new();
+        let menus = vec![
+            self.prompt_menu(&mut actions),
+            self.shell_menu(&mut actions),
+            self.edit_menu(&mut actions),
+            self.view_menu(&mut actions, cx),
+            self.window_menu(&mut actions),
+            // macOS inserts the "Search" field at the top of any menu named
+            // "Help" automatically; "Documents" opens the docs window.
+            Menu {
+                name: "Help".into(),
+                items: vec![MenuItem::action("Documents", ShowDocs)],
+                disabled: false,
+            },
+        ];
+        self.menu_actions = actions;
+        cx.set_menus(menus);
+    }
+
+    fn menu(name: &str, items: Vec<Option<MenuItem>>) -> Menu {
+        Menu {
             name: name.to_string().into(),
             items: items.into_iter().flatten().collect(),
             disabled: false,
-        };
-        let sep = || Some(MenuItem::separator());
-        cx.set_menus(vec![
-            menu(
-                "Prompt",
-                vec![
-                    self.menu_item("Reload Config", Action::ReloadConfig),
-                    sep(),
-                    self.menu_item("Quit Prompt", Action::Quit),
-                ],
-            ),
-            menu(
-                "Shell",
-                vec![
-                    self.menu_item("New Tab", Action::NewTab),
-                    self.menu_item("Split Right", Action::NewSplit(SplitDirection::Right)),
-                    self.menu_item("Split Down", Action::NewSplit(SplitDirection::Down)),
-                    sep(),
-                    self.menu_item("Close", Action::CloseSurface),
-                ],
-            ),
-            menu(
-                "Edit",
-                vec![
-                    self.menu_item("Copy", Action::Copy),
-                    self.menu_item("Paste", Action::Paste),
-                    sep(),
-                    self.menu_item("Find\u{2026}", Action::ToggleSearch),
-                ],
-            ),
-            menu(
-                "View",
-                vec![
-                    self.menu_item("Increase Font Size", Action::IncreaseFontSize(1.0)),
-                    self.menu_item("Decrease Font Size", Action::DecreaseFontSize(1.0)),
-                    self.menu_item("Reset Font Size", Action::ResetFontSize),
-                    sep(),
-                    self.menu_item("Clear Screen", Action::ClearScreen),
-                    self.menu_item("Jump to Previous Prompt", Action::JumpToPrompt(-1)),
-                    self.menu_item("Jump to Next Prompt", Action::JumpToPrompt(1)),
-                ],
-            ),
-            menu(
-                "Window",
-                vec![
-                    self.menu_item("Previous Tab", Action::PreviousTab),
-                    self.menu_item("Next Tab", Action::NextTab),
-                ],
-            ),
-        ]);
+        }
+    }
+
+    fn prompt_menu(&self, a: &mut Vec<Action>) -> Menu {
+        Self::menu(
+            "Prompt",
+            vec![
+                self.pick(a, "Reload Config", Action::ReloadConfig),
+                Some(MenuItem::separator()),
+                self.pick(a, "Quit Prompt", Action::Quit),
+            ],
+        )
+    }
+
+    fn shell_menu(&self, a: &mut Vec<Action>) -> Menu {
+        Self::menu(
+            "Shell",
+            vec![
+                self.pick(a, "New Window", Action::NewWindow),
+                self.pick(a, "New Tab", Action::NewTab),
+                self.pick(a, "Split Right", Action::NewSplit(SplitDirection::Right)),
+                self.pick(a, "Split Left", Action::NewSplit(SplitDirection::Left)),
+                self.pick(a, "Split Down", Action::NewSplit(SplitDirection::Down)),
+                Some(MenuItem::separator()),
+                self.pick(a, "Close", Action::CloseSurface),
+                self.pick(a, "Close Tab", Action::CloseTab),
+                self.pick(a, "Close Window", Action::CloseWindow),
+                self.pick(a, "Close All Windows", Action::CloseAllWindows),
+            ],
+        )
+    }
+
+    fn edit_menu(&self, a: &mut Vec<Action>) -> Menu {
+        Self::menu(
+            "Edit",
+            vec![
+                self.pick(a, "Copy", Action::Copy),
+                self.pick(a, "Paste", Action::Paste),
+                Some(MenuItem::separator()),
+                self.pick(a, "Find\u{2026}", Action::ToggleSearch),
+                self.pick(a, "Semantic Find", Action::ToggleSemanticSearch),
+                self.pick(a, "Explain Output", Action::ExplainOutput),
+                self.pick(a, "Compose Command", Action::ComposeCommand),
+            ],
+        )
+    }
+
+    /// Matches Ghostty's View menu (font size + title/read-only group).
+    fn view_menu(&self, a: &mut Vec<Action>, cx: &App) -> Menu {
+        let read_only = self
+            .panes
+            .get(&self.tabs.focused())
+            .is_some_and(|p| p.view.read(cx).is_read_only());
+        Self::menu(
+            "View",
+            vec![
+                self.pick(a, "Reset Font Size", Action::ResetFontSize),
+                self.pick(a, "Increase Font Size", Action::IncreaseFontSize(1.0)),
+                self.pick(a, "Decrease Font Size", Action::DecreaseFontSize(1.0)),
+                Some(MenuItem::separator()),
+                self.pick(a, "Change Tab Title\u{2026}", Action::ChangeTabTitle),
+                self.pick(a, "Change Terminal Title\u{2026}", Action::ChangeTerminalTitle),
+                Some(self.pick_checked(a, "Terminal Read-only", Action::ToggleReadOnly, read_only)),
+                Some(MenuItem::separator()),
+                self.pick(a, "Quick Terminal", Action::ToggleQuickTerminal),
+            ],
+        )
+    }
+
+    /// Matches Ghostty's Window menu (minus Float on Top, unsupported by
+    /// gpui). Tab navigation is listed explicitly since Prompt does not use
+    /// native macOS tabs that macOS would populate automatically.
+    fn window_menu(&self, a: &mut Vec<Action>) -> Menu {
+        let select_split = Self::menu(
+            "Select Split",
+            vec![
+                self.pick(a, "Select Split Above", Action::GotoSplit(SplitFocus::Up)),
+                self.pick(a, "Select Split Below", Action::GotoSplit(SplitFocus::Down)),
+                self.pick(a, "Select Split Left", Action::GotoSplit(SplitFocus::Left)),
+                self.pick(a, "Select Split Right", Action::GotoSplit(SplitFocus::Right)),
+            ],
+        );
+        let resize_split = Self::menu(
+            "Resize Split",
+            vec![
+                self.pick(a, "Equalize Splits", Action::EqualizeSplits),
+                self.pick(a, "Move Divider Up", Action::ResizeSplit(ResizeDir::Up)),
+                self.pick(a, "Move Divider Down", Action::ResizeSplit(ResizeDir::Down)),
+                self.pick(a, "Move Divider Left", Action::ResizeSplit(ResizeDir::Left)),
+                self.pick(a, "Move Divider Right", Action::ResizeSplit(ResizeDir::Right)),
+            ],
+        );
+        Self::menu(
+            "Window",
+            vec![
+                self.pick(a, "Minimize", Action::MinimizeWindow),
+                self.pick(a, "Zoom", Action::ZoomWindow),
+                self.pick(a, "Toggle Full Screen", Action::ToggleFullscreen),
+                self.pick(a, "Show/Hide All Terminals", Action::HideAll),
+                Some(MenuItem::separator()),
+                self.pick(a, "Zoom Split", Action::ZoomSplit),
+                self.pick(a, "Select Previous Split", Action::GotoSplit(SplitFocus::Previous)),
+                self.pick(a, "Select Next Split", Action::GotoSplit(SplitFocus::Next)),
+                Some(MenuItem::submenu(select_split)),
+                Some(MenuItem::submenu(resize_split)),
+                Some(MenuItem::separator()),
+                self.pick(a, "Return To Default Size", Action::ReturnToDefaultSize),
+                self.pick(a, "Use as Default", Action::UseAsDefault),
+                Some(MenuItem::separator()),
+                self.pick(a, "Previous Tab", Action::PreviousTab),
+                self.pick(a, "Next Tab", Action::NextTab),
+                Some(MenuItem::separator()),
+                self.pick(a, "Bring All to Front", Action::BringAllToFront),
+            ],
+        )
     }
 
     /// Watch the config file and reload appearance on every edit.
@@ -295,7 +403,9 @@ impl WorkspaceView {
         };
         self.base_font_size = self.font_size;
         self.opts = opts;
-        let (keybinds, diags) = config::resolve(&self.opts.keybind);
+        self.plugins = loadplugins(&self.opts);
+        self.macros = loadmacros();
+        let (keybinds, diags) = resolvekeys(&self.opts, &self.plugins);
         for d in &diags {
             eprintln!("prompt: {}: {}", d.key, d.message);
         }
@@ -316,9 +426,11 @@ impl WorkspaceView {
             pad: self.pad,
             cursor_default: self.opts.cursor_style,
             copy_on_select: self.opts.copy_on_select,
+            option_as_alt: self.opts.macos_option_as_alt,
         };
         for pane in self.panes.values() {
-            pane.view.update(cx, |view, cx| view.set_appearance(&appearance, cx));
+            pane.view
+                .update(cx, |view, cx| view.set_appearance(&appearance, cx));
         }
     }
 
@@ -361,6 +473,7 @@ impl WorkspaceView {
                 self.pad,
                 self.opts.cursor_style,
                 self.opts.copy_on_select,
+                self.opts.macos_option_as_alt,
                 fallback,
                 window,
                 cx,
@@ -388,7 +501,13 @@ impl WorkspaceView {
                 this.paneevent(id, event, window, cx);
             },
         );
-        self.panes.insert(id, Pane { view, _subscription: subscription });
+        self.panes.insert(
+            id,
+            Pane {
+                view,
+                _subscription: subscription,
+            },
+        );
         Some(id)
     }
 
@@ -424,6 +543,7 @@ impl WorkspaceView {
     /// Close one pane: collapse its split, or close its tab when it is the
     /// last pane there, or quit when it is the last pane of the last tab.
     fn closepane(&mut self, pane: PaneId, window: &mut Window, cx: &mut Context<Self>) {
+        self.zoomed = false;
         let Some(index) = self.tabindex(pane) else {
             return;
         };
@@ -472,6 +592,7 @@ impl WorkspaceView {
 
     pub fn activatetab(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
         if self.tabs.activate(index) {
+            self.zoomed = false;
             self.focusactive(window, cx);
             cx.notify();
         }
@@ -491,14 +612,117 @@ impl WorkspaceView {
         }
     }
 
+    /// Reset every divider in the active tab to an even split.
+    fn equalizesplits(&mut self, cx: &mut Context<Self>) {
+        let dividers = self.tabs.active().tree.list_dividers();
+        if dividers.is_empty() {
+            return;
+        }
+        let tree = &mut self.tabs.active_mut().tree;
+        for (split, _) in dividers {
+            tree.set_ratio(split, 0.5);
+        }
+        cx.notify();
+    }
+
+    /// Nudge the divider adjacent to the focused pane in a direction.
+    fn resizesplit(&mut self, dir: ResizeDir, cx: &mut Context<Self>) {
+        let (axis, delta) = match dir {
+            ResizeDir::Left => (Axis::Horizontal, -RESIZE_STEP),
+            ResizeDir::Right => (Axis::Horizontal, RESIZE_STEP),
+            ResizeDir::Up => (Axis::Vertical, -RESIZE_STEP),
+            ResizeDir::Down => (Axis::Vertical, RESIZE_STEP),
+        };
+        let focused = self.tabs.focused();
+        let tree = &mut self.tabs.active_mut().tree;
+        let Some(split) = tree.nearest_split(focused, axis) else {
+            return;
+        };
+        if let Some(current) = tree.ratio(split) {
+            tree.set_ratio(split, current + delta);
+            cx.notify();
+        }
+    }
+
+    /// Resize the window back to the configured default cell grid.
+    fn returntodefaultsize(&self, window: &mut Window) {
+        let cols = if self.opts.window_width > 0 {
+            self.opts.window_width as usize
+        } else {
+            SPAWN_COLS
+        };
+        let rows = if self.opts.window_height > 0 {
+            self.opts.window_height as usize
+        } else {
+            SPAWN_ROWS
+        };
+        let (width, height) = crate::metrics::pixel_size(cols, rows, self.pad, self.cell);
+        window.resize(size(px(width), px(height)));
+    }
+
+    /// Persist the focused pane's current cell grid as the default size.
+    fn useasdefault(&mut self, cx: &mut Context<Self>) {
+        let Some((cols, rows)) = self
+            .panes
+            .get(&self.tabs.focused())
+            .map(|p| p.view.read(cx).grid_size())
+        else {
+            return;
+        };
+        write_config("window-width", &cols.to_string());
+        write_config("window-height", &rows.to_string());
+    }
+
+    /// Open the rename window for the active tab or the focused pane.
+    fn changetitle(&mut self, tab: bool, window: &mut Window, cx: &mut Context<Self>) {
+        let root = cx.weak_entity();
+        if tab {
+            let index = self.tabs.active_index();
+            let initial = self.tabs.active().title.clone().unwrap_or_default();
+            crate::rename::open(window, root, crate::rename::Target::Tab(index), initial, cx);
+        } else {
+            let pane = self.tabs.focused();
+            let initial = self
+                .panes
+                .get(&pane)
+                .map(|p| p.view.read(cx).title().to_string())
+                .unwrap_or_default();
+            crate::rename::open(window, root, crate::rename::Target::Pane(pane), initial, cx);
+        }
+    }
+
+    /// Set the active-tab label override (called back from the rename window).
+    pub fn rename_tab(&mut self, index: usize, title: &str, cx: &mut Context<Self>) {
+        let trimmed = title.trim();
+        let value = (!trimmed.is_empty()).then(|| trimmed.to_string());
+        if self.tabs.set_title(index, value) {
+            cx.notify();
+        }
+    }
+
+    /// Set a pane's title override (called back from the rename window).
+    pub fn rename_pane(&mut self, pane: PaneId, title: &str, cx: &mut Context<Self>) {
+        if let Some(p) = self.panes.get(&pane) {
+            p.view
+                .update(cx, |view, cx| view.set_title_override(title, cx));
+        }
+    }
+
     /// Split the focused pane. `first` places the new pane before the
     /// existing one (left/up) instead of after it (right/down).
     fn split(&mut self, axis: Axis, first: bool, window: &mut Window, cx: &mut Context<Self>) {
+        self.zoomed = false;
         let target = self.tabs.focused();
         let Some(id) = self.spawnpane(window, cx) else {
             return;
         };
-        if self.tabs.active_mut().tree.split(target, axis, id, first).is_none() {
+        if self
+            .tabs
+            .active_mut()
+            .tree
+            .split(target, axis, id, first)
+            .is_none()
+        {
             self.panes.remove(&id);
             return;
         }
@@ -544,11 +768,14 @@ impl WorkspaceView {
         (0..self.tabs.len()).find(|i| self.tabs.get(*i).is_some_and(|t| t.tree.contains(pane)))
     }
 
-    /// One label per tab: its focused pane's title.
+    /// One label per tab: its override when set, else its focused pane's title.
     fn titles(&self, cx: &App) -> Vec<String> {
         (0..self.tabs.len())
             .map(|i| {
                 let tab = self.tabs.get(i).expect("tab index");
+                if let Some(title) = &tab.title {
+                    return title.clone();
+                }
                 self.panes
                     .get(&tab.focused)
                     .map(|pane| pane.view.read(cx).title().to_string())
@@ -558,11 +785,26 @@ impl WorkspaceView {
     }
 
     fn newtab(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.zoomed = false;
         if let Some(id) = self.spawnpane(window, cx) {
             self.tabs.new_tab(id);
             self.focusactive(window, cx);
             cx.notify();
         }
+    }
+
+    /// Open another top-level window, cloning this window's current
+    /// appearance so the new one matches without re-reading config.
+    fn newwindow(&self, cx: &mut Context<Self>) {
+        crate::open_window(
+            self.opts.clone(),
+            self.colors.clone(),
+            self.font.clone(),
+            self.font_size,
+            self.cell,
+            self.pad,
+            cx,
+        );
     }
 
     /// Cycle focus to the previous/next pane in the active tab's layout.
@@ -599,7 +841,11 @@ impl WorkspaceView {
     }
 
     /// Run something on the focused pane's view.
-    fn onfocused(&self, cx: &mut Context<Self>, f: impl FnOnce(&mut TerminalView, &mut Context<TerminalView>)) {
+    fn onfocused(
+        &self,
+        cx: &mut Context<Self>,
+        f: impl FnOnce(&mut TerminalView, &mut Context<TerminalView>),
+    ) {
         if let Some(pane) = self.panes.get(&self.tabs.focused()) {
             pane.view.update(cx, |view, cx| f(view, cx));
         }
@@ -610,14 +856,36 @@ impl WorkspaceView {
         let Some(kb) = self.keybinds.get(action.0) else {
             return;
         };
-        self.dispatch(kb.action, window, cx);
+        self.dispatch(kb.action.clone(), window, cx);
+    }
+
+    /// Open the documentation window (Help menu).
+    fn showdocs(&mut self, _: &ShowDocs, window: &mut Window, cx: &mut Context<Self>) {
+        crate::help::open(window, cx);
+    }
+
+    /// Dispatch a keybind-less menu item via its `menu_actions` index.
+    fn menupick(&mut self, action: &MenuPick, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(config_action) = self.menu_actions.get(action.0).cloned() {
+            self.dispatch(config_action, window, cx);
+        }
     }
 
     /// Carry out one config action.
     fn dispatch(&mut self, action: Action, window: &mut Window, cx: &mut Context<Self>) {
         match action {
+            Action::NewWindow => self.newwindow(cx),
             Action::NewTab => self.newtab(window, cx),
             Action::CloseSurface => self.closepane(self.tabs.focused(), window, cx),
+            Action::CloseTab => self.closetab(self.tabs.active_index(), window, cx),
+            Action::CloseWindow => window.remove_window(),
+            Action::CloseAllWindows => {
+                for handle in cx.windows() {
+                    handle
+                        .update(cx, |_, window, _| window.remove_window())
+                        .ok();
+                }
+            }
             Action::NewSplit(dir) => {
                 let (axis, first) = match dir {
                     SplitDirection::Right => (Axis::Horizontal, false),
@@ -635,6 +903,12 @@ impl WorkspaceView {
                 SplitFocus::Left => self.focusdir(Direction::Left, window, cx),
                 SplitFocus::Right => self.focusdir(Direction::Right, window, cx),
             },
+            Action::ZoomSplit => {
+                self.zoomed = !self.zoomed;
+                cx.notify();
+            }
+            Action::EqualizeSplits => self.equalizesplits(cx),
+            Action::ResizeSplit(dir) => self.resizesplit(dir, cx),
             Action::GotoTab(n) => self.gototab(n, window, cx),
             Action::PreviousTab => {
                 self.tabs.activate_prev();
@@ -663,476 +937,265 @@ impl WorkspaceView {
             Action::JumpToPrompt(delta) => self.onfocused(cx, |v, cx| v.jump_prompt(delta, cx)),
             Action::ClearScreen => self.onfocused(cx, |v, cx| v.clear_screen(cx)),
             Action::ToggleSearch => self.onfocused(cx, |v, cx| v.toggle_search(cx)),
-            Action::ToggleSettings => self.toggle_settings(window, cx),
+            Action::ToggleSemanticSearch => {
+                self.onfocused(cx, |v, cx| v.toggle_semantic_search(cx))
+            }
+            Action::ExplainOutput => self.onfocused(cx, |v, cx| v.explain_output(cx)),
+            Action::ComposeCommand => self.onfocused(cx, |v, cx| v.compose_command(cx)),
+            Action::PluginCommand(id) => self.runplugin(&id, window, cx),
+            Action::MacroRecord => self.togglerecord(window, cx),
+            Action::MacroReplay(name) => {
+                if let Err(error) = self.replay_macro(&name, cx) {
+                    eprintln!("prompt: {error}");
+                }
+            }
+            Action::ToggleSettings => crate::settings::open(window, cx),
+            Action::ShowHelp => crate::help::open(window, cx),
             Action::ReloadConfig => self.reload(cx),
             Action::ToggleFullscreen => window.toggle_fullscreen(),
+            Action::MinimizeWindow => window.minimize_window(),
+            Action::ZoomWindow => window.zoom_window(),
+            Action::HideAll => cx.hide(),
+            Action::BringAllToFront => cx.activate(true),
+            Action::ReturnToDefaultSize => self.returntodefaultsize(window),
+            Action::UseAsDefault => self.useasdefault(cx),
+            Action::ChangeTabTitle => self.changetitle(true, window, cx),
+            Action::ChangeTerminalTitle => self.changetitle(false, window, cx),
+            Action::ToggleReadOnly => {
+                self.onfocused(cx, |v, cx| {
+                    v.toggle_read_only(cx);
+                });
+                // Rebuild menus so the read-only checkmark reflects the change.
+                self.setmenus(cx);
+            }
+            Action::ToggleQuickTerminal => crate::quick::toggle(cx),
             Action::Quit => cx.quit(),
             Action::Unbound => {}
         }
     }
 
-    /// Open/close the settings panel. Closing returns focus to the pane.
-    fn toggle_settings(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.settings_open = !self.settings_open;
-        self.editing = None;
-        if !self.settings_open {
-            self.focusactive(window, cx);
-        }
-        cx.notify();
-    }
-
-    /// The current config value backing a free-text field.
-    fn field_value(&self, field: SettingsField) -> String {
-        match field {
-            SettingsField::FontFamily => match self.opts.font_family.first() {
-                Some(f) => f.clone(),
-                None => String::new(),
-            },
-            SettingsField::Shell => self.opts.shell.clone().unwrap_or_default(),
-            SettingsField::Foreground => self.opts.foreground.clone().unwrap_or_default(),
-            SettingsField::Background => self.opts.background.clone().unwrap_or_default(),
-        }
-    }
-
-    /// Begin editing a free-text field; focus moves to capture keys.
-    fn start_edit(&mut self, field: SettingsField, window: &mut Window, cx: &mut Context<Self>) {
-        let current = self.field_value(field);
-        self.editing = Some((field, textedit::TextEdit::new(&current)));
-        window.focus(&self.settings_focus, cx);
-        cx.notify();
-    }
-
-    /// Commit the edited field to the config file and reload.
-    fn commit_edit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some((field, edit)) = self.editing.take() {
-            self.write_config(field.key(), edit.text().trim());
-            self.reload(cx);
-        }
-        // Return focus to the active pane.
-        self.focusactive(window, cx);
-        cx.notify();
-    }
-
-    /// Keys typed while a settings field is focused.
-    fn settings_key(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
-        if self.editing.is_none() {
+    fn runplugin(&mut self, id: &str, window: &mut Window, cx: &mut Context<Self>) {
+        let Some((_plugin, command)) = plugin::command(&self.plugins, id) else {
+            eprintln!("prompt: missing plugin command `{id}`");
             return;
-        }
-        let ks = &event.keystroke;
-        // Leave platform/ctrl chords to the action system (e.g. cmd+, closes).
-        if ks.modifiers.platform || ks.modifiers.control {
-            return;
-        }
-        match ks.key.as_str() {
-            "enter" => {
-                self.commit_edit(window, cx);
-                cx.stop_propagation();
-                return;
+        };
+        let command = command.clone();
+        match command.mode {
+            plugin::CommandMode::Pane => {
+                self.onfocused(cx, |view, cx| view.run_command(&command.run, cx));
             }
-            "escape" => {
-                self.editing = None;
-                self.focusactive(window, cx);
-                cx.notify();
-                cx.stop_propagation();
-                return;
-            }
-            other => {
-                if let Some((_, edit)) = self.editing.as_mut() {
-                    match other {
-                        "backspace" => {
-                            edit.backspace();
-                        }
-                        "delete" => {
-                            edit.delete();
-                        }
-                        "left" => edit.left(),
-                        "right" => edit.right(),
-                        "home" => edit.home(),
-                        "end" => edit.end(),
-                        _ => {
-                            let text = ks
-                                .key_char
-                                .as_deref()
-                                .filter(|t| !t.is_empty() && !ks.modifiers.alt);
-                            if let Some(text) = text {
-                                edit.insert(text);
-                            }
-                        }
-                    }
+            plugin::CommandMode::Tab => {
+                if let Some(id) = self.spawncommand(&command.run, window, cx) {
+                    self.tabs.new_tab(id);
+                    self.focusactive(window, cx);
+                    cx.notify();
                 }
             }
-        }
-        cx.notify();
-        cx.stop_propagation();
-    }
-
-    /// One editable free-text row: clicking it starts editing; while active
-    /// it shows the live buffer with a caret.
-    fn text_row(&self, field: SettingsField, cx: &mut Context<Self>) -> impl IntoElement {
-        let active = matches!(&self.editing, Some((f, _)) if *f == field);
-        let mut border = colors::hsla(self.colors.fg);
-        border.a = if active { 0.6 } else { 0.25 };
-
-        let mut boxed = div()
-            .flex()
-            .items_center()
-            .min_w(px(220.0))
-            .px_2()
-            .py_1()
-            .rounded(px(4.0))
-            .border_1()
-            .border_color(border);
-
-        if active {
-            let (before, after) = self.editing.as_ref().expect("active").1.split();
-            let mut caret = colors::hsla(self.colors.cursor);
-            caret.a = 0.9;
-            boxed = boxed
-                .text_color(colors::rgba(self.colors.fg))
-                .child(SharedString::from(before))
-                .child(div().w(px(1.0)).h(px(16.0)).bg(caret))
-                .child(SharedString::from(after));
-        } else {
-            let current = self.field_value(field);
-            let (text, mut color) = if current.is_empty() {
-                (field.placeholder().to_string(), colors::hsla(self.colors.fg))
-            } else {
-                (current, colors::hsla(self.colors.fg))
-            };
-            if self.field_value(field).is_empty() {
-                color.a = 0.4;
+            plugin::CommandMode::SplitRight => {
+                self.splitcommand(&command.run, Axis::Horizontal, false, window, cx);
             }
-            boxed = boxed.text_color(color).child(SharedString::from(text)).on_mouse_down(
-                MouseButton::Left,
-                cx.listener(move |this, _ev, window, cx| {
-                    this.start_edit(field, window, cx);
-                    cx.stop_propagation();
-                }),
-            );
+            plugin::CommandMode::SplitDown => {
+                self.splitcommand(&command.run, Axis::Vertical, false, window, cx);
+            }
         }
-        self.srow(field.label(), boxed)
     }
 
-    /// Persist one `key = value` into the config file (preserving the rest),
-    /// then reload so the change applies immediately. No-op without a config
-    /// path.
-    fn write_config(&self, key: &str, value: &str) {
-        let Some(path) = config::default_path() else {
+    /// Toggle command-macro recording. Starting arms the global recorder;
+    /// stopping captures the typed commands and opens the rename modal to name
+    /// and save them (an empty capture is discarded).
+    fn togglerecord(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let active = cx
+            .try_global::<MacroRecorder>()
+            .is_some_and(|rec| rec.0.is_active());
+        if !active {
+            cx.update_global::<MacroRecorder, _>(|rec, _| rec.0.start());
+            eprintln!("prompt: macro recording started; run commands, then trigger macro_record again to save");
+            cx.notify();
+            return;
+        }
+        let commands = cx.update_global::<MacroRecorder, _>(|rec, _| rec.0.finish());
+        cx.notify();
+        if commands.is_empty() {
+            eprintln!("prompt: macro recording stopped: nothing captured");
+            return;
+        }
+        let root = cx.weak_entity();
+        crate::rename::open_macro(window, root, commands, cx);
+    }
+
+    /// Persist a recorded macro under `name` (coerced to a safe id), then make
+    /// it immediately available. Invoked by the rename modal on commit.
+    pub fn save_macro(&mut self, name: &str, commands: Vec<String>, cx: &mut Context<Self>) {
+        let Some(name) = macros::sanitize_name(name) else {
+            eprintln!("prompt: macro name `{name}` has no usable characters");
             return;
         };
-        let text = std::fs::read_to_string(&path).unwrap_or_default();
-        let updated = config::upsert(&text, key, value);
-        if let Some(dir) = path.parent() {
-            let _ = std::fs::create_dir_all(dir);
+        let Some(dir) = macros::defaultdir() else {
+            eprintln!("prompt: no config directory for macros");
+            return;
+        };
+        match macros::save(&dir, &macros::Macro::new(name.clone(), commands)) {
+            Ok(()) => {
+                self.macros = loadmacros();
+                eprintln!("prompt: saved macro `{name}` (bind it with `keybind = ...=macro:{name}`)");
+            }
+            Err(error) => eprintln!("prompt: failed to save macro: {error}"),
         }
-        let _ = std::fs::write(&path, updated);
+        cx.notify();
     }
 
-    /// Apply one settings-panel change: compute the new value from the
-    /// current options, write it to the config file, and reload.
-    fn apply_setting(&mut self, setting: Setting, cx: &mut Context<Self>) {
-        let o = &self.opts;
-        let (key, value): (&str, String) = match setting {
-            Setting::ThemeCycle(dir) => {
-                let names = theme::names();
-                let cur = names
+    /// Replay a saved macro into the focused pane.
+    fn replay_macro(&mut self, name: &str, cx: &mut Context<Self>) -> Result<(), String> {
+        let commands = self
+            .macros
+            .iter()
+            .find(|m| m.name == name)
+            .map(|m| m.commands.clone())
+            .ok_or_else(|| format!("no macro named `{name}`"))?;
+        self.onfocused(cx, |view, cx| view.run_macro(commands, cx));
+        Ok(())
+    }
+
+    /// Handle one MCP bridge op against this workspace, returning the JSON
+    /// result body (or an error string the bridge reports as a failed tool
+    /// call). The op names mirror the MCP tools defined in `mcpbridge`.
+    pub fn mcp_dispatch(
+        &mut self,
+        op: &str,
+        args: &Value,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Result<Value, String> {
+        match op {
+            "run_command" => {
+                let text = args
+                    .get("text")
+                    .and_then(Value::as_str)
+                    .ok_or("run_command requires a `text` string")?;
+                let target = args.get("target").and_then(Value::as_str).unwrap_or("pane");
+                self.mcp_run(text, target, window, cx)
+            }
+            "read_screen" => {
+                let lines = args.get("lines").and_then(Value::as_u64).map(|n| n as usize);
+                let text = self
+                    .panes
+                    .get(&self.tabs.focused())
+                    .map(|pane| pane.view.read(cx).screen_text(lines))
+                    .unwrap_or_default();
+                Ok(json!({ "text": text }))
+            }
+            "list_macros" => Ok(json!({
+                "macros": self
+                    .macros
                     .iter()
-                    .position(|n| n.eq_ignore_ascii_case(o.theme.trim()))
-                    .unwrap_or(0) as i32;
-                let n = names.len() as i32;
-                let idx = (((cur + dir) % n + n) % n) as usize;
-                ("theme", names[idx].to_string())
+                    .map(|m| json!({ "name": m.name, "commands": m.commands }))
+                    .collect::<Vec<_>>(),
+            })),
+            "run_macro" => {
+                let name = args
+                    .get("name")
+                    .and_then(Value::as_str)
+                    .ok_or("run_macro requires a `name` string")?;
+                self.replay_macro(name, cx)?;
+                Ok(json!({ "ok": true, "name": name }))
             }
-            Setting::FontSize(d) => {
-                let v = (o.font_size + d as f32).clamp(6.0, 72.0);
-                ("font-size", format!("{v}"))
+            "list_tabs" => {
+                let active = self.tabs.active_index();
+                let tabs = self
+                    .titles(cx)
+                    .into_iter()
+                    .enumerate()
+                    .map(|(index, title)| json!({ "index": index, "title": title, "active": index == active }))
+                    .collect::<Vec<_>>();
+                Ok(json!({ "tabs": tabs, "active": active }))
             }
-            Setting::CursorStyleCycle => {
-                let next = match o.cursor_style {
-                    config::CursorStyle::Block => "bar",
-                    config::CursorStyle::Bar => "underline",
-                    config::CursorStyle::Underline => "block",
-                };
-                ("cursor-style", next.to_string())
+            "focus_tab" => {
+                let index = args
+                    .get("index")
+                    .and_then(Value::as_u64)
+                    .ok_or("focus_tab requires an `index` number")? as usize;
+                if index >= self.tabs.len() {
+                    return Err(format!("no tab at index {index}"));
+                }
+                self.activatetab(index, window, cx);
+                Ok(json!({ "ok": true, "index": index }))
             }
-            Setting::FontStyleCycle => {
-                let next = match o.font_style {
-                    config::FontStyle::Normal => "bold",
-                    config::FontStyle::Bold => "italic",
-                    config::FontStyle::Italic => "bold-italic",
-                    config::FontStyle::BoldItalic => "normal",
-                };
-                ("font-style", next.to_string())
-            }
-            Setting::PaddingX(d) => (
-                "window-padding-x",
-                (o.window_padding_x as i32 + d).max(0).to_string(),
-            ),
-            Setting::PaddingY(d) => (
-                "window-padding-y",
-                (o.window_padding_y as i32 + d).max(0).to_string(),
-            ),
-            Setting::Scrollback(d) => (
-                "scrollback-limit",
-                (o.scrollback_limit as i64 + d as i64).max(0).to_string(),
-            ),
-            Setting::ToggleCopyOnSelect => {
-                ("copy-on-select", (!o.copy_on_select).to_string())
-            }
-        };
-        self.write_config(key, &value);
-        self.reload(cx);
+            other => Err(format!("unknown op `{other}`")),
+        }
     }
 
-    /// A small clickable chip that applies `setting` when pressed.
-    fn chip(
-        &self,
-        label: impl Into<SharedString>,
-        setting: Setting,
+    /// Run `text` per the MCP `run_command` target.
+    fn mcp_run(
+        &mut self,
+        text: &str,
+        target: &str,
+        window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> impl IntoElement {
-        div()
-            .px_2()
-            .py_1()
-            .rounded(px(4.0))
-            .bg(colors::rgba(self.colors.selection_bg))
-            .text_color(colors::rgba(self.colors.selection_fg))
-            .child(label.into())
-            .on_mouse_down(
-                MouseButton::Left,
-                cx.listener(move |this, _ev, _window, cx| {
-                    this.apply_setting(setting, cx);
-                    cx.stop_propagation();
-                }),
-            )
+    ) -> Result<Value, String> {
+        match target {
+            "pane" => self.onfocused(cx, |view, cx| view.run_command(text, cx)),
+            "tab" => {
+                let id = self
+                    .spawncommand(text, window, cx)
+                    .ok_or("failed to spawn command tab")?;
+                self.tabs.new_tab(id);
+                self.focusactive(window, cx);
+                cx.notify();
+            }
+            "split_right" => self.splitcommand(text, Axis::Horizontal, false, window, cx),
+            "split_down" => self.splitcommand(text, Axis::Vertical, false, window, cx),
+            other => {
+                return Err(format!(
+                    "unknown target `{other}` (pane|tab|split_right|split_down)"
+                ))
+            }
+        }
+        Ok(json!({ "ok": true, "target": target }))
     }
 
-    /// One labeled settings row: label on the left, controls on the right.
-    fn srow(&self, label: &str, control: impl IntoElement) -> impl IntoElement {
-        div()
-            .flex()
-            .justify_between()
-            .items_center()
-            .w_full()
-            .py_1()
-            .child(
-                div()
-                    .text_color(colors::rgba(self.colors.fg))
-                    .child(SharedString::from(label.to_string())),
-            )
-            .child(control)
-    }
-
-    /// A `‹ value ›` cycle control.
-    fn cycle(
-        &self,
-        value: String,
-        prev: Setting,
-        next: Setting,
+    fn spawncommand(
+        &mut self,
+        command: &str,
+        window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> impl IntoElement {
-        div()
-            .flex()
-            .items_center()
-            .gap_2()
-            .child(self.chip("\u{2039}", prev, cx))
-            .child(
-                div()
-                    .min_w(px(150.0))
-                    .text_color(colors::rgba(self.colors.fg))
-                    .child(SharedString::from(value)),
-            )
-            .child(self.chip("\u{203a}", next, cx))
+    ) -> Option<PaneId> {
+        let inherit = self
+            .panes
+            .get(&self.tabs.focused())
+            .and_then(|pane| pane.view.read(cx).cwd())
+            .and_then(|osc| session::cwdpath(&osc));
+        let mut options = session::options(&self.opts, SPAWN_COLS, SPAWN_ROWS, inherit);
+        let cwd = options.spawn.cwd.clone();
+        options.spawn = commandspawn(&self.opts, command);
+        options.spawn.cwd = cwd;
+        self.spawn(options, window, cx)
     }
 
-    /// A `− value +` stepper control.
-    fn stepper(
-        &self,
-        value: String,
-        dec: Setting,
-        inc: Setting,
+    fn splitcommand(
+        &mut self,
+        command: &str,
+        axis: Axis,
+        first: bool,
+        window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> impl IntoElement {
-        div()
-            .flex()
-            .items_center()
-            .gap_2()
-            .child(self.chip("\u{2212}", dec, cx))
-            .child(
-                div()
-                    .min_w(px(60.0))
-                    .text_color(colors::rgba(self.colors.fg))
-                    .child(SharedString::from(value)),
-            )
-            .child(self.chip("+", inc, cx))
-    }
-
-    /// The settings panel overlay.
-    fn settings_modal(&self, cx: &mut Context<Self>) -> AnyElement {
-        let o = &self.opts;
-        let theme = if o.theme.trim().is_empty() {
-            "default".to_string()
-        } else {
-            o.theme.clone()
+    ) {
+        let target = self.tabs.focused();
+        let Some(id) = self.spawncommand(command, window, cx) else {
+            return;
         };
-        let cursor = match o.cursor_style {
-            config::CursorStyle::Block => "block",
-            config::CursorStyle::Bar => "bar",
-            config::CursorStyle::Underline => "underline",
-        };
-        let fstyle = match o.font_style {
-            config::FontStyle::Normal => "normal",
-            config::FontStyle::Bold => "bold",
-            config::FontStyle::Italic => "italic",
-            config::FontStyle::BoldItalic => "bold-italic",
-        };
-        let mut border = colors::hsla(self.colors.fg);
-        border.a = 0.2;
-
-        let panel = div()
-            .w(px(460.0))
-            .bg(colors::rgba(self.colors.bg))
-            .border_1()
-            .border_color(border)
-            .rounded(px(10.0))
-            .p_4()
-            .flex()
-            .flex_col()
-            .gap_1()
-            .child(
-                div()
-                    .flex()
-                    .justify_between()
-                    .items_center()
-                    .pb_2()
-                    .child(
-                        div()
-                            .text_color(colors::rgba(self.colors.fg))
-                            .child(SharedString::from("Settings")),
-                    )
-                    .child(
-                        div()
-                            .px_2()
-                            .py_1()
-                            .rounded(px(4.0))
-                            .bg(colors::rgba(self.colors.selection_bg))
-                            .text_color(colors::rgba(self.colors.selection_fg))
-                            .child(SharedString::from("\u{2715}"))
-                            .on_mouse_down(
-                                MouseButton::Left,
-                                cx.listener(|this, _ev, window, cx| {
-                                    this.toggle_settings(window, cx);
-                                    cx.stop_propagation();
-                                }),
-                            ),
-                    ),
-            )
-            .child(self.srow(
-                "Theme",
-                self.cycle(theme, Setting::ThemeCycle(-1), Setting::ThemeCycle(1), cx),
-            ))
-            .child(self.srow(
-                "Font size",
-                self.stepper(
-                    format!("{}", o.font_size),
-                    Setting::FontSize(-1),
-                    Setting::FontSize(1),
-                    cx,
-                ),
-            ))
-            .child(self.srow(
-                "Font style",
-                self.cycle(
-                    fstyle.to_string(),
-                    Setting::FontStyleCycle,
-                    Setting::FontStyleCycle,
-                    cx,
-                ),
-            ))
-            .child(self.srow(
-                "Cursor",
-                self.cycle(
-                    cursor.to_string(),
-                    Setting::CursorStyleCycle,
-                    Setting::CursorStyleCycle,
-                    cx,
-                ),
-            ))
-            .child(self.srow(
-                "Padding X",
-                self.stepper(
-                    o.window_padding_x.to_string(),
-                    Setting::PaddingX(-1),
-                    Setting::PaddingX(1),
-                    cx,
-                ),
-            ))
-            .child(self.srow(
-                "Padding Y",
-                self.stepper(
-                    o.window_padding_y.to_string(),
-                    Setting::PaddingY(-1),
-                    Setting::PaddingY(1),
-                    cx,
-                ),
-            ))
-            .child(self.srow(
-                "Scrollback",
-                self.stepper(
-                    o.scrollback_limit.to_string(),
-                    Setting::Scrollback(-1000),
-                    Setting::Scrollback(1000),
-                    cx,
-                ),
-            ))
-            .child(self.srow(
-                "Copy on select",
-                self.chip(
-                    if o.copy_on_select { "On" } else { "Off" },
-                    Setting::ToggleCopyOnSelect,
-                    cx,
-                ),
-            ))
-            .child(self.text_row(SettingsField::FontFamily, cx))
-            .child(self.text_row(SettingsField::Shell, cx))
-            .child(self.text_row(SettingsField::Foreground, cx))
-            .child(self.text_row(SettingsField::Background, cx))
-            .child(
-                div()
-                    .pt_2()
-                    .text_color(border)
-                    .child(SharedString::from(
-                        "click a field, type, Enter to save \u{00b7} \u{2318}, to close",
-                    )),
-            )
-            // Swallow clicks on the panel so they don't reach the scrim
-            // (which would close) or the terminal beneath.
-            .on_mouse_down(
-                MouseButton::Left,
-                cx.listener(|_this, _ev, _w, cx| cx.stop_propagation()),
-            );
-
-        let mut scrim = colors::hsla(self.colors.bg);
-        scrim.a = 0.6;
-        div()
-            .absolute()
-            .top_0()
-            .left_0()
-            .size_full()
-            .flex()
-            .items_center()
-            .justify_center()
-            .bg(scrim)
-            .child(panel)
-            // A click on the dimmed backdrop closes the panel.
-            .on_mouse_down(
-                MouseButton::Left,
-                cx.listener(|this, _ev, window, cx| {
-                    this.toggle_settings(window, cx);
-                    cx.stop_propagation();
-                }),
-            )
-            .into_any_element()
+        if self
+            .tabs
+            .active_mut()
+            .tree
+            .split(target, axis, id, first)
+            .is_none()
+        {
+            self.panes.remove(&id);
+            return;
+        }
+        self.tabs.focus(id);
+        self.focusactive(window, cx);
+        cx.notify();
     }
 }
 
@@ -1140,11 +1203,14 @@ impl Render for WorkspaceView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let tree = self.tabs.active().tree.clone();
         let focused = self.tabs.focused();
+        let multi = tree.panes().len() > 1;
         let children: Vec<(PaneId, AnyElement)> = tree
             .panes()
             .into_iter()
             .filter_map(|id| {
-                self.panes.get(&id).map(|pane| (id, pane.view.clone().into_any_element()))
+                self.panes
+                    .get(&id)
+                    .map(|pane| (id, pane.view.clone().into_any_element()))
             })
             .collect();
         let mut dividercolor = colors::hsla(self.colors.fg);
@@ -1169,9 +1235,9 @@ impl Render for WorkspaceView {
             .flex_col()
             .bg(colors::rgba(self.colors.bg))
             .key_context("Workspace")
-            .track_focus(&self.settings_focus)
-            .on_key_down(cx.listener(Self::settings_key))
-            .on_action(cx.listener(Self::runbind));
+            .on_action(cx.listener(Self::runbind))
+            .on_action(cx.listener(Self::showdocs))
+            .on_action(cx.listener(Self::menupick));
 
         if self.tabs.len() > 1 {
             let titles = self.titles(cx);
@@ -1186,10 +1252,136 @@ impl Render for WorkspaceView {
             ));
         }
 
-        base = base.child(div().w_full().flex_1().min_h(px(0.0)).child(splitselement));
-        if self.settings_open {
-            base = base.child(self.settings_modal(cx));
+        // Zoom Split: when active with more than one pane, the focused pane
+        // fills the area in place of the split layout.
+        let content: AnyElement = if self.zoomed && multi {
+            match self.panes.get(&focused) {
+                Some(pane) => pane.view.clone().into_any_element(),
+                None => splitselement.into_any_element(),
+            }
+        } else {
+            splitselement.into_any_element()
+        };
+        base = base.child(div().w_full().flex_1().min_h(px(0.0)).child(content));
+
+        // Floating indicator while a macro is recording or replaying.
+        let recording = cx
+            .try_global::<MacroRecorder>()
+            .is_some_and(|rec| rec.0.is_active());
+        let replaying = cx.try_global::<MacroReplays>().is_some_and(|r| r.0 > 0);
+        if let Some(pill) = macro_pill(recording, replaying, &self.colors) {
+            base = base.child(pill);
         }
         base
     }
+}
+
+/// Upsert one `key = value` line into the user's config file, creating it if
+/// needed. Shared shape with the settings panel's writer.
+fn write_config(key: &str, value: &str) {
+    let Some(path) = config::default_path() else {
+        return;
+    };
+    let text = std::fs::read_to_string(&path).unwrap_or_default();
+    let updated = config::upsert(&text, key, value);
+    if let Some(dir) = path.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    let _ = std::fs::write(&path, updated);
+}
+
+fn loadplugins(opts: &config::Options) -> Vec<plugin::Plugin> {
+    let (plugins, diags) = plugin::load(&opts.plugin);
+    for d in &diags {
+        if d.line == 0 {
+            eprintln!("prompt: plugin {}: {}", d.path.display(), d.message);
+        } else {
+            eprintln!(
+                "prompt: plugin {} line {}: {}",
+                d.path.display(),
+                d.line,
+                d.message
+            );
+        }
+    }
+    plugins
+}
+
+/// Build the floating macro indicator pill, shown while recording a macro or
+/// replaying one. Recording wins when both are somehow active.
+fn macro_pill(recording: bool, replaying: bool, palette: &Colors) -> Option<AnyElement> {
+    if !recording && !replaying {
+        return None;
+    }
+    let (glyph, label, accent) = if recording {
+        ("\u{25cf}", "REC", theme::Rgb::new(230, 80, 80))
+    } else {
+        ("\u{25b6}", "REPLAY", theme::Rgb::new(120, 190, 250))
+    };
+    let mut bg = colors::hsla(palette.bg);
+    bg.a = 0.9;
+    let mut border = colors::hsla(palette.fg);
+    border.a = 0.18;
+    Some(
+        div()
+            .absolute()
+            .top(px(8.0))
+            .right(px(8.0))
+            .flex()
+            .items_center()
+            .gap_1()
+            .px_2()
+            .py(px(2.0))
+            .rounded(px(6.0))
+            .bg(bg)
+            .border_1()
+            .border_color(border)
+            .text_size(px(11.0))
+            .text_color(colors::hsla(accent))
+            .child(SharedString::from(glyph))
+            .child(SharedString::from(label))
+            .into_any_element(),
+    )
+}
+
+/// Load saved macros from the default macro directory (empty if unconfigured
+/// or absent).
+fn loadmacros() -> Vec<macros::Macro> {
+    macros::defaultdir()
+        .map(|dir| macros::load(&dir))
+        .unwrap_or_default()
+}
+
+fn resolvekeys(
+    opts: &config::Options,
+    plugins: &[plugin::Plugin],
+) -> (Vec<Keybind>, Vec<config::Diagnostic>) {
+    let mut raw = plugin::keybinds(plugins);
+    raw.extend(opts.keybind.iter().cloned());
+    let (mut binds, diags) = config::resolve(&raw);
+    // Menu-only actions that ship without a default shortcut: give each a
+    // binding-less entry so it gets a dispatch index for the menu. The empty
+    // key is unspellable, so `applykeybinds` never binds it to a keystroke.
+    // Skip any the user has already bound, so their shortcut shows instead.
+    for action in [Action::NewSplit(SplitDirection::Left)] {
+        if !binds.iter().any(|b| b.action == action) {
+            binds.push(Keybind {
+                mods: config::Mods::default(),
+                key: String::new(),
+                action,
+            });
+        }
+    }
+    (binds, diags)
+}
+
+fn commandspawn(opts: &config::Options, command: &str) -> pty::SpawnOptions {
+    let shell = opts
+        .shell
+        .as_ref()
+        .and_then(|shell| shell.split_whitespace().next())
+        .filter(|shell| !shell.is_empty())
+        .map(str::to_string)
+        .unwrap_or_else(pty::default_shell);
+    pty::SpawnOptions::command(vec![shell, "-lc".to_string(), command.to_string()])
 }

@@ -45,12 +45,20 @@ mod tests {
     use super::*;
 
     fn mods(ctrl: bool, shift: bool, alt: bool, cmd: bool) -> config::Mods {
-        config::Mods { ctrl, shift, alt, cmd }
+        config::Mods {
+            ctrl,
+            shift,
+            alt,
+            cmd,
+        }
     }
 
     #[test]
     fn plain_and_modified_keys() {
-        assert_eq!(keystroke(mods(false, false, false, true), "t").unwrap(), "secondary-t");
+        assert_eq!(
+            keystroke(mods(false, false, false, true), "t").unwrap(),
+            "secondary-t"
+        );
         assert_eq!(
             keystroke(mods(false, true, false, true), "d").unwrap(),
             "shift-secondary-d"
@@ -87,10 +95,22 @@ mod tests {
     fn punctuation_keys_pass_through() {
         // The minus key with cmd renders as `secondary--`, which gpui parses
         // as the platform modifier + the `-` key.
-        assert_eq!(keystroke(mods(false, false, false, true), "-").unwrap(), "secondary--");
-        assert_eq!(keystroke(mods(false, false, false, true), "+").unwrap(), "secondary-+");
-        assert_eq!(keystroke(mods(false, false, false, true), "=").unwrap(), "secondary-=");
-        assert_eq!(keystroke(mods(false, false, false, true), ",").unwrap(), "secondary-,");
+        assert_eq!(
+            keystroke(mods(false, false, false, true), "-").unwrap(),
+            "secondary--"
+        );
+        assert_eq!(
+            keystroke(mods(false, false, false, true), "+").unwrap(),
+            "secondary-+"
+        );
+        assert_eq!(
+            keystroke(mods(false, false, false, true), "=").unwrap(),
+            "secondary-="
+        );
+        assert_eq!(
+            keystroke(mods(false, false, false, true), ",").unwrap(),
+            "secondary-,"
+        );
     }
 
     #[test]
@@ -107,8 +127,7 @@ mod tests {
         for kb in config::default_keybinds() {
             let ks = keystroke(kb.mods, &kb.key)
                 .unwrap_or_else(|| panic!("no keystroke for {:?}+{}", kb.mods, kb.key));
-            gpui::Keystroke::parse(&ks)
-                .unwrap_or_else(|e| panic!("gpui rejected {ks:?}: {e:?}"));
+            gpui::Keystroke::parse(&ks).unwrap_or_else(|e| panic!("gpui rejected {ks:?}: {e:?}"));
         }
     }
 }

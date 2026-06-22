@@ -28,7 +28,11 @@ pub(crate) fn dispatch(inner: &mut Inner, params: &[&[u8]], bell_terminated: boo
                 };
                 if spec == b"?" {
                     if let Some(rgb) = palette_color(inner, idx as u8) {
-                        reply(inner, bell_terminated, &format!("4;{idx};{}", format_rgb(rgb)));
+                        reply(
+                            inner,
+                            bell_terminated,
+                            &format!("4;{idx};{}", format_rgb(rgb)),
+                        );
                     }
                 } else if let Some(rgb) = parse_color_spec(&String::from_utf8_lossy(spec)) {
                     inner.palette[idx as usize] = Some(rgb);
@@ -84,13 +88,22 @@ pub(crate) fn dispatch(inner: &mut Inner, params: &[&[u8]], bell_terminated: boo
         // Clipboard set (OSC 52). `52;<kind>;<base64>`; data `?` is a query
         // we cannot answer (no system clipboard read here), so it's ignored.
         52 => {
-            let kind = params.get(1).map(|b| String::from_utf8_lossy(b).into_owned());
+            let kind = params
+                .get(1)
+                .map(|b| String::from_utf8_lossy(b).into_owned());
             let data = params.get(2);
             if let (Some(kind), Some(data)) = (kind, data) {
                 if data != b"?" {
                     if let Some(decoded) = base64_decode(data) {
-                        let kind = if kind.is_empty() { "c".to_string() } else { kind };
-                        inner.clipboard = Some(Clipboard { kind, data: decoded });
+                        let kind = if kind.is_empty() {
+                            "c".to_string()
+                        } else {
+                            kind
+                        };
+                        inner.clipboard = Some(Clipboard {
+                            kind,
+                            data: decoded,
+                        });
                     }
                 }
             }
@@ -128,7 +141,11 @@ fn dynamic_query(
 ) {
     if arg == Some(&b"?".as_slice()) {
         if let Some(rgb) = pick(inner) {
-            reply(inner, bell_terminated, &format!("{cmd};{}", format_rgb(rgb)));
+            reply(
+                inner,
+                bell_terminated,
+                &format!("{cmd};{}", format_rgb(rgb)),
+            );
         }
     }
 }
@@ -147,7 +164,10 @@ fn reply(inner: &mut Inner, bell_terminated: bool, body: &str) {
 /// otherwise the host-installed report palette (if any).
 fn palette_color(inner: &Inner, index: u8) -> Option<(u8, u8, u8)> {
     inner.palette[index as usize].or_else(|| {
-        inner.report_colors.as_ref().map(|c| c.palette[index as usize])
+        inner
+            .report_colors
+            .as_ref()
+            .map(|c| c.palette[index as usize])
     })
 }
 

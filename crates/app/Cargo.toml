@@ -9,13 +9,28 @@ name = "prompt"
 path = "src/main.rs"
 
 [dependencies]
+assist = { path = "../assist" }
 config = { path = "../config" }
 futures = "0.3"
+global-hotkey = "0.8"
 gpui = { git = "https://github.com/zed-industries/zed", rev = "96285fc1" }
 gpui_platform = { git = "https://github.com/zed-industries/zed", rev = "96285fc1", features = ["font-kit", "wayland", "x11"] }
 input = { path = "../input" }
+macros = { path = "../macros" }
+mcp = { path = "../mcp" }
+plugin = { path = "../plugin" }
 pty = { path = "../pty" }
+raw-window-handle = "0.6"
+serde_json = "1"
 terminal = { path = "../terminal" }
 theme = { path = "../theme" }
 vt = { path = "../vt" }
 workspace = { path = "../workspace" }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
+objc2-app-kit = { version = "0.3", features = ["NSWindow", "NSView", "NSResponder", "NSScreen", "NSButton", "NSControl"] }
+objc2-foundation = { version = "0.3", features = ["NSGeometry"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+x11rb = "0.13"

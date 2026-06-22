@@ -111,7 +111,11 @@ fn colon_color(sub: &[u16]) -> Option<Color> {
         2 => {
             let rest = &sub[1..];
             // A 4+ value payload carries a leading colorspace id; skip it.
-            let rgb = if rest.len() >= 4 { &rest[1..4] } else { rest.get(0..3)? };
+            let rgb = if rest.len() >= 4 {
+                &rest[1..4]
+            } else {
+                rest.get(0..3)?
+            };
             Some(Color::Rgb(clamp8(rgb[0]), clamp8(rgb[1]), clamp8(rgb[2])))
         }
         5 => Some(Color::Indexed(clamp8(*sub.get(1)?))),
@@ -196,10 +200,18 @@ mod tests {
 
     #[test]
     fn underline_styles_colon() {
-        assert!(pen_after(&[&[4, 2]]).flags.contains(CellFlags::DOUBLE_UNDERLINE));
-        assert!(pen_after(&[&[4, 3]]).flags.contains(CellFlags::CURLY_UNDERLINE));
-        assert!(pen_after(&[&[4, 4]]).flags.contains(CellFlags::DOTTED_UNDERLINE));
-        assert!(pen_after(&[&[4, 5]]).flags.contains(CellFlags::DASHED_UNDERLINE));
+        assert!(pen_after(&[&[4, 2]])
+            .flags
+            .contains(CellFlags::DOUBLE_UNDERLINE));
+        assert!(pen_after(&[&[4, 3]])
+            .flags
+            .contains(CellFlags::CURLY_UNDERLINE));
+        assert!(pen_after(&[&[4, 4]])
+            .flags
+            .contains(CellFlags::DOTTED_UNDERLINE));
+        assert!(pen_after(&[&[4, 5]])
+            .flags
+            .contains(CellFlags::DASHED_UNDERLINE));
         assert!(pen_after(&[&[4, 0]]).flags & CellFlags::ANY_UNDERLINE == CellFlags::empty());
     }
 
