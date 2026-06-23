@@ -1,7 +1,8 @@
 # Releasing Prompt
 
-Prompt ships as a signed macOS `.dmg` and a Homebrew cask. Releases are cut by
-GitHub Actions (`.github/workflows/release.yml`); the local scripts under
+Prompt ships as a signed macOS `.dmg` (plus a Homebrew cask) and Linux
+`.tar.gz`, `.deb`, and `.AppImage` packages for x86_64 and aarch64. Releases are
+cut by GitHub Actions (`.github/workflows/release.yml`); the local scripts under
 `scripts/` are the same steps you can run by hand.
 
 ## Cutting a release
@@ -10,10 +11,18 @@ GitHub Actions (`.github/workflows/release.yml`); the local scripts under
 2. Merge to `main`.
 
 The workflow notices the new version (no matching `vX.Y.Z` tag yet), tags it,
-creates a GitHub Release, builds and notarizes `Prompt.dmg`, uploads it to the
-release, and updates the `prompt` cask in
-[`wess/homebrew-packages`](https://github.com/wess/homebrew-packages). The
-version check is idempotent, so re-running is safe.
+creates a GitHub Release, then in parallel: builds and notarizes `Prompt.dmg`
+and updates the `prompt` cask in
+[`wess/homebrew-packages`](https://github.com/wess/homebrew-packages); and
+builds the Linux packages (matrix over x86_64 and aarch64 on native runners)
+and uploads them to the release. The version check is idempotent, so re-running
+is safe.
+
+Because the Linux build includes code that never compiles on the macOS dev host
+(`linux.rs`, the `#[cfg(target_os = "linux")]` blocks), validate it **before**
+cutting the release: open a PR, which runs the `Linux Build` workflow
+(`.github/workflows/linux.yml`) on both architectures and uploads the artifacts
+to the run for inspection.
 
 ## Local build
 
@@ -26,6 +35,26 @@ scripts/dmg.sh       # package dist/Prompt.dmg
 Without `CODESIGN_IDENTITY` set, `bundle.sh` ad-hoc-signs the app: it launches on
 the build machine but is not distributable. For a signed local build, set
 `CODESIGN_IDENTITY` to a Developer ID Application identity from your keychain.
+
+## Linux build
+
+```sh
+scripts/linux.sh            # build + package for the host arch
+scripts/linux.sh aarch64    # label the artifacts (still builds natively)
+```
+
+`scripts/linux.sh` builds the release binary and produces, in `dist/linux/`, a
+`.tar.gz` (FHS tree), a `.deb` (via `cargo-deb`, configured in
+`crates/app/Cargo.toml`'s `[package.metadata.deb]`), and an `.AppImage` (via
+`linuxdeploy` + `appimagetool`, downloaded on demand). It builds **natively** —
+CI uses a separate runner per architecture rather than cross-compiling.
+
+Requirements: a Rust toolchain, `cargo-deb` (installed on demand), `curl`,
+`file`, and the gpui system libraries — `clang`, `libasound2-dev`,
+`libfontconfig-dev`, `libssl-dev`, `libvulkan1`, `libwayland-dev`,
+`libx11-xcb-dev`, `libxkbcommon-x11-dev`. The `.desktop` entry is
+`assets/prompt.desktop`; the AppImage icon must be a standard size, so packaging
+uses `assets/icon512.png` (the 1024px master is rejected by `linuxdeploy`).
 
 ## Signing & notarization (CI)
 
@@ -52,5 +81,6 @@ The app is signed with a hardened runtime and `assets/prompt.entitlements`
 `scripts/icon.swift` draws the icon (a terminal `>_` glyph on a dark indigo
 squircle) with CoreGraphics — no third-party tooling. `scripts/icon.sh` renders
 the 1024px master and compiles the `.icns`. The committed `assets/icon.png` and
-`assets/icon.icns` are what the bundle embeds; regenerate them only when the
-design changes.
+`assets/icon.icns` are what the macOS bundle embeds; `assets/icon512.png` is the
+512px downscale used for Linux packaging. Regenerate them only when the design
+changes.

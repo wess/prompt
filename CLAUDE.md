@@ -21,11 +21,27 @@ cargo clippy --all-targets        # lint
 
 scripts/bundle.sh                 # cargo build --release + assemble dist/Prompt.app
 scripts/dmg.sh                    # package dist/Prompt.dmg (needs bundle first)
+scripts/linux.sh [x86_64|aarch64] # build + package .tar.gz/.deb/.AppImage (Linux)
 ```
 
-Tests live in `#[cfg(test)]` modules next to the code (no separate `tests/`
-dirs). The `vt`, `config`, and `workspace` crates carry the bulk of them and
-are pure logic — prefer adding coverage there.
+Each crate keeps its tests in a sibling `tests/` directory (e.g.
+`crates/vt/tests/`), mirroring the `src/` layout. These are **not** ordinary
+integration tests: every crate sets `autotests = false`, and each source file
+pulls its test file back in as a private module so unit tests keep access to
+private items and the `app` binary can be tested:
+
+```rust
+// at the bottom of src/foo.rs
+#[cfg(test)]
+#[path = "../tests/foo.rs"]
+mod tests;
+```
+
+Add a new test file the same way (and create the `#[path]` stub in the source
+file). Genuine integration tests that exercise only the public API are declared
+explicitly as `[[test]]` targets (see `crates/vt` and `crates/terminal`). The
+`vt`, `config`, and `workspace` crates carry the bulk of the coverage and are
+pure logic — prefer adding there.
 
 ## gpui dependency
 
@@ -68,8 +84,11 @@ The workspace is layered bottom-up; each crate depends only on those below it.
   default) for the candle-core backend; code is gated with
   `#[cfg(feature = "candle")]` and has a non-candle fallback.
 - **`app`** — the gpui application that wires everything together. Owns windows,
-  rendering, the tab bar, splits, settings UI, font handling, and the
-  process-entry dispatch in `main.rs`.
+  rendering, splits, settings UI, the About panel, font handling, and the
+  process-entry dispatch in `main.rs`. The window opens with a transparent
+  native title bar; `titlebar.rs` draws the chrome itself — a themed strip with
+  the tabs folded in (`tabbar.rs`), window dragging, and, on Linux, custom
+  minimize/maximize/close controls plus resize edges.
 
 ### Process modes (`app/src/main.rs`)
 
@@ -100,8 +119,13 @@ Keep the vt/terminal layers free of gpui types — the boundary is the bridge.
   depend on `app`). Keep terminal emulation logic in `vt` and gpui concerns in
   `app`.
 - The workspace version in the root `Cargo.toml` drives releases: pushing a
-  `Cargo.toml` version bump to `main` tags and publishes a GitHub release (see
-  `.github/workflows/release.yml` and `docs/release.md`).
+  `Cargo.toml` version bump to `main` tags and publishes a GitHub release with
+  the macOS `.dmg` and Linux `.tar.gz`/`.deb`/`.AppImage` (x86_64 + aarch64),
+  and updates the Homebrew cask (see `.github/workflows/release.yml` and
+  `docs/release.md`).
+- Linux-only code (`linux.rs`, the `#[cfg(target_os = "linux")]` blocks in
+  `titlebar.rs`/`main.rs`) is not compiled on the macOS dev host; validate it
+  with the `Linux Build` workflow (`.github/workflows/linux.yml`, runs on PRs).
 
 ## Docs
 

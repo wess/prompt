@@ -35,7 +35,7 @@ the common case, with documented limits), **✗** not yet.
 | Title (OSC 0/2) + title stack | ✓ | |
 | Palette OSC 4 / 104, cursor OSC 12 / 112 | ✓ | |
 | Dynamic color *queries* (OSC 4/10/11/12 `?`) | ✓ | answered from theme via `set_report_colors` |
-| OSC 7 cwd reporting | ✓ | inherited by new splits/tabs |
+| OSC 7 cwd reporting | ✓ | inherited by new splits, tabs, and windows; defaults to `$HOME` when unknown |
 | OSC 52 clipboard | ✓ | base64 decode → system clipboard |
 | OSC 8 hyperlinks | ✓ | interned per-cell, underlined, cmd-click opens |
 | URL detection (no OSC 8) | ✓ | cmd-click opens detected URLs |
@@ -80,7 +80,8 @@ the common case, with documented limits), **✗** not yet.
 | Text-input widget | ✓ | `textedit` model (insert/delete/cursor, unicode) + in-panel field with caret; also backs the search query |
 | Keybindings (`trigger = action`) | ✓ | config-driven, defaults + user overrides + unbind |
 | Themes | ✓ | 22 builtin schemes + overrides |
-| Native macOS menu bar | ✓ | Prompt/Shell/Edit/View/Window menus, items reuse config actions (shortcuts shown) |
+| Native macOS menu bar | ✓ | Prompt/Shell/Edit/View/Window menus, items reuse config actions (shortcuts shown); includes an About panel (icon, version, release date) |
+| Custom window titlebar | ✓ | transparent native bar; app-drawn strip with tabs folded in and drag-to-move. macOS keeps the traffic lights; Linux draws its own minimize/maximize/close + resize edges (client-side decorations) |
 | macOS status-bar (tray) item | ✗ | NSStatusBar is not exposed by the UI layer; needs custom native code |
 
 ## Prioritized remaining gaps

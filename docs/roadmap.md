@@ -195,3 +195,19 @@ Conventions (non-negotiable):
   protocol; `mcpbridge.rs` maps ops onto the active `WorkspaceView`). Tools:
   run_command, read_screen, list_macros, run_macro, list_tabs, focus_tab.
   575 tests green.
+- 2026-06-23: UI, working-directory, and packaging pass (v0.3.0). About panel
+  (`app/about.rs`): app menu → About Prompt shows the icon, version, and the
+  release date (stamped from the HEAD commit by `app/build.rs`), plus a repo
+  link. Zed-style window chrome: the window opens with a transparent native
+  title bar and `app/titlebar.rs` draws the strip — tabs folded in, drag-to-move
+  (`start_window_move`), macOS traffic-light inset, and on Linux app-drawn
+  minimize/maximize/close controls + resize edges (client-side decorations).
+  Working directory: shells default to `$HOME` (was inheriting the launcher's
+  cwd, e.g. `/` from Finder), and new windows now inherit the focused pane's cwd
+  like new tabs/splits already did. Tests relocated: every crate's unit tests
+  moved from inline `#[cfg(test)]` modules into a sibling `tests/` directory,
+  compiled in-crate via `#[path]` includes with `autotests = false`; genuine
+  integration tests (`vt`, `terminal`) declared as explicit `[[test]]` targets.
+  Linux releases: `scripts/linux.sh` builds `.tar.gz`/`.deb`/`.AppImage` for
+  x86_64 and aarch64, wired into the release workflow plus a `linux.yml`
+  validation workflow. 583 tests green.

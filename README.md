@@ -48,7 +48,9 @@ exactly how you work.
 
 ## Install
 
-On macOS, install with Homebrew:
+### macOS
+
+Install with Homebrew:
 
 ```sh
 brew install --cask wess/packages/prompt
@@ -57,6 +59,27 @@ brew install --cask wess/packages/prompt
 Or grab the latest `Prompt.dmg` from the
 [releases page](https://github.com/wess/prompt/releases) and drag it to
 Applications.
+
+### Linux
+
+Builds are published for **x86_64** and **aarch64** on the
+[releases page](https://github.com/wess/prompt/releases) in three formats:
+
+```sh
+# AppImage — self-contained, no install
+chmod +x Prompt-*-x86_64.AppImage
+./Prompt-*-x86_64.AppImage
+
+# Debian / Ubuntu
+sudo apt install ./prompt_*_amd64.deb
+
+# Tarball — extract and run, or copy usr/ into /usr/local
+tar xzf prompt-*-linux-x86_64.tar.gz
+./prompt-*-linux-x86_64/usr/bin/prompt
+```
+
+Prompt draws its own window controls on Linux, so it needs a compositor with
+client-side decoration support (Wayland or X11).
 
 ## Get started
 
@@ -70,11 +93,15 @@ cargo run -p app --release
 That's it — Prompt opens with sensible defaults. On first run it looks for a
 config file (see below); if there isn't one, it uses built-in defaults.
 
-To build a distributable macOS app yourself:
+To build a distributable package yourself:
 
 ```sh
+# macOS .app + .dmg
 scripts/bundle.sh   # cargo build --release + assemble dist/Prompt.app
 scripts/dmg.sh      # package dist/Prompt.dmg
+
+# Linux .tar.gz + .deb + .AppImage (into dist/linux)
+scripts/linux.sh
 ```
 
 See [`docs/release.md`](docs/release.md) for signing, notarization, and how
