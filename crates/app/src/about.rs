@@ -6,8 +6,8 @@ use std::sync::Arc;
 
 use gpui::prelude::*;
 use gpui::{
-    bounds, div, img, point, px, size, App, FontWeight, Image, ImageFormat, SharedString,
-    TitlebarOptions, Window, WindowBounds, WindowOptions,
+    bounds, div, img, point, px, size, App, ClickEvent, FontWeight, Image, ImageFormat,
+    SharedString, TitlebarOptions, Window, WindowBounds, WindowOptions,
 };
 
 use crate::colors;
@@ -22,6 +22,9 @@ const ICON: &[u8] = include_bytes!("../../../assets/icon.png");
 /// Compiled-in release metadata.
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 const RELEASE_DATE: &str = env!("PROMPT_RELEASE_DATE");
+
+/// Project home page, opened when the link is clicked.
+const REPO: &str = "https://github.com/wess/prompt";
 
 /// Open the About panel centered over `parent`.
 pub fn open(parent: &Window, cx: &mut App) {
@@ -73,7 +76,7 @@ impl AboutView {
 }
 
 impl Render for AboutView {
-    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let line = |text: String, color: theme::Rgb, sz: f32, weight: FontWeight| {
             div()
                 .text_size(px(sz))
@@ -118,6 +121,17 @@ impl Render for AboutView {
                 .max_w(px(280.0))
                 .text_center(),
             )
+            .child(
+                div()
+                    .id("about-repo-link")
+                    .mt_3()
+                    .text_size(px(13.0))
+                    .text_color(hsla(LINK))
+                    .cursor_pointer()
+                    .hover(|s| s.underline())
+                    .on_click(cx.listener(|_, _: &ClickEvent, _, cx| cx.open_url(REPO)))
+                    .child(SharedString::from("github.com/wess/prompt")),
+            )
             // Release date and copyright sink to the bottom of the card.
             .child(div().flex_1())
             .child(line(
@@ -147,3 +161,4 @@ const TEXT: theme::Rgb = theme::Rgb::new(242, 244, 246);
 const BODY: theme::Rgb = theme::Rgb::new(206, 212, 217);
 const MUTED: theme::Rgb = theme::Rgb::new(170, 177, 181);
 const FAINT: theme::Rgb = theme::Rgb::new(132, 139, 143);
+const LINK: theme::Rgb = theme::Rgb::new(64, 156, 255);
