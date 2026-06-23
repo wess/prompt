@@ -42,7 +42,9 @@ appdir="$out/AppDir"
 mkdir -p "$appdir/usr/bin" "$appdir/usr/share/applications" "$appdir/usr/share/pixmaps"
 cp "$bin" "$appdir/usr/bin/prompt"
 cp assets/prompt.desktop "$appdir/usr/share/applications/prompt.desktop"
-cp assets/icon.png "$appdir/usr/share/pixmaps/prompt.png"
+# 512px icon: linuxdeploy only accepts standard icon sizes (<=512), not the
+# 1024px master.
+cp assets/icon512.png "$appdir/usr/share/pixmaps/prompt.png"
 
 # --- .tar.gz ---------------------------------------------------------------
 stem="prompt-$version-linux-$arch"

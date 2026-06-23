@@ -22,7 +22,7 @@ priority = "optional"
 extended-description = "Prompt is a GPU-accelerated terminal emulator with tabs, recursive splits, live-reload config, and built-in themes."
 assets = [
     ["../../assets/prompt.desktop", "usr/share/applications/prompt.desktop", "644"],
-    ["../../assets/icon.png", "usr/share/pixmaps/prompt.png", "644"],
+    ["../../assets/icon512.png", "usr/share/pixmaps/prompt.png", "644"],
 ]
 
 [dependencies]
