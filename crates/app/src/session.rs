@@ -25,8 +25,19 @@ pub fn options(
             session.spawn = pty::SpawnOptions::command(argv);
         }
     }
-    session.spawn.cwd = inherit.or_else(|| opts.working_directory.as_ref().map(PathBuf::from));
+    session.spawn.cwd = inherit
+        .or_else(|| opts.working_directory.as_ref().map(PathBuf::from))
+        .or_else(home);
     session
+}
+
+/// The user's home directory, the default working directory when no pane cwd
+/// is inherited and the config sets none. Without it the child would inherit
+/// the launcher's cwd — e.g. `/` when Prompt is opened from Finder.
+fn home() -> Option<PathBuf> {
+    std::env::var_os("HOME")
+        .filter(|h| !h.is_empty())
+        .map(PathBuf::from)
 }
 
 /// Shell program basename, used as a pane-title fallback.
@@ -89,7 +100,8 @@ mod tests {
         assert_eq!((session.cols, session.rows), (100, 30));
         assert_eq!(session.scrollback_limit, 10_000);
         assert!(session.spawn.login);
-        assert_eq!(session.spawn.cwd, None);
+        // With no inherit and no configured directory, defaults to home.
+        assert_eq!(session.spawn.cwd, home());
     }
 
     #[test]

@@ -25,12 +25,13 @@ mod settings;
 mod splits;
 mod tabbar;
 mod textedit;
+mod titlebar;
 mod view;
 
 use std::rc::Rc;
 
 use gpui::AppContext as _;
-use gpui::{px, size, App, Bounds, TitlebarOptions, WindowBounds, WindowOptions};
+use gpui::{point, px, size, App, Bounds, TitlebarOptions, WindowBounds, WindowOptions};
 
 const DEFAULT_COLS: usize = 80;
 const DEFAULT_ROWS: usize = 24;
@@ -69,7 +70,8 @@ fn main() {
 
         // Keybindings come from config (defaults + user overrides) and are
         // bound by the workspace view, which owns the resolved table.
-        open_window(opts, colors, font, font_size, cell, pad, cx);
+        // Startup has no pane to inherit from; defaults to home.
+        open_window(opts, colors, font, font_size, cell, pad, None, cx);
         cx.activate(true);
         // Two summon paths for the quick terminal: an in-process global
         // hotkey (macOS/X11) and a socket the compositor can poke (Wayland).
@@ -88,6 +90,7 @@ pub fn open_window(
     font_size: gpui::Pixels,
     cell: metrics::CellSize,
     pad: metrics::Padding,
+    cwd: Option<std::path::PathBuf>,
     cx: &mut App,
 ) {
     let cols = if opts.window_width > 0 {
@@ -102,19 +105,30 @@ pub fn open_window(
     };
     let (width, height) = metrics::pixel_size(cols, rows, pad, cell);
     let bounds = Bounds::centered(None, size(px(width), px(height)), cx);
+    // Transparent native title bar so our own `titlebar` strip is the whole
+    // chrome (tabs folded in). The macOS traffic lights stay, repositioned;
+    // Linux gets client-side decorations so we can draw controls + resize.
+    // `mut` is used only on Linux (client-side decorations) below.
+    #[cfg_attr(not(target_os = "linux"), allow(unused_mut))]
+    let mut options = WindowOptions {
+        window_bounds: Some(WindowBounds::Windowed(bounds)),
+        titlebar: Some(TitlebarOptions {
+            title: Some("prompt".into()),
+            appears_transparent: true,
+            traffic_light_position: Some(point(px(9.0), px(9.0))),
+        }),
+        ..Default::default()
+    };
+    #[cfg(target_os = "linux")]
+    {
+        options.window_decorations = Some(gpui::WindowDecorations::Client);
+    }
     cx.open_window(
-        WindowOptions {
-            window_bounds: Some(WindowBounds::Windowed(bounds)),
-            titlebar: Some(TitlebarOptions {
-                title: Some("prompt".into()),
-                ..Default::default()
-            }),
-            ..Default::default()
-        },
+        options,
         move |window, cx| {
             cx.new(move |cx| {
                 root::WorkspaceView::new(
-                    opts, colors, font, font_size, cell, pad, cols, rows, window, cx,
+                    opts, colors, font, font_size, cell, pad, cols, rows, cwd, window, cx,
                 )
             })
         },

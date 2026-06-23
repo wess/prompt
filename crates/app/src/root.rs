@@ -26,7 +26,6 @@ use crate::keys;
 use crate::metrics::{CellSize, Padding};
 use crate::session;
 use crate::splits::{self, Drag, SplitsElement};
-use crate::tabbar;
 use crate::view::{TerminalView, ViewEvent};
 
 /// One keybind dispatch: the index into the workspace's resolved keybind
@@ -127,6 +126,7 @@ impl WorkspaceView {
         pad: Padding,
         cols: usize,
         rows: usize,
+        cwd: Option<std::path::PathBuf>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -162,7 +162,7 @@ impl WorkspaceView {
         };
         this.applykeybinds(cx);
         this.setmenus(cx);
-        let options = session::options(&this.opts, cols, rows, None);
+        let options = session::options(&this.opts, cols, rows, cwd);
         let Some(id) = this.spawn(options, window, cx) else {
             std::process::exit(1);
         };
@@ -792,7 +792,7 @@ impl WorkspaceView {
             .collect()
     }
 
-    fn newtab(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub fn newtab(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.zoomed = false;
         if let Some(id) = self.spawnpane(window, cx) {
             self.tabs.new_tab(id);
@@ -804,6 +804,12 @@ impl WorkspaceView {
     /// Open another top-level window, cloning this window's current
     /// appearance so the new one matches without re-reading config.
     fn newwindow(&self, cx: &mut Context<Self>) {
+        // Open the new window in the focused pane's directory, like new tabs.
+        let cwd = self
+            .panes
+            .get(&self.tabs.focused())
+            .and_then(|pane| pane.view.read(cx).cwd())
+            .and_then(|osc| session::cwdpath(&osc));
         crate::open_window(
             self.opts.clone(),
             self.colors.clone(),
@@ -811,6 +817,7 @@ impl WorkspaceView {
             self.font_size,
             self.cell,
             self.pad,
+            cwd,
             cx,
         );
     }
@@ -1213,7 +1220,7 @@ impl WorkspaceView {
 }
 
 impl Render for WorkspaceView {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let tree = self.tabs.active().tree.clone();
         let focused = self.tabs.focused();
         let multi = tree.panes().len() > 1;
@@ -1253,18 +1260,18 @@ impl Render for WorkspaceView {
             .on_action(cx.listener(Self::showabout))
             .on_action(cx.listener(Self::menupick));
 
-        if self.tabs.len() > 1 {
-            let titles = self.titles(cx);
-            base = base.child(tabbar::bar(
-                &titles,
-                self.tabs.active_index(),
-                &self.colors,
-                self.cell,
-                &self.font,
-                self.font_size,
-                cx,
-            ));
-        }
+        // The custom titlebar replaces the native one and folds the tabs in,
+        // so it is always present (the window opens with no native chrome).
+        let titles = self.titles(cx);
+        base = base.child(crate::titlebar::bar(
+            &titles,
+            self.tabs.active_index(),
+            &self.colors,
+            &self.font,
+            self.font_size,
+            window,
+            cx,
+        ));
 
         // Zoom Split: when active with more than one pane, the focused pane
         // fills the area in place of the split layout.
@@ -1286,6 +1293,13 @@ impl Render for WorkspaceView {
         if let Some(pill) = macro_pill(recording, replaying, &self.colors) {
             base = base.child(pill);
         }
+
+        // Client-side decorations (Linux) need app-drawn resize edges.
+        #[cfg(target_os = "linux")]
+        if matches!(window.window_decorations(), gpui::Decorations::Client { .. }) {
+            base = base.child(crate::titlebar::resize_handles());
+        }
+
         base
     }
 }
