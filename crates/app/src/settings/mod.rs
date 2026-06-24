@@ -29,11 +29,28 @@ enum EditTarget {
     NewItem(ListKind),
 }
 
+/// Result of probing a tool's reachability.
+#[derive(Clone)]
+enum ToolTest {
+    Testing,
+    Ok(String),
+    Fail(String),
+}
+
 pub struct SettingsView {
     opts: config::Options,
     section: Section,
     editing: Option<(EditTarget, TextEdit)>,
+    /// When true, the next key chord is captured as the edited keybind's
+    /// trigger instead of being typed into the field.
+    capturing: bool,
+    /// Saved macros, for the Macros section.
+    macros: Vec<macros::Macro>,
+    /// When set, the next key chord is captured as the shortcut for this macro.
+    capture_macro: Option<String>,
     focus: FocusHandle,
+    relay_running: bool,
+    tool_tests: std::collections::HashMap<&'static str, ToolTest>,
 }
 
 pub fn open(parent: &Window, cx: &mut App) {
@@ -66,10 +83,54 @@ impl SettingsView {
             opts: config::Options::default(),
             section: Section::General,
             editing: None,
+            capturing: false,
+            macros: Vec::new(),
+            capture_macro: None,
             focus: cx.focus_handle(),
+            relay_running: crate::relay::running(),
+            tool_tests: std::collections::HashMap::new(),
         };
         view.reload();
+        view.poll_relay_status(cx);
         view
+    }
+
+    /// Probe a tool off-thread and record the result for the row to show.
+    fn test_tool(&mut self, tool: &'static str, cx: &mut Context<Self>) {
+        self.tool_tests.insert(tool, ToolTest::Testing);
+        cx.notify();
+        let executor = cx.background_executor().clone();
+        cx.spawn(async move |this, cx| {
+            let result = executor.spawn(async move { crate::relay::test_tool(tool) }).await;
+            let _ = this.update(cx, |view, cx| {
+                let state = match result {
+                    Ok(m) => ToolTest::Ok(m),
+                    Err(e) => ToolTest::Fail(e),
+                };
+                view.tool_tests.insert(tool, state);
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    /// Re-probe the relay server on an interval so the status dot stays live.
+    fn poll_relay_status(&self, cx: &mut Context<Self>) {
+        let executor = cx.background_executor().clone();
+        cx.spawn(async move |this, cx| loop {
+            let running = executor.spawn(async { crate::relay::running() }).await;
+            let updated = this.update(cx, |view, cx| {
+                if view.relay_running != running {
+                    view.relay_running = running;
+                    cx.notify();
+                }
+            });
+            if updated.is_err() {
+                break;
+            }
+            executor.timer(std::time::Duration::from_millis(1500)).await;
+        })
+        .detach();
     }
 
     fn reload(&mut self) {
@@ -78,11 +139,76 @@ impl SettingsView {
             eprintln!("prompt: config line {}: {} ({})", d.line, d.message, d.key);
         }
         self.opts = opts;
+        self.macros = macros::defaultdir().map(|d| macros::load(&d)).unwrap_or_default();
     }
 
     fn set_section(&mut self, section: Section, cx: &mut Context<Self>) {
         self.section = section;
         self.editing = None;
+        self.capturing = false;
+        self.capture_macro = None;
+        cx.notify();
+    }
+
+    // --- Macros ------------------------------------------------------------
+
+    /// The trigger currently bound to replay this macro, if any.
+    fn macro_shortcut(&self, name: &str) -> Option<String> {
+        let action = config::Action::MacroReplay(name.to_string());
+        let (binds, _) = config::resolve(&self.opts.keybind);
+        binds.iter().find(|kb| kb.action == action).map(|kb| kb.trigger())
+    }
+
+    /// Arm capture so the next chord becomes `name`'s replay shortcut.
+    fn start_macro_capture(&mut self, name: String, window: &mut Window, cx: &mut Context<Self>) {
+        self.editing = None;
+        self.capturing = false;
+        self.capture_macro = Some(name);
+        window.focus(&self.focus, cx);
+        cx.notify();
+    }
+
+    /// Bind `trigger` to replay `name`, replacing any prior binding on that
+    /// trigger and any other shortcut already pointing at this macro.
+    fn assign_macro_shortcut(&mut self, name: &str, trigger: &str, cx: &mut Context<Self>) {
+        let Ok((mods, key)) = config::keybind::parse_trigger(trigger) else {
+            return;
+        };
+        let action = config::Action::MacroReplay(name.to_string());
+        let (mut binds, _) = config::resolve(&self.opts.keybind);
+        binds.retain(|kb| !((kb.mods == mods && kb.key == key) || kb.action == action));
+        binds.push(config::Keybind { mods, key, action });
+        write_list("keybind", &config::diff_from_defaults(&binds));
+        self.reload();
+        cx.notify();
+    }
+
+    /// Remove any shortcut that replays `name`.
+    fn clear_macro_shortcut(&mut self, name: &str, cx: &mut Context<Self>) {
+        let action = config::Action::MacroReplay(name.to_string());
+        let (mut binds, _) = config::resolve(&self.opts.keybind);
+        let before = binds.len();
+        binds.retain(|kb| kb.action != action);
+        if binds.len() != before {
+            write_list("keybind", &config::diff_from_defaults(&binds));
+            self.reload();
+            cx.notify();
+        }
+    }
+
+    /// Delete the macro file and drop any shortcut bound to it.
+    fn delete_macro(&mut self, name: &str, cx: &mut Context<Self>) {
+        if let Some(dir) = macros::defaultdir() {
+            let _ = macros::delete(&dir, name);
+        }
+        let action = config::Action::MacroReplay(name.to_string());
+        let (mut binds, _) = config::resolve(&self.opts.keybind);
+        let before = binds.len();
+        binds.retain(|kb| kb.action != action);
+        if binds.len() != before {
+            write_list("keybind", &config::diff_from_defaults(&binds));
+        }
+        self.reload();
         cx.notify();
     }
 
@@ -121,6 +247,7 @@ impl SettingsView {
             EditTarget::Field(field),
             TextEdit::new(&field.value(&self.opts)),
         ));
+        self.capturing = false;
         window.focus(&self.focus, cx);
         cx.notify();
     }
@@ -128,13 +255,24 @@ impl SettingsView {
     fn start_item(&mut self, kind: ListKind, idx: usize, window: &mut Window, cx: &mut Context<Self>) {
         let current = kind.values(&self.opts).get(idx).cloned().unwrap_or_default();
         self.editing = Some((EditTarget::Item(kind, idx), TextEdit::new(&current)));
+        self.capturing = false;
         window.focus(&self.focus, cx);
         cx.notify();
     }
 
     fn start_new_item(&mut self, kind: ListKind, window: &mut Window, cx: &mut Context<Self>) {
         self.editing = Some((EditTarget::NewItem(kind), TextEdit::new("")));
+        // A new keybind starts armed: just press the chord.
+        self.capturing = kind == ListKind::Keybind;
         window.focus(&self.focus, cx);
+        cx.notify();
+    }
+
+    /// Arm trigger capture for the binding currently being edited, starting the
+    /// edit first if needed. Bound to the per-row "record" button.
+    fn record_item(&mut self, kind: ListKind, idx: usize, window: &mut Window, cx: &mut Context<Self>) {
+        self.start_item(kind, idx, window, cx);
+        self.capturing = true;
         cx.notify();
     }
 
@@ -149,6 +287,7 @@ impl SettingsView {
     }
 
     fn commit_edit(&mut self, cx: &mut Context<Self>) {
+        self.capturing = false;
         if let Some((target, edit)) = self.editing.take() {
             let text = edit.text();
             match target {
@@ -182,55 +321,94 @@ impl SettingsView {
         write_list(key, &values);
     }
 
-    fn key_down(&mut self, event: &KeyDownEvent, _window: &mut Window, cx: &mut Context<Self>) {
-        if self.editing.is_none() {
-            return;
-        }
+    fn key_down(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         let ks = &event.keystroke;
-        if ks.modifiers.platform || ks.modifiers.control {
+        // While armed, every chord (even cmd+w) is captured as the trigger;
+        // Escape cancels.
+        if self.capturing {
+            if ks.key == "escape" {
+                self.capturing = false;
+                cx.notify();
+            } else {
+                self.capture_key(ks, cx);
+            }
+            cx.stop_propagation();
             return;
         }
-        match ks.key.as_str() {
-            "enter" => {
-                self.commit_edit(cx);
-                cx.stop_propagation();
-                return;
-            }
-            "escape" => {
-                self.editing = None;
+        if let Some(name) = self.capture_macro.clone() {
+            if ks.key == "escape" {
+                self.capture_macro = None;
                 cx.notify();
-                cx.stop_propagation();
-                return;
+            } else if let Some(trigger) = capture_trigger(ks) {
+                self.assign_macro_shortcut(&name, &trigger, cx);
+                self.capture_macro = None;
             }
-            other => {
-                if let Some((_, edit)) = self.editing.as_mut() {
-                    match other {
-                        "backspace" => {
-                            edit.backspace();
-                        }
-                        "delete" => {
-                            edit.delete();
-                        }
-                        "left" => edit.left(),
-                        "right" => edit.right(),
-                        "home" => edit.home(),
-                        "end" => edit.end(),
-                        _ => {
-                            if let Some(text) = ks
-                                .key_char
-                                .as_deref()
-                                .filter(|t| !t.is_empty() && !ks.modifiers.alt)
-                            {
-                                edit.insert(text);
-                            }
-                        }
-                    }
-                }
-            }
+            cx.stop_propagation();
+            return;
         }
-        cx.notify();
+        if ks.modifiers.platform && ks.key == "w" {
+            window.remove_window();
+            cx.stop_propagation();
+            return;
+        }
+        let outcome = {
+            let Some((_, edit)) = self.editing.as_mut() else {
+                return;
+            };
+            crate::textkeys::apply(edit, ks)
+        };
+        match outcome {
+            crate::textkeys::Outcome::Submit => self.commit_edit(cx),
+            crate::textkeys::Outcome::Cancel => {
+                self.editing = None;
+                self.capturing = false;
+                cx.notify();
+            }
+            crate::textkeys::Outcome::Edited => cx.notify(),
+            crate::textkeys::Outcome::Pass => return,
+        }
         cx.stop_propagation();
     }
+
+    /// Record one captured chord as the trigger of the binding being edited,
+    /// preserving any already-typed action half. Bare modifier presses are
+    /// ignored so capture waits for the real key.
+    fn capture_key(&mut self, ks: &gpui::Keystroke, cx: &mut Context<Self>) {
+        let Some(trigger) = capture_trigger(ks) else {
+            return;
+        };
+        if let Some((_, edit)) = self.editing.as_mut() {
+            let action = edit
+                .text()
+                .split_once('=')
+                .map(|(_, a)| a.trim().to_string())
+                .unwrap_or_default();
+            *edit = TextEdit::new(&format!("{trigger}={action}"));
+        }
+        self.capturing = false;
+        cx.notify();
+    }
+}
+
+/// Convert a gpui keystroke into a config trigger string (`cmd+shift+t`), or
+/// `None` for a bare modifier press that should not end capture.
+fn capture_trigger(ks: &gpui::Keystroke) -> Option<String> {
+    let key = ks.key.to_ascii_lowercase();
+    if matches!(
+        key.as_str(),
+        "" | "cmd" | "command" | "super" | "ctrl" | "control" | "alt" | "option" | "shift"
+            | "fn" | "function" | "capslock"
+    ) {
+        return None;
+    }
+    let m = &ks.modifiers;
+    let mods = config::Mods {
+        cmd: m.platform,
+        ctrl: m.control,
+        alt: m.alt,
+        shift: m.shift,
+    };
+    Some(config::format_trigger(mods, &key))
 }
 
 /// Write a single `key = value` line to the config file in place.

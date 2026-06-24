@@ -39,7 +39,7 @@ fn defaults() {
     assert_eq!(o.mouse_scroll_multiplier, 1.0);
     assert_eq!(o.macos_option_as_alt, OptionAsAlt::False);
     assert!(o.window_inherit_working_directory);
-    assert!(o.quit_after_last_window_closed);
+    assert!(!o.quit_after_last_window_closed);
     assert_eq!(o.title, None);
     assert_eq!(o.clipboard_read, ClipboardAccess::Ask);
     assert_eq!(o.clipboard_write, ClipboardAccess::Allow);

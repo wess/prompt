@@ -149,11 +149,8 @@ pub async fn call(app: &App, session: &str, name: &str, args: &Value) -> Value {
             let (Some(to), Some(body)) = (arg(args, "to"), arg(args, "body")) else {
                 return fail("send requires 'to' and 'body'");
             };
-            match db::insert_message(&app.db, &me, "direct", Some(to), body).await {
-                Ok(_) => {
-                    app.wake();
-                    text(format!("sent to {to}"))
-                }
+            match crate::bus::deliver(app, &me, "direct", Some(to), body).await {
+                Ok(_) => text(format!("sent to {to}")),
                 Err(e) => fail(format!("send failed: {e}")),
             }
         }
@@ -161,11 +158,8 @@ pub async fn call(app: &App, session: &str, name: &str, args: &Value) -> Value {
             let (Some(ch), Some(body)) = (arg(args, "channel"), arg(args, "body")) else {
                 return fail("post requires 'channel' and 'body'");
             };
-            match db::insert_message(&app.db, &me, "channel", Some(ch), body).await {
-                Ok(_) => {
-                    app.wake();
-                    text(format!("posted to #{ch}"))
-                }
+            match crate::bus::deliver(app, &me, "channel", Some(ch), body).await {
+                Ok(_) => text(format!("posted to #{ch}")),
                 Err(e) => fail(format!("post failed: {e}")),
             }
         }
@@ -173,11 +167,8 @@ pub async fn call(app: &App, session: &str, name: &str, args: &Value) -> Value {
             let Some(body) = arg(args, "body") else {
                 return fail("broadcast requires 'body'");
             };
-            match db::insert_message(&app.db, &me, "broadcast", None, body).await {
-                Ok(_) => {
-                    app.wake();
-                    text("broadcast sent")
-                }
+            match crate::bus::deliver(app, &me, "broadcast", None, body).await {
+                Ok(_) => text("broadcast sent"),
                 Err(e) => fail(format!("broadcast failed: {e}")),
             }
         }
@@ -244,16 +235,21 @@ pub async fn call(app: &App, session: &str, name: &str, args: &Value) -> Value {
                 Ok(p) => p,
                 Err(e) => return fail(format!("spawn failed: {e}")),
             };
-            let prompt = crate::cli::agent::harness_prompt(wname, role, &channels, task);
+            let brief = crate::cli::role::resolve(role)
+                .map(|r| r.description)
+                .unwrap_or_default();
+            let prompt = crate::cli::agent::harness_prompt(wname, role, &brief, &channels, task);
             let built = match crate::cli::agent::build(&crate::cli::agent::Spec {
                 agent: "claude",
                 custom: None,
                 name: wname,
+                role,
                 prompt: &prompt,
                 mcp_file: &mcp_str,
                 url: &app.endpoint,
                 headless: true,
                 model,
+                channels: &channels,
                 skip_perms: true,
             }) {
                 Ok(b) => b,
@@ -309,42 +305,13 @@ pub async fn call(app: &App, session: &str, name: &str, args: &Value) -> Value {
 /// Return pending messages. When `block`, park (cheaply) until something arrives
 /// or the safety timeout elapses.
 async fn drain(app: &App, me: &str, block: bool) -> Value {
-    let deadline = tokio::time::Instant::now() + WAIT_MAX;
-    loop {
-        // Arm the wake signal BEFORE querying, so a message inserted during the
-        // query still wakes us.
-        let notified = app.notify.notified();
-        tokio::pin!(notified);
-        notified.as_mut().enable();
-
-        let cursor = match db::cursor_of(&app.db, me).await {
-            Ok(c) => c,
-            Err(e) => return fail(format!("inbox failed: {e}")),
-        };
-        let pending = match db::pending_for(&app.db, me, cursor).await {
-            Ok(p) => p,
-            Err(e) => return fail(format!("inbox failed: {e}")),
-        };
-
-        if !pending.is_empty() {
-            if let Some(last) = pending.last() {
-                let _ = db::advance_cursor(&app.db, me, last.id).await;
-            }
-            let payload = json!({ "messages": pending });
-            return text(serde_json::to_string_pretty(&payload).unwrap_or_default());
-        }
-
-        if !block {
-            return text(json!({ "messages": [] }).to_string());
-        }
-
-        tokio::select! {
-            _ = &mut notified => continue,
-            _ = tokio::time::sleep_until(deadline) => {
-                return text(json!({ "messages": [], "note": "no messages yet — call wait again to stay parked" }).to_string());
-            }
-        }
-    }
+    let msgs = crate::bus::await_messages(app, me, block, WAIT_MAX).await;
+    let payload = if msgs.is_empty() && block {
+        json!({ "messages": [], "note": "no messages yet — call wait again to stay parked" })
+    } else {
+        json!({ "messages": msgs })
+    };
+    text(serde_json::to_string_pretty(&payload).unwrap_or_default())
 }
 
 async fn roster_text(app: &App) -> String {

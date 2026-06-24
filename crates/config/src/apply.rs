@@ -328,6 +328,34 @@ pub fn apply(opts: &mut Options, key: &str, val: &str) -> Result<(), String> {
                 val.to_string()
             };
         }
+        "agent-claude" => {
+            opts.agent_claude = if empty {
+                d.agent_claude
+            } else {
+                value::parse_bool(val).ok_or_else(|| bad("boolean", val))?
+            };
+        }
+        "agent-codex" => {
+            opts.agent_codex = if empty {
+                d.agent_codex
+            } else {
+                value::parse_bool(val).ok_or_else(|| bad("boolean", val))?
+            };
+        }
+        "agent-ollama" => {
+            opts.agent_ollama = if empty {
+                d.agent_ollama
+            } else {
+                value::parse_bool(val).ok_or_else(|| bad("boolean", val))?
+            };
+        }
+        "agent-gemini" => {
+            opts.agent_gemini = if empty {
+                d.agent_gemini
+            } else {
+                value::parse_bool(val).ok_or_else(|| bad("boolean", val))?
+            };
+        }
         _ => return Err(format!("unknown key `{key}`")),
     }
     Ok(())

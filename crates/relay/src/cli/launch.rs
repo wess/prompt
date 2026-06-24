@@ -1,4 +1,4 @@
-use super::{agent, http, paths, LaunchArgs};
+use super::{agent, http, paths, role, LaunchArgs};
 use anyhow::{anyhow, Result};
 use std::io::Write;
 use std::os::unix::process::CommandExt;
@@ -10,23 +10,46 @@ pub async fn launch(a: LaunchArgs) -> Result<()> {
     let info = paths::read_info()?;
     let endpoint = paths::endpoint(&info.addr);
     let name = resolve_name(a.name.as_deref())?;
+
+    // Resolve the role (project → user → built-in); its fields are defaults that
+    // explicit flags override.
+    let role = role::resolve(&a.role);
+    let brief = role.as_ref().map(|r| r.description.clone()).unwrap_or_default();
+    let mut channels = role.as_ref().map(|r| r.channels.clone()).unwrap_or_default();
+    for c in &a.channels {
+        if !channels.contains(c) {
+            channels.push(c.clone());
+        }
+    }
+    let agent_name = a
+        .agent
+        .clone()
+        .or_else(|| role.as_ref().and_then(|r| r.agent.clone()))
+        .unwrap_or_else(|| "claude".to_string());
+    let model = a
+        .model
+        .clone()
+        .or_else(|| role.as_ref().and_then(|r| r.model.clone()));
+
     let cwd = a.cwd.clone().unwrap_or_else(|| {
         std::env::current_dir()
             .map(|p| p.display().to_string())
             .unwrap_or_else(|_| ".".into())
     });
     let mcp = paths::write_mcp_config(&endpoint, &name)?;
-    let prompt = agent::harness_prompt(&name, &a.role, &a.channels, a.task.as_deref());
+    let prompt = agent::harness_prompt(&name, &a.role, &brief, &channels, a.task.as_deref());
 
     let built = agent::build(&agent::Spec {
-        agent: &a.agent,
+        agent: &agent_name,
         custom: a.cmd.as_deref(),
         name: &name,
+        role: &a.role,
         prompt: &prompt,
         mcp_file: &mcp,
         url: &endpoint,
         headless: a.background,
-        model: a.model.as_deref(),
+        model: model.as_deref(),
+        channels: &channels,
         skip_perms: a.background,
     })?;
 
@@ -56,7 +79,7 @@ pub async fn launch(a: LaunchArgs) -> Result<()> {
             ))
         }
     } else {
-        let label = if a.cmd.is_some() { "custom" } else { a.agent.as_str() };
+        let label = if a.cmd.is_some() { "custom" } else { agent_name.as_str() };
         println!("launching {label} as '{name}' on {endpoint} …");
         // exec replaces this process with the agent CLI; only returns on failure.
         let err = Command::new(&built.program)

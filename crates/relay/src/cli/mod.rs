@@ -1,10 +1,13 @@
 pub mod agent;
+pub mod bridge;
 pub mod feed;
 pub mod http;
 pub mod launch;
 pub mod paths;
 pub mod ps;
+pub mod role;
 pub mod server;
+pub mod team;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
@@ -44,6 +47,111 @@ enum Cmd {
         #[arg(short, long)]
         follow: bool,
     },
+    /// Manage reusable agent roles.
+    Role {
+        #[command(subcommand)]
+        action: RoleCmd,
+    },
+    /// Manage teams (a layout + a roster of agents).
+    Team {
+        #[command(subcommand)]
+        action: TeamCmd,
+    },
+    /// Run a bridge agent that drives a non-MCP backend (e.g. ollama) on the bus.
+    #[command(hide = true)]
+    Agent(AgentArgs),
+}
+
+#[derive(clap::Args)]
+pub struct AgentArgs {
+    /// Backend to bridge: currently `ollama`.
+    pub backend: String,
+    /// Agent name in the mesh.
+    #[arg(long)]
+    pub name: String,
+    /// Role label.
+    #[arg(long, default_value = "worker")]
+    pub role: String,
+    /// Relay MCP URL (control plane shares its host:port).
+    #[arg(long)]
+    pub url: String,
+    /// Model to run.
+    #[arg(long, default_value = "llama3.1")]
+    pub model: String,
+    /// System prompt / role brief.
+    #[arg(long, default_value = "")]
+    pub system: String,
+    /// Channel to join (repeatable).
+    #[arg(long = "channel")]
+    pub channels: Vec<String>,
+    /// Ollama base URL.
+    #[arg(long, default_value = "http://127.0.0.1:11434")]
+    pub ollama: String,
+}
+
+#[derive(Subcommand)]
+pub enum TeamCmd {
+    /// List teams (project, user, built-in).
+    List {
+        /// Emit JSON (for Prompt).
+        #[arg(long)]
+        json: bool,
+    },
+    /// Show a resolved team.
+    Info {
+        name: String,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Create a new team in $EDITOR.
+    Create {
+        name: String,
+        #[arg(long)]
+        user: bool,
+    },
+    /// Edit a team in $EDITOR (copies a built-in / lower layer first).
+    Edit {
+        name: String,
+        #[arg(long)]
+        user: bool,
+    },
+    /// Delete a team file.
+    Delete {
+        name: String,
+        #[arg(long)]
+        user: bool,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum RoleCmd {
+    /// List available roles (project, user, built-in).
+    List {
+        /// Emit JSON (for Prompt).
+        #[arg(long)]
+        json: bool,
+    },
+    /// Show a resolved role.
+    Info { name: String },
+    /// Create a new role in $EDITOR.
+    Create {
+        name: String,
+        /// Write to the user dir instead of the project (./.relay/roles).
+        #[arg(long)]
+        user: bool,
+    },
+    /// Edit a role in $EDITOR (copies a built-in / lower layer if needed).
+    Edit {
+        name: String,
+        #[arg(long)]
+        user: bool,
+    },
+    /// Delete a role file.
+    Delete {
+        name: String,
+        #[arg(long)]
+        user: bool,
+    },
 }
 
 #[derive(clap::Args)]
@@ -60,9 +168,10 @@ pub struct ServeArgs {
 pub struct LaunchArgs {
     /// Unique name for this agent in the mesh (prompted if omitted).
     pub name: Option<String>,
-    /// Agent CLI to run: claude | codex | gemini (or use --cmd).
-    #[arg(long, default_value = "claude")]
-    pub agent: String,
+    /// Agent CLI to run: claude | codex | gemini (or use --cmd). Defaults to the
+    /// role's agent, else claude.
+    #[arg(long)]
+    pub agent: Option<String>,
     /// Role label.
     #[arg(long, default_value = "worker")]
     pub role: String,
@@ -100,5 +209,8 @@ pub async fn run(cli: Cli) -> Result<()> {
         Cmd::Ps => ps::ps(),
         Cmd::Kill { name } => ps::kill(&name),
         Cmd::Feed { follow } => feed::feed(follow),
+        Cmd::Role { action } => role::run(action),
+        Cmd::Team { action } => team::run(action),
+        Cmd::Agent(a) => bridge::run(a),
     }
 }

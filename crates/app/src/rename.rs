@@ -23,6 +23,7 @@ pub enum Target {
     Tab(usize),
     Pane(PaneId),
     Macro(Vec<String>),
+    Layout(crate::tiles::Layout),
 }
 
 /// Open the modal to name and save a just-recorded macro.
@@ -47,6 +48,7 @@ pub fn open(
         Target::Tab(_) => "Change Tab Title",
         Target::Pane(_) => "Change Terminal Title",
         Target::Macro(_) => "Name Macro",
+        Target::Layout(_) => "Save Layout",
     };
     let center = parent.bounds().center();
     let window_bounds = bounds(
@@ -104,6 +106,7 @@ impl RenameView {
                 Target::Tab(index) => workspace.rename_tab(index, &text, cx),
                 Target::Pane(id) => workspace.rename_pane(id, &text, cx),
                 Target::Macro(commands) => workspace.save_macro(&text, commands, cx),
+                Target::Layout(layout) => workspace.save_layout(&text, layout, cx),
             })
             .ok();
         window.remove_window();
@@ -111,34 +114,20 @@ impl RenameView {
 
     fn key_down(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         let ks = &event.keystroke;
-        if ks.modifiers.platform || ks.modifiers.control {
+        if ks.modifiers.platform && ks.key == "w" {
+            window.remove_window();
+            cx.stop_propagation();
             return;
         }
-        match ks.key.as_str() {
-            "enter" => self.commit(window, cx),
-            "escape" => window.remove_window(),
-            "backspace" => {
-                self.edit.backspace();
+        match crate::textkeys::apply(&mut self.edit, ks) {
+            crate::textkeys::Outcome::Submit => self.commit(window, cx),
+            crate::textkeys::Outcome::Cancel => window.remove_window(),
+            crate::textkeys::Outcome::Edited => {
+                cx.notify();
+                cx.stop_propagation();
             }
-            "delete" => {
-                self.edit.delete();
-            }
-            "left" => self.edit.left(),
-            "right" => self.edit.right(),
-            "home" => self.edit.home(),
-            "end" => self.edit.end(),
-            _ => {
-                if let Some(text) = ks
-                    .key_char
-                    .as_deref()
-                    .filter(|t| !t.is_empty() && !ks.modifiers.alt)
-                {
-                    self.edit.insert(text);
-                }
-            }
+            crate::textkeys::Outcome::Pass => {}
         }
-        cx.notify();
-        cx.stop_propagation();
     }
 }
 

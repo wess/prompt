@@ -182,6 +182,16 @@ pub enum Action {
     RelayFeed,
     /// Launch a Relay agent in a split (prompts for a name).
     RelayLaunch,
+    /// Tail the Relay server log in a split.
+    RelayLog,
+    /// Apply a tile layout by id (preset or saved custom).
+    Tile(String),
+    /// Save the current tab's layout as a named custom tile.
+    SaveLayout,
+    /// Open a Relay team by name (tiled agents).
+    OpenTeam(String),
+    /// Launch a previously-saved agent by name.
+    AgentDef(String),
     Quit,
     /// The special `unbind` action: removes the trigger's binding.
     Unbound,
@@ -283,6 +293,11 @@ impl Action {
             }
             "relay_feed" => only(Self::RelayFeed, &name, param),
             "relay_launch" => only(Self::RelayLaunch, &name, param),
+            "relay_log" => only(Self::RelayLog, &name, param),
+            "tile" => Ok(Self::Tile(req(&name, param)?.to_string())),
+            "save_layout" => only(Self::SaveLayout, &name, param),
+            "open_team" => Ok(Self::OpenTeam(req(&name, param)?.to_string())),
+            "agent_def" => Ok(Self::AgentDef(req(&name, param)?.to_string())),
             "quit" => only(Self::Quit, &name, param),
             "unbind" => only(Self::Unbound, &name, param),
             _ => Err(format!("unknown action `{name}`")),
@@ -325,6 +340,11 @@ impl Action {
             Self::ComposeCommand => "compose_command".into(),
             Self::RelayFeed => "relay_feed".into(),
             Self::RelayLaunch => "relay_launch".into(),
+            Self::RelayLog => "relay_log".into(),
+            Self::Tile(s) => format!("tile:{s}"),
+            Self::SaveLayout => "save_layout".into(),
+            Self::OpenTeam(s) => format!("open_team:{s}"),
+            Self::AgentDef(s) => format!("agent_def:{s}"),
             Self::PluginCommand(s) => format!("plugin_command:{s}"),
             Self::MacroRecord => "macro_record".into(),
             Self::MacroReplay(s) => format!("macro:{s}"),

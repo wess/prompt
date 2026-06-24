@@ -15,6 +15,7 @@ mod linux;
 mod mcpbridge;
 mod metrics;
 mod mouse;
+mod newagent;
 mod pointer;
 mod quick;
 mod relay;
@@ -26,6 +27,8 @@ mod settings;
 mod splits;
 mod tabbar;
 mod textedit;
+mod textkeys;
+mod tiles;
 mod titlebar;
 mod view;
 
@@ -59,26 +62,48 @@ fn main() {
         eprintln!("prompt: config line {}: {} ({})", d.line, d.message, d.key);
     }
 
-    gpui_platform::application().run(move |cx: &mut App| {
-        let colors = Rc::new(colors::from_config(&opts));
-        let font = font::build(&opts);
-        let font_size = px(opts.font_size.max(1.0));
-        let cell = metrics::measure(cx.text_system(), &font, font_size);
-        let pad = metrics::Padding {
-            x: opts.window_padding_x as f32,
-            y: opts.window_padding_y as f32,
-        };
-
+    let app = gpui_platform::application();
+    // macOS keeps the app alive after the last window closes; clicking the
+    // dock icon (or relaunching) should bring a fresh window back.
+    app.on_reopen(|cx| {
+        if cx.windows().is_empty() {
+            spawn_window(cx);
+        }
+    });
+    app.run(move |cx: &mut App| {
         // Keybindings come from config (defaults + user overrides) and are
         // bound by the workspace view, which owns the resolved table.
         // Startup has no pane to inherit from; defaults to home.
-        open_window(opts, colors, font, font_size, cell, pad, None, cx);
+        open_default_window(opts, cx);
         cx.activate(true);
         // Two summon paths for the quick terminal: an in-process global
         // hotkey (macOS/X11) and a socket the compositor can poke (Wayland).
         quick::install_global_hotkey(cx);
         ipc::listen(cx);
     });
+}
+
+/// Load config fresh and open one default window. Used for dock-reopen, where
+/// there is no surviving window to copy appearance from.
+fn spawn_window(cx: &mut App) {
+    let (opts, diagnostics) = config::load();
+    for d in &diagnostics {
+        eprintln!("prompt: config line {}: {} ({})", d.line, d.message, d.key);
+    }
+    open_default_window(opts, cx);
+}
+
+/// Derive appearance from `opts` and open one default-sized window.
+fn open_default_window(opts: config::Options, cx: &mut App) {
+    let colors = Rc::new(colors::from_config(&opts));
+    let font = font::build(&opts);
+    let font_size = px(opts.font_size.max(1.0));
+    let cell = metrics::measure(cx.text_system(), &font, font_size);
+    let pad = metrics::Padding {
+        x: opts.window_padding_x as f32,
+        y: opts.window_padding_y as f32,
+    };
+    open_window(opts, colors, font, font_size, cell, pad, None, cx);
 }
 
 /// Open a fresh top-level window hosting its own `WorkspaceView`. Shared by

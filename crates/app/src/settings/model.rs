@@ -11,16 +11,18 @@ pub enum Section {
     Appearance,
     Terminal,
     Keyboard,
+    Macros,
     Plugins,
     Ai,
 }
 
 impl Section {
-    pub const ALL: [Section; 6] = [
+    pub const ALL: [Section; 7] = [
         Section::General,
         Section::Appearance,
         Section::Terminal,
         Section::Keyboard,
+        Section::Macros,
         Section::Plugins,
         Section::Ai,
     ];
@@ -31,6 +33,7 @@ impl Section {
             Section::Appearance => "Appearance",
             Section::Terminal => "Terminal",
             Section::Keyboard => "Keyboard",
+            Section::Macros => "Macros",
             Section::Plugins => "Plugins",
             Section::Ai => "AI",
         }
@@ -42,6 +45,7 @@ impl Section {
             Section::Appearance => "Tune themes, colors, fonts, cursor, and the color palette.",
             Section::Terminal => "Control grid density, padding, scrollback, and scrolling.",
             Section::Keyboard => "Edit the keymap: change a trigger, remove it, or add one.",
+            Section::Macros => "Replay recorded command macros and assign each a shortcut.",
             Section::Plugins => "Manage the directories Prompt loads extensions from.",
             Section::Ai => "Expose this terminal over MCP and run the Relay agent mesh.",
         }
@@ -53,6 +57,7 @@ impl Section {
             Section::Appearance => "\u{25d0}",
             Section::Terminal => "\u{25a3}",
             Section::Keyboard => "\u{2328}",
+            Section::Macros => "\u{25b6}",
             Section::Plugins => "\u{2739}",
             Section::Ai => "\u{2728}",
         }
@@ -64,6 +69,7 @@ impl Section {
             Section::Appearance => theme::Rgb::new(88, 86, 214),
             Section::Terminal => theme::Rgb::new(52, 199, 89),
             Section::Keyboard => theme::Rgb::new(10, 132, 255),
+            Section::Macros => theme::Rgb::new(255, 45, 85),
             Section::Plugins => theme::Rgb::new(255, 159, 10),
             Section::Ai => theme::Rgb::new(191, 90, 242),
         }
@@ -84,6 +90,10 @@ pub enum Bool {
     McpServer,
     RelayEnabled,
     RelayStartOnLaunch,
+    ToolClaude,
+    ToolCodex,
+    ToolOllama,
+    ToolGemini,
 }
 
 impl Bool {
@@ -100,6 +110,10 @@ impl Bool {
             Bool::McpServer => "mcp-server-enabled",
             Bool::RelayEnabled => "relay-enabled",
             Bool::RelayStartOnLaunch => "relay-start-on-launch",
+            Bool::ToolClaude => "agent-claude",
+            Bool::ToolCodex => "agent-codex",
+            Bool::ToolOllama => "agent-ollama",
+            Bool::ToolGemini => "agent-gemini",
         }
     }
 
@@ -116,6 +130,10 @@ impl Bool {
             Bool::McpServer => "MCP server (expose this terminal)",
             Bool::RelayEnabled => "Relay agent mesh",
             Bool::RelayStartOnLaunch => "Start Relay on launch",
+            Bool::ToolClaude => "Claude Code",
+            Bool::ToolCodex => "Codex",
+            Bool::ToolOllama => "Ollama",
+            Bool::ToolGemini => "Gemini",
         }
     }
 
@@ -132,6 +150,10 @@ impl Bool {
             Bool::McpServer => o.mcp_server_enabled,
             Bool::RelayEnabled => o.relay_enabled,
             Bool::RelayStartOnLaunch => o.relay_start_on_launch,
+            Bool::ToolClaude => o.agent_claude,
+            Bool::ToolCodex => o.agent_codex,
+            Bool::ToolOllama => o.agent_ollama,
+            Bool::ToolGemini => o.agent_gemini,
         }
     }
 }

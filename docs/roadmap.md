@@ -211,3 +211,54 @@ Conventions (non-negotiable):
   Linux releases: `scripts/linux.sh` builds `.tar.gz`/`.deb`/`.AppImage` for
   x86_64 and aarch64, wired into the release workflow plus a `linux.yml`
   validation workflow. 583 tests green.
+- 2026-06-24: Relay agent mesh. New `relay` crate (bundled sidecar binary, not
+  in-process): a local mesh that lets coding-agent sessions (Claude Code, Codex,
+  …) coordinate — a SQLite bus, MCP Streamable-HTTP transport, direct/channel/
+  broadcast messaging, and a free `wait`-loop (one blocking SSE call, so idle
+  agents cost nothing). The `relay` CLI manages the daemon (`start`/`stop`/
+  `restart`/`status`) and launches agents under it (`launch`, foreground or
+  `--background` monitored workers; `ps`/`kill`/`feed`), all keyed to a `--home`
+  state dir. Prompt integration: a **Settings → AI** section (master AI toggle,
+  MCP-server toggle, Relay enable, start-on-launch, address, default agent — all
+  config keys, no env vars), a **Relay** menu (Launch Agent…, Open Feed) that
+  opens agents/feeds into splits, and `app/relay.rs` which starts/stops the
+  bundled daemon off settings. `scripts/bundle.sh` ships `relay` beside `prompt`
+  in the `.app`. Roles: `relay role {list,info,create,edit,delete}` with an
+  `$EDITOR` drop-in and TOML files layered project → user → built-in (seven
+  built-ins embedded); `launch --role` injects the brief and applies the role's
+  channels/agent/model as overridable defaults. See `docs/relay.md`.
+- 2026-06-24: tiles, teams, and the AI menu. Tiles (`app/tiles.rs`): pane-layout
+  presets (columns/rows/grid/main-bottom/main-right, generated for any N as a
+  binary split tree) applied via **View → Tiles** into a fresh tab; **Save Current
+  Layout…** captures the focused tab's tree and stores it as JSON under
+  `~/.config/prompt/layouts/` (named via the rename modal). Teams (`relay team
+  {list,info,create,edit,delete}`, `--json` for Prompt; layered project → user →
+  built-in, two built-ins): a layout + ordered roster. The keybind menu became an
+  **AI** menu (shown when AI is enabled) with Launch Agent / Open Feed and a
+  **Teams ▸** submenu that opens a team as a tiled set of agents (each pane runs
+  `relay launch <member> --role <role>`). New actions `tile:`, `save_layout`,
+  `open_team:`. See `docs/relay.md`.
+- 2026-06-24: multi-tool agents. Three integration tiers in `relay`'s adapter
+  table (`cli/agent.rs`): MCP-native (**claude** via `--mcp-config`, **codex** via
+  `-c mcp_servers.relay.url` — both verified streamable-HTTP MCP), bridged
+  (**ollama**), and terminal (`--cmd`/gemini). New `relay agent ollama` bridge
+  (`cli/bridge.rs`): a tool-using loop against `/api/chat` that participates over a
+  new plain-HTTP control plane (`/control/register|wait|send`), factored with the
+  MCP tools onto a shared `bus.rs`. Settings → AI gained an **Agent tools** group
+  with per-tool enable toggles (`agent-claude|codex|ollama|gemini`) and a **Test**
+  button that probes reachability (CLI `--version` or the Ollama port) off-thread.
+  See `docs/relay.md`.
+- 2026-06-24: New Agent modal + movable utility windows. `app/newagent.rs`: a
+  modal to add an agent to the current workspace — provider dropdown (enabled
+  tools), name, and a role preset (from `relay role list --json`) or a custom
+  description toggle. On create it spawns the agent into a split via the workspace
+  `WindowHandle` (`view.update(|v, window, cx| ...)`, the same path the MCP bridge
+  uses) and saves the definition; **AI → Agents** lists saved agents (relaunch on
+  click) plus **Define Agent…**. The Settings and New Agent windows got a
+  transparent-titlebar drag strip (`start_window_move`, inset past the macOS
+  traffic lights) so they can be moved.
+- 2026-06-24: macOS-style text-field keys. `app/textkeys.rs` centralizes a
+  keymap shared by every modal (rename, settings, new agent): Cmd+←/→ to line
+  ends, Option+←/→ by word, Cmd/Option+Backspace to delete line/word, Ctrl+A/E/K,
+  Esc to dismiss, Cmd+W to close. `TextEdit` gained word/line nav + delete ops
+  (unit-tested).

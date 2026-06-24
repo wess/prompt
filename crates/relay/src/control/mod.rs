@@ -16,6 +16,58 @@ pub fn routes() -> Router<App> {
         .route("/control/feed", get(feed))
         .route("/control/spawn", post(spawn_worker))
         .route("/control/stop", post(stop_worker))
+        .route("/control/register", post(register))
+        .route("/control/wait", post(wait))
+        .route("/control/send", post(send))
+}
+
+// --- Bus access for non-MCP participants (e.g. the Ollama bridge) ------------
+
+#[derive(Deserialize)]
+struct RegisterReq {
+    name: String,
+    #[serde(default)]
+    role: String,
+    #[serde(default)]
+    channels: Vec<String>,
+}
+
+async fn register(State(app): State<App>, Json(r): Json<RegisterReq>) -> Json<Value> {
+    let ok = db::upsert_agent(&app.db, &r.name, &r.role, "").await.is_ok();
+    for ch in &r.channels {
+        let _ = db::subscribe(&app.db, &r.name, ch).await;
+    }
+    Json(json!({ "ok": ok }))
+}
+
+#[derive(Deserialize)]
+struct WaitReq {
+    name: String,
+    #[serde(default)]
+    block: bool,
+}
+
+async fn wait(State(app): State<App>, Json(r): Json<WaitReq>) -> Json<Value> {
+    let msgs =
+        crate::bus::await_messages(&app, &r.name, r.block, std::time::Duration::from_secs(25)).await;
+    Json(json!({ "messages": msgs }))
+}
+
+#[derive(Deserialize)]
+struct SendReq {
+    from: String,
+    #[serde(default)]
+    kind: String,
+    target: Option<String>,
+    body: String,
+}
+
+async fn send(State(app): State<App>, Json(r): Json<SendReq>) -> Json<Value> {
+    let kind = if r.kind.is_empty() { "direct" } else { &r.kind };
+    let ok = crate::bus::deliver(&app, &r.from, kind, r.target.as_deref(), &r.body)
+        .await
+        .is_ok();
+    Json(json!({ "ok": ok }))
 }
 
 async fn state(State(app): State<App>) -> Json<Value> {

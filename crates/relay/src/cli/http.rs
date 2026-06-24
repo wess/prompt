@@ -6,17 +6,22 @@ use std::time::Duration;
 /// Minimal blocking HTTP/1.1 client for localhost control calls — avoids pulling
 /// in a full HTTP client crate for a few JSON round-trips.
 pub fn get(addr: &str, path: &str) -> Result<String> {
-    request(addr, "GET", path, None)
+    request(addr, "GET", path, None, 35)
 }
 
 pub fn post(addr: &str, path: &str, body: &str) -> Result<String> {
-    request(addr, "POST", path, Some(body))
+    request(addr, "POST", path, Some(body), 35)
 }
 
-fn request(addr: &str, method: &str, path: &str, body: Option<&str>) -> Result<String> {
+/// POST with an explicit read timeout (seconds) — for slow backends like Ollama.
+pub fn post_timeout(addr: &str, path: &str, body: &str, secs: u64) -> Result<String> {
+    request(addr, "POST", path, Some(body), secs)
+}
+
+fn request(addr: &str, method: &str, path: &str, body: Option<&str>, read_secs: u64) -> Result<String> {
     let mut stream = TcpStream::connect(addr)
         .map_err(|e| anyhow!("cannot reach server at {addr}: {e}"))?;
-    stream.set_read_timeout(Some(Duration::from_secs(35)))?;
+    stream.set_read_timeout(Some(Duration::from_secs(read_secs)))?;
     stream.set_write_timeout(Some(Duration::from_secs(5)))?;
 
     let body = body.unwrap_or("");

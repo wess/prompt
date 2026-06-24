@@ -2,11 +2,11 @@
 //! and the per-section row builders.
 
 use gpui::prelude::*;
-use gpui::{div, px, AnyElement, Div, MouseButton, SharedString, Window};
+use gpui::{div, px, AnyElement, Div, MouseButton, SharedString, Window, WindowControlArea};
 use gpui::{Context, Hsla};
 
 use super::model::{Bool, Choice, Field, ListKind, Num, Section};
-use super::{EditTarget, SettingsView};
+use super::{EditTarget, SettingsView, ToolTest};
 use crate::colors;
 
 const SIDEBAR: f32 = 226.0;
@@ -192,7 +192,11 @@ impl SettingsView {
             .bg(hsla(FIELD_BG))
             .flex()
             .items_center();
-        if active {
+        if active && self.capturing {
+            field = field
+                .text_color(hsla(BLUE_TEXT))
+                .child(SharedString::from("Press keys\u{2026}"));
+        } else if active {
             let (before, after) = self.editing.as_ref().expect("active").1.split();
             field = field
                 .text_color(hsla(TEXT))
@@ -363,15 +367,28 @@ impl SettingsView {
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let input = self.text_input(EditTarget::Item(kind, idx), value, kind.placeholder(), width, cx);
-        div()
+        let mut row = div()
             .h(px(44.0))
             .px_3()
             .flex()
             .items_center()
             .gap_2()
             .justify_between()
-            .child(input)
-            .child(
+            .child(input);
+        if kind == ListKind::Keybind {
+            row = row.child(
+                button_box("\u{2328}")
+                    .text_color(hsla(BLUE_TEXT))
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(move |this, _ev, window, cx| {
+                            this.record_item(kind, idx, window, cx);
+                            cx.stop_propagation();
+                        }),
+                    ),
+            );
+        }
+        row.child(
                 button_box("\u{2715}")
                     .text_color(hsla(MUTED))
                     .on_mouse_down(
@@ -460,14 +477,106 @@ impl SettingsView {
             ],
             Section::Terminal => vec![self.list(self.terminal_rows(cx)).into_any_element()],
             Section::Keyboard => vec![self.list_group(ListKind::Keybind, cx).into_any_element()],
+            Section::Macros => vec![self.macros_group(cx).into_any_element()],
             Section::Plugins => vec![self.list_group(ListKind::Plugin, cx).into_any_element()],
-            Section::Ai => vec![self.list(self.ai_rows(cx)).into_any_element()],
+            Section::Ai => vec![
+                self.list(self.ai_rows(cx)).into_any_element(),
+                self.tools_group(cx).into_any_element(),
+            ],
         }
+    }
+
+    fn macros_group(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let mut rows: Vec<AnyElement> = Vec::new();
+        let names: Vec<String> = self.macros.iter().map(|m| m.name.clone()).collect();
+        if names.is_empty() {
+            rows.push(self.macro_empty_row());
+        } else {
+            for name in &names {
+                rows.push(self.macro_row(name, cx));
+            }
+        }
+        div()
+            .flex()
+            .flex_col()
+            .child(self.heading("Macros"))
+            .child(self.list(rows))
+    }
+
+    fn macro_empty_row(&self) -> AnyElement {
+        self.row(
+            self.icon("\u{25b6}", Section::Macros.accent(), px(22.0)),
+            "No macros recorded yet",
+            div()
+                .text_color(hsla(MUTED))
+                .child(SharedString::from("Record one, then assign a shortcut here")),
+        )
+        .into_any_element()
+    }
+
+    /// One macro: its name, its assigned shortcut (or capture prompt), a button
+    /// to (re)capture the shortcut, a clear button, and a delete button.
+    fn macro_row(&self, name: &str, cx: &mut Context<Self>) -> AnyElement {
+        let capturing = self.capture_macro.as_deref() == Some(name);
+        let shortcut = self.macro_shortcut(name);
+        let (text, color) = if capturing {
+            ("Press keys\u{2026}".to_string(), BLUE_TEXT)
+        } else if let Some(s) = &shortcut {
+            (s.clone(), TEXT)
+        } else {
+            ("Not set".to_string(), MUTED)
+        };
+        let label = div()
+            .min_w(px(110.0))
+            .flex()
+            .justify_end()
+            .text_color(hsla(color))
+            .child(SharedString::from(text));
+
+        let for_record = name.to_string();
+        let record = button_box("\u{2328}").text_color(hsla(BLUE_TEXT)).on_mouse_down(
+            MouseButton::Left,
+            cx.listener(move |this, _ev, window, cx| {
+                this.start_macro_capture(for_record.clone(), window, cx);
+                cx.stop_propagation();
+            }),
+        );
+
+        let mut control = div().flex().items_center().gap_2().child(label).child(record);
+        if shortcut.is_some() {
+            let for_clear = name.to_string();
+            control = control.child(
+                button_box("\u{21ba}").text_color(hsla(MUTED)).on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(move |this, _ev, _window, cx| {
+                        this.clear_macro_shortcut(&for_clear, cx);
+                        cx.stop_propagation();
+                    }),
+                ),
+            );
+        }
+        let for_delete = name.to_string();
+        control = control.child(
+            button_box("\u{2715}").text_color(hsla(MUTED)).on_mouse_down(
+                MouseButton::Left,
+                cx.listener(move |this, _ev, _window, cx| {
+                    this.delete_macro(&for_delete, cx);
+                    cx.stop_propagation();
+                }),
+            ),
+        );
+
+        self.row(
+            self.icon("\u{25b6}", Section::Macros.accent(), px(22.0)),
+            name,
+            control,
+        )
+        .into_any_element()
     }
 
     fn ai_rows(&self, cx: &mut Context<Self>) -> Vec<AnyElement> {
         let a = Section::Ai.accent();
-        vec![
+        let mut rows = vec![
             self.toggle_row(Bool::AiEnabled, "\u{2728}", a, cx),
             self.toggle_row(Bool::McpServer, "M", theme::Rgb::new(10, 132, 255), cx),
             self.toggle_row(Bool::RelayEnabled, "R", theme::Rgb::new(52, 199, 89), cx),
@@ -484,7 +593,93 @@ impl SettingsView {
                 theme::Rgb::new(94, 92, 230),
                 cx,
             ),
-        ]
+        ];
+        if self.opts.relay_enabled {
+            rows.push(self.relay_status_row());
+            rows.push(self.relay_log_row());
+        }
+        rows
+    }
+
+    /// A live green/red dot for whether the relay server is listening.
+    fn relay_status_row(&self) -> AnyElement {
+        let running = self.relay_running;
+        let color = if running {
+            theme::Rgb::new(52, 199, 89)
+        } else {
+            theme::Rgb::new(255, 69, 58)
+        };
+        let dot = div()
+            .w(px(22.0))
+            .h(px(22.0))
+            .flex()
+            .items_center()
+            .justify_center()
+            .child(div().w(px(10.0)).h(px(10.0)).rounded(px(5.0)).bg(hsla(color)));
+        let status = div()
+            .text_color(hsla(color))
+            .child(SharedString::from(if running { "Running" } else { "Stopped" }));
+        self.row(dot, "Relay server", status).into_any_element()
+    }
+
+    /// The "Agent tools" group: each known tool with a Test button + toggle.
+    fn tools_group(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        div()
+            .flex()
+            .flex_col()
+            .child(self.heading("Agent tools"))
+            .child(self.list(vec![
+                self.tool_row(Bool::ToolClaude, "claude", cx),
+                self.tool_row(Bool::ToolCodex, "codex", cx),
+                self.tool_row(Bool::ToolOllama, "ollama", cx),
+                self.tool_row(Bool::ToolGemini, "gemini", cx),
+            ]))
+    }
+
+    fn tool_row(&self, b: Bool, tool: &'static str, cx: &mut Context<Self>) -> AnyElement {
+        let test = button_box("Test").on_mouse_down(
+            MouseButton::Left,
+            cx.listener(move |this, _ev, _window, cx| {
+                this.test_tool(tool, cx);
+                cx.stop_propagation();
+            }),
+        );
+        let control = div()
+            .flex()
+            .items_center()
+            .gap_2()
+            .child(self.test_result(tool))
+            .child(test)
+            .child(self.switch(b, cx));
+        self.row(self.icon("\u{25cb}", Section::Ai.accent(), px(22.0)), b.label(), control)
+            .into_any_element()
+    }
+
+    fn test_result(&self, tool: &str) -> AnyElement {
+        match self.tool_tests.get(tool) {
+            Some(ToolTest::Testing) => div()
+                .text_color(hsla(MUTED))
+                .child(SharedString::from("testing…"))
+                .into_any_element(),
+            Some(ToolTest::Ok(m)) => div()
+                .text_color(hsla(theme::Rgb::new(52, 199, 89)))
+                .child(SharedString::from(format!("\u{2713} {}", trunc(m, 22))))
+                .into_any_element(),
+            Some(ToolTest::Fail(e)) => div()
+                .text_color(hsla(theme::Rgb::new(255, 69, 58)))
+                .child(SharedString::from(format!("\u{2717} {}", trunc(e, 30))))
+                .into_any_element(),
+            None => div().into_any_element(),
+        }
+    }
+
+    fn relay_log_row(&self) -> AnyElement {
+        let path = crate::relay::log_path().display().to_string();
+        let text = div()
+            .text_color(hsla(MUTED))
+            .child(SharedString::from(path));
+        self.row(self.icon("\u{2630}", theme::Rgb::new(142, 142, 147), px(22.0)), "Log", text)
+            .into_any_element()
     }
 
     fn general_rows(&self, cx: &mut Context<Self>) -> Vec<AnyElement> {
@@ -551,7 +746,22 @@ impl Render for SettingsView {
             .bg(hsla(CONTENT_BG))
             .child(self.sidebar(cx))
             .child(self.content(cx))
+            .child(drag_strip())
     }
+}
+
+/// A drag handle across the transparent titlebar so the window can be moved.
+/// Left-inset on macOS to clear the traffic lights.
+fn drag_strip() -> impl IntoElement {
+    let lead = if cfg!(target_os = "macos") { 78.0 } else { 0.0 };
+    div()
+        .absolute()
+        .top_0()
+        .left(px(lead))
+        .w(px(super::WIDTH - lead))
+        .h(px(30.0))
+        .window_control_area(WindowControlArea::Drag)
+        .on_mouse_down(MouseButton::Left, |_, window, _| window.start_window_move())
 }
 
 /// The shared chrome for a small bordered button (no behavior attached yet).
@@ -573,6 +783,15 @@ fn button_box(label: impl Into<SharedString>) -> Div {
 
 fn hsla(rgb: theme::Rgb) -> Hsla {
     colors::hsla(rgb)
+}
+
+/// Truncate to `n` chars with an ellipsis.
+fn trunc(s: &str, n: usize) -> String {
+    if s.chars().count() > n {
+        format!("{}\u{2026}", s.chars().take(n).collect::<String>())
+    } else {
+        s.to_string()
+    }
 }
 
 const SIDEBAR_BG: theme::Rgb = theme::Rgb::new(30, 35, 38);

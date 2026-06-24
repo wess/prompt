@@ -1,0 +1,10 @@
+name = "pair"
+layout = "columns"
+
+[[member]]
+name = "driver"
+role = "worker"
+
+[[member]]
+name = "reviewer"
+role = "reviewer"

@@ -49,3 +49,38 @@ fn handles_unicode() {
     e.insert("é");
     assert_eq!(e.text(), "café");
 }
+
+#[test]
+fn word_navigation() {
+    let mut e = TextEdit::new("foo bar baz");
+    e.word_left();
+    assert_eq!(e.split(), ("foo bar ".into(), "baz".into()));
+    e.word_left();
+    assert_eq!(e.split(), ("foo ".into(), "bar baz".into()));
+    e.home();
+    e.word_right();
+    assert_eq!(e.split(), ("foo".into(), " bar baz".into()));
+}
+
+#[test]
+fn delete_word_back_and_forward() {
+    let mut e = TextEdit::new("foo bar baz");
+    assert!(e.delete_word_back()); // removes "baz"
+    assert_eq!(e.text(), "foo bar ");
+    e.home();
+    assert!(e.delete_word_forward()); // removes "foo"
+    assert_eq!(e.text(), " bar ");
+}
+
+#[test]
+fn delete_to_line_ends() {
+    let mut e = TextEdit::new("hello world");
+    e.home();
+    e.word_right(); // cursor after "hello"
+    assert!(e.delete_to_start());
+    assert_eq!(e.text(), " world");
+    e.end();
+    e.word_left(); // cursor before "world"
+    assert!(e.delete_to_end());
+    assert_eq!(e.text(), " ");
+}

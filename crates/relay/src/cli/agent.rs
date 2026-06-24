@@ -11,20 +11,34 @@ pub struct Spec<'a> {
     pub agent: &'a str,
     pub custom: Option<&'a str>,
     pub name: &'a str,
+    pub role: &'a str,
     pub prompt: &'a str,
     pub mcp_file: &'a str,
     pub url: &'a str,
     pub headless: bool,
     pub model: Option<&'a str>,
+    pub channels: &'a [String],
     pub skip_perms: bool,
 }
 
 /// The wait-loop harness every agent receives as its opening instruction.
-pub fn harness_prompt(name: &str, role: &str, channels: &[String], task: Option<&str>) -> String {
+/// `brief` is the optional role description; `task` is the per-launch focus.
+pub fn harness_prompt(
+    name: &str,
+    role: &str,
+    brief: &str,
+    channels: &[String],
+    task: Option<&str>,
+) -> String {
     let join = if channels.is_empty() {
         String::new()
     } else {
         format!("- After registering, `join` these channels: {}.\n", channels.join(", "))
+    };
+    let brief = if brief.trim().is_empty() {
+        String::new()
+    } else {
+        format!("\nYour role:\n{}\n", brief.trim())
     };
     let task = task
         .filter(|t| !t.trim().is_empty())
@@ -40,7 +54,7 @@ pub fn harness_prompt(name: &str, role: &str, channels: &[String], task: Option<
          message's sender (or `post` to the relevant channel).\n\
          - ALWAYS end your turn by calling `wait` again so you stay reachable. \
          Never stop the wait-loop.\n\
-         {task}"
+         {brief}{task}"
     )
 }
 
@@ -51,10 +65,11 @@ pub fn build(spec: &Spec) -> Result<Launch> {
     }
     match spec.agent {
         "claude" => Ok(claude(spec)),
-        "codex" => Ok(from_template(codex_template(spec.headless), spec)),
+        "codex" => Ok(codex(spec)),
+        "ollama" => ollama(spec),
         "gemini" => Ok(from_template(gemini_template(), spec)),
         other => Err(anyhow!(
-            "unknown agent '{other}'. Use --agent claude|codex|gemini, or pass --cmd with a template."
+            "unknown agent '{other}'. Use --agent claude|codex|ollama|gemini, or pass --cmd with a template."
         )),
     }
 }
@@ -89,16 +104,59 @@ fn claude(spec: &Spec) -> Launch {
     }
 }
 
-// NOTE: codex/gemini MCP wiring is best-effort and unverified — adjust the
-// templates here or pass --cmd if your CLI expects something different.
-fn codex_template(headless: bool) -> &'static str {
-    if headless {
-        "codex exec {prompt} -c mcp_servers.relay.url=\"{url}\""
+/// Codex speaks streamable-HTTP MCP, wired via `-c mcp_servers.relay.url`.
+fn codex(spec: &Spec) -> Launch {
+    let mcp = format!("mcp_servers.relay.url=\"{}\"", spec.url);
+    let mut args: Vec<String> = Vec::new();
+    if spec.headless {
+        args.push("exec".into());
+        args.push(spec.prompt.into());
+        args.push("-c".into());
+        args.push("approval_policy=\"never\"".into());
     } else {
-        "codex {prompt} -c mcp_servers.relay.url=\"{url}\""
+        args.push(spec.prompt.into());
+    }
+    args.push("-c".into());
+    args.push(mcp);
+    if let Some(m) = spec.model {
+        args.push("-c".into());
+        args.push(format!("model=\"{m}\""));
+    }
+    Launch {
+        program: "codex".into(),
+        args,
     }
 }
 
+/// Ollama is not an agent CLI; relay runs its own bridge loop as `relay agent
+/// ollama ...`, which drives the model and speaks to the bus over the control
+/// plane.
+fn ollama(spec: &Spec) -> Result<Launch> {
+    let exe = std::env::current_exe()?.to_string_lossy().into_owned();
+    let mut args = vec![
+        "agent".into(),
+        "ollama".into(),
+        "--name".into(),
+        spec.name.into(),
+        "--role".into(),
+        spec.role.into(),
+        "--url".into(),
+        spec.url.into(),
+        "--system".into(),
+        spec.prompt.into(),
+    ];
+    if let Some(m) = spec.model {
+        args.push("--model".into());
+        args.push(m.into());
+    }
+    for ch in spec.channels {
+        args.push("--channel".into());
+        args.push(ch.clone());
+    }
+    Ok(Launch { program: exe, args })
+}
+
+// NOTE: gemini MCP wiring is best-effort — adjust here or pass --cmd.
 fn gemini_template() -> &'static str {
     "gemini --mcp-config {mcp} --prompt {prompt}"
 }

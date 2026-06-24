@@ -240,8 +240,8 @@ impl WorkspaceView {
             self.view_menu(&mut actions, cx),
             self.window_menu(&mut actions),
         ];
-        if crate::relay::enabled(&self.opts) {
-            menus.push(self.relay_menu(&mut actions));
+        if self.opts.ai_enabled {
+            menus.push(self.ai_menu(&mut actions));
         }
         // macOS inserts the "Search" field at the top of any menu named
         // "Help" automatically; "Documents" opens the docs window.
@@ -254,14 +254,38 @@ impl WorkspaceView {
         cx.set_menus(menus);
     }
 
-    fn relay_menu(&self, a: &mut Vec<Action>) -> Menu {
-        Self::menu(
-            "Relay",
-            vec![
-                self.pick(a, "Launch Agent\u{2026}", Action::RelayLaunch),
-                self.pick(a, "Open Feed", Action::RelayFeed),
-            ],
-        )
+    fn ai_menu(&self, a: &mut Vec<Action>) -> Menu {
+        let mut items: Vec<Option<MenuItem>> = Vec::new();
+        if crate::relay::enabled(&self.opts) {
+            items.push(Some(MenuItem::submenu(self.agents_submenu(a))));
+            items.push(self.pick(a, "Open Feed", Action::RelayFeed));
+            items.push(self.pick(a, "Open Log", Action::RelayLog));
+            let teams = crate::relay::team_list();
+            if !teams.is_empty() {
+                let mut t: Vec<Option<MenuItem>> = Vec::new();
+                for name in teams {
+                    t.push(self.pick(a, &name, Action::OpenTeam(name.clone())));
+                }
+                items.push(Some(MenuItem::separator()));
+                items.push(Some(MenuItem::submenu(Self::menu("Teams", t))));
+            }
+        } else {
+            items.push(self.pick(a, "Enable Relay in Settings\u{2026}", Action::ToggleSettings));
+        }
+        Self::menu("AI", items)
+    }
+
+    fn agents_submenu(&self, a: &mut Vec<Action>) -> Menu {
+        let mut items: Vec<Option<MenuItem>> = vec![self.pick(a, "Define Agent\u{2026}", Action::RelayLaunch)];
+        let defs = crate::relay::list_agent_defs();
+        if !defs.is_empty() {
+            items.push(Some(MenuItem::separator()));
+            for d in defs {
+                let label = format!("{} \u{00b7} {}", d.name, d.provider);
+                items.push(self.pick(a, &label, Action::AgentDef(d.name)));
+            }
+        }
+        Self::menu("Agents", items)
     }
 
     fn menu(name: &str, items: Vec<Option<MenuItem>>) -> Menu {
@@ -334,6 +358,8 @@ impl WorkspaceView {
                 self.pick(a, "Change Tab Title\u{2026}", Action::ChangeTabTitle),
                 self.pick(a, "Change Terminal Title\u{2026}", Action::ChangeTerminalTitle),
                 Some(self.pick_checked(a, "Terminal Read-only", Action::ToggleReadOnly, read_only)),
+                Some(MenuItem::separator()),
+                Some(MenuItem::submenu(self.tiles_submenu(a))),
                 Some(MenuItem::separator()),
                 self.pick(a, "Quick Terminal", Action::ToggleQuickTerminal),
             ],
@@ -572,7 +598,7 @@ impl WorkspaceView {
         };
         let lastpane = self.tabs.get(index).expect("tab").tree.panes().len() == 1;
         if lastpane && self.tabs.len() == 1 {
-            cx.quit();
+            self.close_window(window, cx);
             return;
         }
         if lastpane {
@@ -602,7 +628,7 @@ impl WorkspaceView {
         };
         let removed = tab.tree.panes();
         if self.tabs.len() == 1 {
-            cx.quit();
+            self.close_window(window, cx);
             return;
         }
         self.tabs.close_tab(index);
@@ -611,6 +637,18 @@ impl WorkspaceView {
         }
         self.focusactive(window, cx);
         cx.notify();
+    }
+
+    /// Close just this window. The app keeps running while other windows are
+    /// open; only when this is the last window do we honor
+    /// `quit-after-last-window-closed` (macOS keeps the app alive otherwise).
+    fn close_window(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let last_window = cx.windows().len() <= 1;
+        if last_window && self.opts.quit_after_last_window_closed {
+            cx.quit();
+        } else {
+            window.remove_window();
+        }
     }
 
     pub fn activatetab(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
@@ -913,7 +951,7 @@ impl WorkspaceView {
             Action::NewTab => self.newtab(window, cx),
             Action::CloseSurface => self.closepane(self.tabs.focused(), window, cx),
             Action::CloseTab => self.closetab(self.tabs.active_index(), window, cx),
-            Action::CloseWindow => window.remove_window(),
+            Action::CloseWindow => self.close_window(window, cx),
             Action::CloseAllWindows => {
                 for handle in cx.windows() {
                     handle
@@ -1007,13 +1045,25 @@ impl WorkspaceView {
             Action::RelayFeed => {
                 self.splitcommand(&crate::relay::feed_command(), Axis::Vertical, false, window, cx)
             }
-            Action::RelayLaunch => self.splitcommand(
-                &crate::relay::launch_command(&self.opts),
-                Axis::Horizontal,
-                false,
-                window,
-                cx,
-            ),
+            Action::RelayLaunch => {
+                let providers = crate::relay::enabled_agents(&self.opts);
+                let roles = crate::relay::role_list();
+                if let Some(handle) = window.window_handle().downcast::<WorkspaceView>() {
+                    crate::newagent::open(window, handle, providers, roles, cx);
+                }
+            }
+            Action::RelayLog => {
+                self.splitcommand(&crate::relay::log_command(), Axis::Vertical, false, window, cx)
+            }
+            Action::Tile(id) => self.apply_tile(&id, window, cx),
+            Action::SaveLayout => self.open_save_layout(window, cx),
+            Action::OpenTeam(name) => self.open_team(&name, window, cx),
+            Action::AgentDef(name) => {
+                crate::relay::ensure_running(&self.opts);
+                if let Some(cmd) = crate::relay::launch_saved_command(&name) {
+                    self.splitcommand(&cmd, Axis::Horizontal, false, window, cx);
+                }
+            }
             Action::Quit => cx.quit(),
             Action::Unbound => {}
         }
@@ -1242,6 +1292,177 @@ impl WorkspaceView {
         self.focusactive(window, cx);
         cx.notify();
     }
+
+    /// Spawn a pane running `command` (or a plain shell when `None`).
+    fn spawn_pane(
+        &mut self,
+        command: Option<&str>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<PaneId> {
+        match command {
+            Some(c) => self.spawncommand(c, window, cx),
+            None => {
+                let inherit = self
+                    .panes
+                    .get(&self.tabs.focused())
+                    .and_then(|pane| pane.view.read(cx).cwd())
+                    .and_then(|osc| session::cwdpath(&osc));
+                let options = session::options(&self.opts, SPAWN_COLS, SPAWN_ROWS, inherit);
+                self.spawn(options, window, cx)
+            }
+        }
+    }
+
+    /// Open a fresh tab arranged per `layout`, one pane per slot. `commands[i]`
+    /// is the command for leaf `i` in pre-order (`None` = a plain shell).
+    fn apply_layout(
+        &mut self,
+        layout: &crate::tiles::Layout,
+        commands: &[Option<String>],
+        title: Option<&str>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let first = commands.first().and_then(|c| c.as_deref());
+        let Some(root) = self.spawn_pane(first, window, cx) else {
+            return;
+        };
+        self.tabs.new_tab(root);
+        self.realize_into(layout, root, 0, commands, window, cx);
+        // The tab is the workspace; label it so it reads "web", not the shell.
+        if let Some(t) = title {
+            let idx = self.tabs.active_index();
+            self.rename_tab(idx, t, cx);
+        }
+        self.focusactive(window, cx);
+        cx.notify();
+    }
+
+    /// Recursively split `host` to realize `node`; `host_index` is the pre-order
+    /// index of the subtree's anchor (left/top-most) leaf.
+    fn realize_into(
+        &mut self,
+        node: &crate::tiles::Layout,
+        host: PaneId,
+        host_index: usize,
+        commands: &[Option<String>],
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let crate::tiles::Layout::Split {
+            axis,
+            ratio,
+            first,
+            second,
+        } = node
+        else {
+            return;
+        };
+        let second_index = host_index + first.leaves();
+        let cmd = commands.get(second_index).and_then(|c| c.as_deref());
+        let Some(newpane) = self.spawn_pane(cmd, window, cx) else {
+            return;
+        };
+        match self
+            .tabs
+            .active_mut()
+            .tree
+            .split(host, axis.axis(), newpane, false)
+        {
+            Some(split) => {
+                self.tabs.active_mut().tree.set_ratio(split, *ratio);
+            }
+            None => {
+                self.panes.remove(&newpane);
+                return;
+            }
+        }
+        self.realize_into(first, host, host_index, commands, window, cx);
+        self.realize_into(second, newpane, second_index, commands, window, cx);
+    }
+
+    /// Apply a tile layout (preset or saved custom) as plain shells.
+    fn apply_tile(&mut self, id: &str, window: &mut Window, cx: &mut Context<Self>) {
+        let Some((layout, n)) = crate::tiles::resolve(id) else {
+            eprintln!("prompt: unknown tile `{id}`");
+            return;
+        };
+        let label = crate::tiles::presets()
+            .iter()
+            .find(|p| p.0 == id)
+            .map(|p| p.1.to_string())
+            .unwrap_or_else(|| id.to_string());
+        let commands = vec![None; n];
+        self.apply_layout(&layout, &commands, Some(&label), window, cx);
+    }
+
+    /// Open a Relay team: a tile of agents, each pane launched into the mesh.
+    fn open_team(&mut self, name: &str, window: &mut Window, cx: &mut Context<Self>) {
+        crate::relay::ensure_running(&self.opts);
+        let Some((shape, members)) = crate::relay::team_info(name) else {
+            eprintln!("prompt: team `{name}` not found");
+            return;
+        };
+        if members.is_empty() {
+            return;
+        }
+        let layout = crate::tiles::generate(&shape, members.len());
+        let commands: Vec<Option<String>> = members
+            .iter()
+            .map(|(m, role)| Some(crate::relay::launch_member(m, role)))
+            .collect();
+        self.apply_layout(&layout, &commands, Some(name), window, cx);
+    }
+
+    /// Add an agent (a `relay launch` command from the New Agent modal) to the
+    /// current workspace as a split.
+    pub fn create_agent(&mut self, cmd: &str, window: &mut Window, cx: &mut Context<Self>) {
+        crate::relay::ensure_running(&self.opts);
+        self.splitcommand(cmd, Axis::Horizontal, false, window, cx);
+    }
+
+    /// Prompt for a name and save the current tab's arrangement as a custom tile.
+    fn open_save_layout(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let layout = crate::tiles::from_tree(self.tabs.active().tree.root());
+        let root = cx.weak_entity();
+        crate::rename::open(
+            window,
+            root,
+            crate::rename::Target::Layout(layout),
+            String::new(),
+            cx,
+        );
+    }
+
+    /// Persist a captured layout under `name` and refresh the Tiles menu.
+    pub fn save_layout(&mut self, name: &str, layout: crate::tiles::Layout, cx: &mut Context<Self>) {
+        if name.trim().is_empty() {
+            return;
+        }
+        match crate::tiles::save(name, &layout) {
+            Ok(path) => eprintln!("prompt: saved layout {}", path.display()),
+            Err(e) => eprintln!("prompt: save layout failed: {e}"),
+        }
+        self.setmenus(cx);
+    }
+
+    fn tiles_submenu(&self, a: &mut Vec<Action>) -> Menu {
+        let mut items: Vec<Option<MenuItem>> = Vec::new();
+        for (id, label, _, _) in crate::tiles::presets() {
+            items.push(self.pick(a, label, Action::Tile((*id).to_string())));
+        }
+        let custom = crate::tiles::list_custom();
+        if !custom.is_empty() {
+            items.push(Some(MenuItem::separator()));
+            for name in custom {
+                items.push(self.pick(a, &name, Action::Tile(name.clone())));
+            }
+        }
+        items.push(Some(MenuItem::separator()));
+        items.push(self.pick(a, "Save Current Layout\u{2026}", Action::SaveLayout));
+        Self::menu("Tiles", items)
+    }
 }
 
 impl Render for WorkspaceView {
@@ -1260,15 +1481,17 @@ impl Render for WorkspaceView {
             .collect();
         let mut dividercolor = colors::hsla(self.colors.fg);
         dividercolor.a = 0.2;
-        let mut focuscolor = colors::hsla(self.colors.fg);
-        focuscolor.a = 0.35;
+        // Non-focused panes recede by a wash of the background; how far is the
+        // `unfocused-split-opacity` setting (opacity o ⇒ 1-o of background).
+        let mut dimcolor = colors::hsla(self.colors.bg);
+        dimcolor.a = (1.0 - self.opts.unfocused_split_opacity).clamp(0.0, 1.0);
         let root: WeakEntity<Self> = cx.weak_entity();
         let splitselement = SplitsElement::new(
             tree,
             focused,
             children,
             dividercolor,
-            focuscolor,
+            dimcolor,
             self.drag.clone(),
             root,
         );

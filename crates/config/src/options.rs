@@ -182,6 +182,14 @@ pub struct Options {
     pub relay_address: String,
     /// File key: `relay-default-agent` — default agent CLI for launches.
     pub relay_default_agent: String,
+    /// File key: `agent-claude` — Claude Code available as an agent.
+    pub agent_claude: bool,
+    /// File key: `agent-codex` — Codex available as an agent.
+    pub agent_codex: bool,
+    /// File key: `agent-ollama` — Ollama available as a (bridged) agent.
+    pub agent_ollama: bool,
+    /// File key: `agent-gemini` — Gemini available as an agent.
+    pub agent_gemini: bool,
 }
 
 /// The built-in primary font when none is configured.
@@ -227,7 +235,7 @@ impl Default for Options {
             mouse_scroll_multiplier: 1.0,
             macos_option_as_alt: OptionAsAlt::False,
             window_inherit_working_directory: true,
-            quit_after_last_window_closed: true,
+            quit_after_last_window_closed: false,
             title: None,
             clipboard_read: ClipboardAccess::Ask,
             clipboard_write: ClipboardAccess::Allow,
@@ -250,6 +258,10 @@ impl Default for Options {
             relay_start_on_launch: false,
             relay_address: "127.0.0.1:7777".to_string(),
             relay_default_agent: "claude".to_string(),
+            agent_claude: true,
+            agent_codex: false,
+            agent_ollama: false,
+            agent_gemini: false,
         }
     }
 }

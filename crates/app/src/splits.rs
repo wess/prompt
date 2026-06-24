@@ -1,5 +1,5 @@
 //! Render the active tab's pane tree: positioned panes, thin draggable
-//! dividers, and a border on the focused pane.
+//! dividers, and a light dim over the non-focused panes.
 //!
 //! The element lays its pane children out manually (zed pane-group style):
 //! `workspace::compute_layout` turns the tree into rects, each pane entity
@@ -91,7 +91,7 @@ pub struct SplitsElement {
     focused: PaneId,
     children: Vec<(PaneId, AnyElement)>,
     dividercolor: Hsla,
-    focuscolor: Hsla,
+    dimcolor: Hsla,
     drag: Rc<RefCell<Option<Drag>>>,
     root: WeakEntity<WorkspaceView>,
 }
@@ -102,7 +102,7 @@ impl SplitsElement {
         focused: PaneId,
         children: Vec<(PaneId, AnyElement)>,
         dividercolor: Hsla,
-        focuscolor: Hsla,
+        dimcolor: Hsla,
         drag: Rc<RefCell<Option<Drag>>>,
         root: WeakEntity<WorkspaceView>,
     ) -> Self {
@@ -111,7 +111,7 @@ impl SplitsElement {
             focused,
             children,
             dividercolor,
-            focuscolor,
+            dimcolor,
             drag,
             root,
         }
@@ -247,16 +247,13 @@ impl Element for SplitsElement {
             }
         }
 
+        // Mark focus by lightly dimming every pane except the focused one,
+        // rather than drawing a border around the active terminal.
         if frame.panes.len() > 1 {
-            if let Some((_, bounds)) = frame.panes.iter().find(|(p, _)| *p == self.focused) {
-                window.paint_quad(gpui::quad(
-                    *bounds,
-                    0.,
-                    gpui::transparent_black(),
-                    px(1.0),
-                    self.focuscolor,
-                    gpui::BorderStyle::Solid,
-                ));
+            for &(pane, bounds) in &frame.panes {
+                if pane != self.focused {
+                    window.paint_quad(fill(bounds, self.dimcolor));
+                }
             }
         }
 

@@ -273,6 +273,11 @@ pub fn default_keybinds() -> Vec<Keybind> {
         kb(cmd, ",", Action::ToggleSettings),
         kb(cmd_shift, ",", Action::ReloadConfig),
         kb(cmd_alt, "t", Action::ToggleQuickTerminal),
+        // AI / Relay (only act when AI is enabled, but always bound so the
+        // shortcut shows in the menu and stays editable).
+        kb(cmd_shift, "a", Action::RelayLaunch),
+        kb(cmd_shift, "i", Action::RelayFeed),
+        kb(cmd_shift, "l", Action::RelayLog),
         kb(cmd, "q", Action::Quit),
     ];
     for n in 1..=9 {

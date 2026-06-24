@@ -45,6 +45,9 @@ exactly how you work.
 - **MCP server** — `prompt mcp` exposes the running terminal to Model Context
   Protocol clients (Claude Desktop, Claude Code) so an agent can run commands,
   read the screen, replay macros, and switch tabs.
+- **Relay** — run a team of coding agents (Claude Code, Codex, …) that share a
+  bus and message each other, launched into splits and managed from Settings →
+  AI. See [`docs/relay.md`](docs/relay.md).
 
 ## Install
 
@@ -139,6 +142,12 @@ shell = /bin/zsh
 scrollback-limit = 10000
 copy-on-select = true
 
+# AI — opt-in (also editable in Settings → AI); see docs/relay.md
+ai-enabled = true
+relay-enabled = true
+relay-address = 127.0.0.1:7777
+relay-default-agent = claude
+
 # Keybindings — trigger = action[:param]; use `unbind` to remove a default
 keybind = cmd+shift+c=copy_to_clipboard
 keybind = ctrl+shift+page_up=scroll_page_up
@@ -215,6 +224,38 @@ Tools exposed: `run_command` (into the focused pane, a new tab, or a split),
 `prompt mcp` process is a thin stdio bridge; the live terminal window does the
 work, reached over the same per-user socket used for `--toggle-quick`.
 
+## Relay
+
+Relay runs a team of coding agents that coordinate through Prompt — a supervisor
+delegating to workers — sharing one bus so they message each other and loop on
+work. It's a bundled sidecar (`relay`), managed from **Settings → AI**, not run
+inside the terminal process.
+
+Turn it on under **Settings → AI**: enable AI features, enable the Relay mesh,
+and optionally start it on launch. An **AI** menu then appears:
+
+- **Launch Agent…** — opens a split, prompts for a name, and runs your default
+  agent there, wired to the bus and a register → `wait`-loop harness.
+- **Open Feed** — streams every message on the bus in a split.
+- **Teams ▸** — open a whole **team** at once: Prompt arranges a tile layout and
+  launches the right agent in each pane.
+
+The same `relay` binary works on its own (`relay start`, `relay launch <name>`,
+`relay feed --follow`, `relay ps`, `relay stop`). **Claude** and **Codex** join
+the mesh natively over MCP; **Ollama** is supported via a tool-using bridge relay
+drives; Gemini/anything else run via `--cmd`. Enable and **Test** each tool in
+Settings → AI.
+
+Agents launch with a **role** — a reusable brief (and optional channels/agent)
+that shapes what they do. Built-ins (`supervisor`, `frontend`, `backend`,
+`reviewer`, …) ship in the box; manage your own with `relay role list|create|edit`
+(an `$EDITOR` drop-in, layered project → user → built-in). **Teams** bundle a
+roster with a layout (`relay team …`), and **View → Tiles** offers layout presets
+plus *Save Current Layout* for any tab.
+
+Full details — config keys, the CLI, the MCP tools agents call, and supported
+agents — are in [`docs/relay.md`](docs/relay.md).
+
 ## Default keys
 
 | Keys | Action |
@@ -255,6 +296,7 @@ Override any color in config (`background`, `foreground`,
 
 ## Documentation
 
+- [`docs/relay.md`](docs/relay.md) — the Relay agent mesh: setup, CLI, and tools.
 - [`docs/roadmap.md`](docs/roadmap.md) — what's built and what's planned.
 - [`docs/parity.md`](docs/parity.md) — feature coverage and known gaps.
 - [`docs/release.md`](docs/release.md) — how releases are built and shipped.
