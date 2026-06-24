@@ -15,9 +15,8 @@ pub fn blend(a: Rgb, b: Rgb, t: f32) -> Rgb {
     Rgb::new(mix(a.r, b.r), mix(a.g, b.g), mix(a.b, b.b))
 }
 
-/// The inline row of tabs. The active tab keeps the terminal background and a
-/// foreground accent underline; inactive tabs are dimmed and brighten on hover.
-/// A trailing + opens a new tab.
+/// The inline row of tabs. The active tab keeps the terminal background;
+/// inactive tabs are dimmed and brighten on hover. A trailing + opens a new tab.
 pub fn tabs(
     titles: &[String],
     active: usize,
@@ -32,7 +31,6 @@ pub fn tabs(
     dim.a = 0.55;
     let mut hover = fg;
     hover.a = 0.10;
-    let accent = fg;
 
     div()
         .flex()
@@ -54,10 +52,10 @@ pub fn tabs(
                 .min_w(px(90.0))
                 .max_w(px(220.0))
                 .px(px(10.0))
-                // A bottom accent on the active tab; a matching transparent
-                // border on inactive tabs keeps the text baseline steady.
+                // A transparent bottom border keeps every tab's text baseline
+                // steady without drawing an accent under the active tab.
                 .border_b_2()
-                .border_color(if isactive { accent } else { gpui::transparent_black() })
+                .border_color(gpui::transparent_black())
                 .when(isactive, |d| d.bg(activebg))
                 .text_color(if isactive { fg } else { dim })
                 .hover(|s| s.bg(hover))
