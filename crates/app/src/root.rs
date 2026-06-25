@@ -2233,5 +2233,18 @@ fn commandspawn(opts: &config::Options, command: &str) -> pty::SpawnOptions {
         .filter(|shell| !shell.is_empty())
         .map(str::to_string)
         .unwrap_or_else(pty::default_shell);
-    pty::SpawnOptions::command(vec![shell, "-lc".to_string(), command.to_string()])
+    // Run the command through an interactive login shell so it inherits the exact
+    // same environment as a normal pane — we make no assumptions about where the
+    // user's startup files put things. GUI launches inherit only macOS's minimal
+    // PATH; `-l`+`-i` makes the shell source its login *and* interactive rc (e.g.
+    // ~/.zshrc), which is where PATH additions like `claude`'s dir usually live.
+    // Without it, `relay launch` can't exec the agent binary. Flags are passed
+    // separately rather than fused (`-ilc`) for portability across shells.
+    pty::SpawnOptions::command(vec![
+        shell,
+        "-i".to_string(),
+        "-l".to_string(),
+        "-c".to_string(),
+        command.to_string(),
+    ])
 }
