@@ -4,11 +4,24 @@ fn test_colors() -> Colors {
     colors::from_config(&config::Options::default())
 }
 
+/// Call `snapshot` with default cell metrics and a throwaway image cache.
+fn take_snapshot(
+    term: &mut vt::Terminal,
+    colors: &Colors,
+    search: Option<&SearchQuery>,
+) -> Snapshot {
+    let cell = CellSize {
+        width: 8.0,
+        height: 16.0,
+    };
+    snapshot(term, colors, search, cell, &mut std::collections::HashMap::new())
+}
+
 #[test]
 fn snapshot_batches_plain_text_into_one_span() {
     let mut term = vt::Terminal::new(20, 4, 0);
     term.feed(b"hello world");
-    let snap = snapshot(&mut term, &test_colors(), None);
+    let snap = take_snapshot(&mut term, &test_colors(), None);
     // Spaces between words break spans (they are skipped).
     assert_eq!(snap.spans.len(), 2);
     assert_eq!(snap.spans[0].text, "hello");
@@ -22,7 +35,7 @@ fn snapshot_batches_plain_text_into_one_span() {
 fn snapshot_splits_spans_on_style_change() {
     let mut term = vt::Terminal::new(20, 2, 0);
     term.feed(b"ab\x1b[1mcd\x1b[0mef");
-    let snap = snapshot(&mut term, &test_colors(), None);
+    let snap = take_snapshot(&mut term, &test_colors(), None);
     let texts: Vec<&str> = snap.spans.iter().map(|s| s.text.as_str()).collect();
     assert_eq!(texts, vec!["ab", "cd", "ef"]);
     assert!(snap.spans[1].flags.contains(CellFlags::BOLD));
@@ -32,7 +45,7 @@ fn snapshot_splits_spans_on_style_change() {
 fn snapshot_merges_background_runs() {
     let mut term = vt::Terminal::new(20, 2, 0);
     term.feed(b"\x1b[41mabc\x1b[0m");
-    let snap = snapshot(&mut term, &test_colors(), None);
+    let snap = take_snapshot(&mut term, &test_colors(), None);
     assert_eq!(snap.bg_runs.len(), 1);
     let run = &snap.bg_runs[0];
     assert_eq!((run.row, run.col, run.len), (0, 0, 3));
@@ -44,7 +57,7 @@ fn snapshot_inverse_swaps_colors() {
     let colors = test_colors();
     let mut term = vt::Terminal::new(20, 2, 0);
     term.feed(b"\x1b[7mx\x1b[0m");
-    let snap = snapshot(&mut term, &colors, None);
+    let snap = take_snapshot(&mut term, &colors, None);
     assert_eq!(snap.spans[0].fg, colors.bg);
     assert_eq!(snap.bg_runs[0].color, colors.fg);
 }
@@ -53,7 +66,7 @@ fn snapshot_inverse_swaps_colors() {
 fn snapshot_skips_invisible_but_keeps_background() {
     let mut term = vt::Terminal::new(20, 2, 0);
     term.feed(b"\x1b[8;41mhid\x1b[0m");
-    let snap = snapshot(&mut term, &test_colors(), None);
+    let snap = take_snapshot(&mut term, &test_colors(), None);
     assert!(snap.spans.is_empty());
     assert_eq!(snap.bg_runs.len(), 1);
 }
@@ -62,7 +75,7 @@ fn snapshot_skips_invisible_but_keeps_background() {
 fn snapshot_wide_char_is_its_own_span() {
     let mut term = vt::Terminal::new(20, 2, 0);
     term.feed("a世b".as_bytes());
-    let snap = snapshot(&mut term, &test_colors(), None);
+    let snap = take_snapshot(&mut term, &test_colors(), None);
     let texts: Vec<&str> = snap.spans.iter().map(|s| s.text.as_str()).collect();
     assert_eq!(texts, vec!["a", "世", "b"]);
     assert_eq!(snap.spans[1].width, 2);
@@ -75,12 +88,12 @@ fn snapshot_cursor_follows_visibility() {
     let colors = test_colors();
     let mut term = vt::Terminal::new(20, 2, 0);
     term.feed(b"hi");
-    let snap = snapshot(&mut term, &colors, None);
+    let snap = take_snapshot(&mut term, &colors, None);
     let cursor = snap.cursor.expect("visible by default");
     assert_eq!((cursor.row, cursor.col), (0, 2));
     assert_eq!(cursor.color, colors.cursor);
     term.feed(b"\x1b[?25l");
-    let snap = snapshot(&mut term, &colors, None);
+    let snap = take_snapshot(&mut term, &colors, None);
     assert!(snap.cursor.is_none());
 }
 
@@ -88,7 +101,7 @@ fn snapshot_cursor_follows_visibility() {
 fn snapshot_cursor_honors_osc12_color() {
     let mut term = vt::Terminal::new(20, 2, 0);
     term.feed(b"\x1b]12;rgb:ff/00/00\x07");
-    let snap = snapshot(&mut term, &test_colors(), None);
+    let snap = take_snapshot(&mut term, &test_colors(), None);
     assert_eq!(snap.cursor.expect("cursor").color, Rgb::new(255, 0, 0));
 }
 
@@ -109,7 +122,7 @@ fn cursor_shape_mapping() {
 fn snapshot_underlined_space_is_kept() {
     let mut term = vt::Terminal::new(20, 2, 0);
     term.feed(b"\x1b[4m \x1b[0m");
-    let snap = snapshot(&mut term, &test_colors(), None);
+    let snap = take_snapshot(&mut term, &test_colors(), None);
     assert_eq!(snap.spans.len(), 1);
     assert!(snap.spans[0].flags.contains(CellFlags::UNDERLINE));
 }
@@ -125,7 +138,7 @@ fn snapshot_selection_overrides_colors() {
     term.feed(b"hello");
     term.start_selection(vt::SelectionMode::Cell, vt::Point::new(0, 1));
     term.update_selection(vt::Point::new(0, 3));
-    let snap = snapshot(&mut term, &colors, None);
+    let snap = take_snapshot(&mut term, &colors, None);
     // "h" + "ell" (selected) + "o".
     let texts: Vec<&str> = snap.spans.iter().map(|s| s.text.as_str()).collect();
     assert_eq!(texts, vec!["h", "ell", "o"]);
@@ -148,11 +161,11 @@ fn snapshot_selection_honors_display_offset() {
     term.start_selection(vt::SelectionMode::Cell, vt::Point::new(-2, 0));
     term.update_selection(vt::Point::new(-2, 2));
     // At the live bottom the selected row is off screen: no override.
-    let snap = snapshot(&mut term, &colors, None);
+    let snap = take_snapshot(&mut term, &colors, None);
     assert!(snap.bg_runs.iter().all(|r| r.color != colors.selection_bg));
     // Scrolled back so the row is visible, the override applies.
     term.scroll_display(2);
-    let snap = snapshot(&mut term, &colors, None);
+    let snap = take_snapshot(&mut term, &colors, None);
     assert!(snap.bg_runs.iter().any(|r| r.color == colors.selection_bg));
     assert_eq!(snap.offset, 2);
     assert_eq!(snap.scrollback, 2);

@@ -1,4 +1,4 @@
-//! Quick Terminal: a Quake-style dropdown terminal on par with Ghostty's.
+//! Quick Terminal: a Quake-style dropdown terminal.
 //!
 //! - Summoned by a global hotkey (default cmd+alt+t) even when Prompt is not
 //!   the focused application — registered via Carbon `RegisterEventHotKey`,
@@ -237,6 +237,7 @@ fn open(cx: &mut App) {
     let cursor_style = opts.cursor_style;
     let copy_on_select = opts.copy_on_select;
     let option_as_alt = opts.macos_option_as_alt;
+    let paste_protection = opts.clipboard_paste_protection;
 
     let bounds = dropdown_bounds(cx);
     let handle = cx.open_window(
@@ -266,6 +267,7 @@ fn open(cx: &mut App) {
                     cursor_style,
                     copy_on_select,
                     option_as_alt,
+                    paste_protection,
                     fallback,
                     window,
                     cx,
@@ -320,6 +322,7 @@ impl QuickTerminalView {
         cursor_style: config::CursorStyle,
         copy_on_select: bool,
         option_as_alt: config::OptionAsAlt,
+        paste_protection: bool,
         fallback: String,
         window: &mut gpui::Window,
         cx: &mut Context<Self>,
@@ -335,6 +338,7 @@ impl QuickTerminalView {
                 cursor_style,
                 copy_on_select,
                 option_as_alt,
+                paste_protection,
                 fallback,
                 window,
                 cx,

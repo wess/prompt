@@ -95,6 +95,18 @@ fn kill_terminates_child() {
 }
 
 #[test]
+fn foreground_running_false_for_bare_child() {
+    // A lone long-lived child is itself the terminal's foreground group, so
+    // there is no process "beyond the shell" to warn about.
+    let opts = SpawnOptions::command(vec!["/bin/cat".to_string()]);
+    let mut pty = Pty::spawn(&opts).expect("spawn cat");
+    std::thread::sleep(std::time::Duration::from_millis(100));
+    assert!(!pty.foreground_running());
+    pty.kill().expect("kill");
+    pty.wait().ok();
+}
+
+#[test]
 fn cloned_reader_reads_output() {
     use std::io::Read;
     let opts = SpawnOptions::command(vec!["/bin/echo".to_string(), "clone".to_string()]);

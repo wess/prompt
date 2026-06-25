@@ -9,6 +9,32 @@ fn xtgettcap_reports_colors() {
 }
 
 #[test]
+fn sixel_dcs_decodes_and_anchors_an_image() {
+    let mut t = Terminal::new(10, 6, 100);
+    t.set_cell_pixels(8, 16);
+    // DCS q <red sixel> ST: one red pixel column, six pixels tall.
+    t.feed(b"\x1bPq#0;2;100;0;0@\x1b\\");
+    let images = t.images();
+    assert_eq!(images.len(), 1);
+    assert_eq!(images[0].image.width, 1);
+    assert_eq!(images[0].image.height, 6);
+    assert_eq!(images[0].line, 0); // anchored at the starting row
+    // A 6px-tall image is one 16px row; the cursor moved to the next line.
+    assert_eq!(t.cursor_pos().0, 1);
+}
+
+#[test]
+fn sixel_image_scrolls_into_history() {
+    let mut t = Terminal::new(4, 2, 100);
+    t.set_cell_pixels(8, 16);
+    t.feed(b"\x1bPq#0;2;0;100;0@\x1b\\");
+    assert_eq!(t.images()[0].line, 0);
+    // Push two lines: the image anchor follows the text up into scrollback.
+    t.feed(b"\n\n");
+    assert!(t.images()[0].line < 0);
+}
+
+#[test]
 fn xtgettcap_reports_terminal_name() {
     let mut t = Terminal::new(10, 3, 0);
     // "TN" -> 544e.

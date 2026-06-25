@@ -257,6 +257,34 @@ pub fn apply(opts: &mut Options, key: &str, val: &str) -> Result<(), String> {
                 value::parse_bool(val).ok_or_else(|| bad("boolean", val))?
             };
         }
+        "confirm-quit" => {
+            opts.confirm_quit = if empty {
+                d.confirm_quit
+            } else {
+                value::parse_bool(val).ok_or_else(|| bad("boolean", val))?
+            };
+        }
+        "clipboard-paste-protection" => {
+            opts.clipboard_paste_protection = if empty {
+                d.clipboard_paste_protection
+            } else {
+                value::parse_bool(val).ok_or_else(|| bad("boolean", val))?
+            };
+        }
+        "session-restore" => {
+            opts.session_restore = if empty {
+                d.session_restore
+            } else {
+                value::parse_bool(val).ok_or_else(|| bad("boolean", val))?
+            };
+        }
+        "shell-integration" => {
+            opts.shell_integration = if empty {
+                d.shell_integration
+            } else {
+                value::parse_bool(val).ok_or_else(|| bad("boolean", val))?
+            };
+        }
         "mouse-hide-while-typing" => {
             opts.mouse_hide_while_typing = if empty {
                 d.mouse_hide_while_typing

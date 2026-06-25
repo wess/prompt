@@ -63,18 +63,18 @@ impl Screen {
         self.tabs.fill(false);
     }
 
-    /// Simple resize: clamp the cursor, reset the scroll region to the full
-    /// screen, and rebuild default tab stops.
-    /// TODO: preserve custom tab stops and reflow content.
+    /// Resize the screen: reflow content (primary) or truncate/pad (alt),
+    /// follow the cursor to its new position, reset the scroll region to the
+    /// full screen, and rebuild default tab stops.
+    /// TODO: preserve custom tab stops.
     pub fn resize(&mut self, cols: usize, rows: usize) {
-        self.grid.resize(cols, rows);
-        let (cols, rows) = (self.grid.cols(), self.grid.rows());
-        self.cursor.row = self.cursor.row.min(rows - 1);
-        self.cursor.col = self.cursor.col.min(cols - 1);
+        let (row, col) = self.grid.resize(cols, rows, (self.cursor.row, self.cursor.col));
+        self.cursor.row = row;
+        self.cursor.col = col;
         self.cursor.pending_wrap = false;
         self.scroll_top = 0;
-        self.scroll_bottom = rows - 1;
-        self.tabs = default_tabs(cols);
+        self.scroll_bottom = self.grid.rows() - 1;
+        self.tabs = default_tabs(self.grid.cols());
     }
 }
 

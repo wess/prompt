@@ -67,8 +67,15 @@ pub(crate) struct Inner {
     pub(crate) report_colors: Option<Box<report::ReportColors>>,
     /// Interned OSC 8 hyperlinks referenced by cells.
     pub(crate) hyperlinks: Hyperlinks,
-    /// In-progress device control string (XTGETTCAP), if any.
+    /// In-progress device control string (XTGETTCAP or sixel), if any.
     pub(crate) dcs: dcs::Dcs,
+    /// Decoded sixel images anchored to the grid, oldest first.
+    pub(crate) images: Vec<crate::sixel::Placement>,
+    /// Monotonic id for the next image placement.
+    pub(crate) image_seq: u64,
+    /// Cell size in pixels `(w, h)`, set by the host; sixel uses it to reserve
+    /// rows. A sane default until the host reports real metrics.
+    pub(crate) cell_px: (u16, u16),
 }
 
 impl Inner {
@@ -119,6 +126,9 @@ impl Terminal {
                 report_colors: None,
                 hyperlinks: Hyperlinks::default(),
                 dcs: dcs::Dcs::None,
+                images: Vec::new(),
+                image_seq: 0,
+                cell_px: (8, 16),
             },
         }
     }
@@ -160,6 +170,17 @@ impl Terminal {
     /// The active screen's grid.
     pub fn grid(&self) -> &Grid {
         &self.inner.screen().grid
+    }
+
+    /// Sixel images anchored to the buffer, oldest first. Lines follow the
+    /// [`crate::selection`] scheme: 0 is the top live row, negative scrollback.
+    pub fn images(&self) -> &[crate::sixel::Placement] {
+        &self.inner.images
+    }
+
+    /// Tell the emulator the cell size in pixels so sixel can reserve rows.
+    pub fn set_cell_pixels(&mut self, w: u16, h: u16) {
+        self.inner.cell_px = (w.max(1), h.max(1));
     }
 
     /// Cell accessor on the active grid (no scrollback offset applied).

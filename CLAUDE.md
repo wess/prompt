@@ -68,7 +68,7 @@ The workspace is layered bottom-up; each crate depends only on those below it.
   host maps ids to terminals.
 - **`input`** — keyboard/mouse encoding to terminal byte sequences (CSI, kitty
   keyboard protocol, mouse reporting, bracketed paste).
-- **`config`** — Ghostty-style `key = value` config: parse → diagnostics →
+- **`config`** — `key = value` config: parse → diagnostics →
   `Options` + keybindings, with live file watching. Bad lines become friendly
   diagnostics and never abort the load. Default path
   `$XDG_CONFIG_HOME/prompt/config` or `~/.config/prompt/config`.

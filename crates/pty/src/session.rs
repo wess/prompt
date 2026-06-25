@@ -62,6 +62,17 @@ impl Pty {
         self.child.id()
     }
 
+    /// Whether a foreground job other than the shell itself is running on the
+    /// pty. The shell is its own session/group leader (pgid == pid via
+    /// `setsid`); when it runs a command it makes that command's group the
+    /// terminal foreground group, so a differing `tcgetpgrp` means "busy".
+    pub fn foreground_running(&self) -> bool {
+        match rustix::termios::tcgetpgrp(&self.master) {
+            Ok(pgrp) => pgrp.as_raw_nonzero().get() as u32 != self.child_pid(),
+            Err(_) => false,
+        }
+    }
+
     /// Send SIGKILL to the child.
     pub fn kill(&mut self) -> io::Result<()> {
         self.child.kill()

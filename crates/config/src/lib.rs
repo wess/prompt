@@ -1,5 +1,4 @@
-//! Ghostty-style `key = value` configuration loading for the Prompt
-//! terminal emulator.
+//! `key = value` configuration loading for the Prompt terminal emulator.
 
 pub mod action;
 mod apply;

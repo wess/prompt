@@ -68,9 +68,9 @@ const ARTICLES: &[Article] = &[
             ),
             Block::Heading("Opening shells"),
             Block::Para(
-                "Use the Shell menu or the shortcuts below to open new windows, tabs, and \
-                 splits. Closing the last pane in a tab closes the tab; closing the last \
-                 tab closes the window.",
+                "Use the File and Workspace menus or the shortcuts below to open new \
+                 windows, tabs, and splits. Closing the last pane in a tab closes the tab; \
+                 closing the last tab closes the window.",
             ),
             Block::Key("New window", "\u{2318} N"),
             Block::Key("New tab", "\u{2318} T"),
@@ -82,7 +82,6 @@ const ARTICLES: &[Article] = &[
                  edited by hand.",
             ),
             Block::Key("Open settings", "\u{2318} ,"),
-            Block::Key("Reload config", "\u{2318} \u{21e7} ,"),
         ],
     },
     Article {
@@ -114,7 +113,8 @@ const ARTICLES: &[Article] = &[
         blocks: &[
             Block::Para(
                 "Split any pane horizontally or vertically to run several shells side by \
-                 side within one tab. Drag the divider between panes to resize them.",
+                 side within one tab. Drag the divider between panes to resize them. Every \
+                 split, resize, and saved-layout command lives in the Workspace menu.",
             ),
             Block::Heading("Creating splits"),
             Block::Key("Split right", "\u{2318} D"),
@@ -175,6 +175,40 @@ const ARTICLES: &[Article] = &[
             Block::Key("Compose command", "\u{2318} \u{21e7} G"),
             Block::Heading("Semantic find"),
             Block::Key("Semantic find", "\u{2318} \u{21e7} F"),
+            Block::Heading("Agent mesh"),
+            Block::Para(
+                "Enable Relay in Settings \u{2192} AI to run a team of coding agents that \
+                 coordinate through Prompt. The AI menu then offers Launch Agent, the live \
+                 Feed, Teams, and a Relay submenu to start, stop, restart, and check the \
+                 server and view its logs.",
+            ),
+        ],
+    },
+    Article {
+        title: "Command Line",
+        icon: "\u{2305}",
+        accent: theme::Rgb::new(255, 214, 10),
+        summary: "macOS-style word and line motion at the shell prompt.",
+        blocks: &[
+            Block::Para(
+                "Prompt ships the familiar macOS readline shortcuts so you can move and edit \
+                 the current command the way you would in any native text field. These are \
+                 macOS defaults; rebind or add your own in the config.",
+            ),
+            Block::Heading("Move"),
+            Block::Key("Start / end of line", "\u{2318} \u{2190} / \u{2318} \u{2192}"),
+            Block::Key("Word left / right", "\u{2325} \u{2190} / \u{2325} \u{2192}"),
+            Block::Heading("Edit"),
+            Block::Key("Delete to line start", "\u{2318} \u{232b}"),
+            Block::Key("Delete previous word", "\u{2325} \u{232b}"),
+            Block::Heading("Selection"),
+            Block::Para(
+                "Right-click anywhere in a pane for a quick menu: Copy, Paste, Select All, \
+                 Split, and Clear.",
+            ),
+            Block::Key("Select all (scrollback + screen)", "\u{2318} A"),
+            Block::Key("Copy", "\u{2318} C"),
+            Block::Key("Paste", "\u{2318} V"),
         ],
     },
     Article {
@@ -184,7 +218,7 @@ const ARTICLES: &[Article] = &[
         summary: "Customize Prompt with a plain-text config file.",
         blocks: &[
             Block::Para(
-                "Prompt reads a Ghostty-style config file: one `key = value` per line. \
+                "Prompt reads a simple config file: one `key = value` per line. \
                  Edits apply live — saving the file reloads appearance without restarting.",
             ),
             Block::Heading("Common keys"),
@@ -193,6 +227,14 @@ const ARTICLES: &[Article] = &[
             Block::Bullet("window-padding-x / window-padding-y — inner margins"),
             Block::Bullet("scrollback-limit — lines of history kept per pane"),
             Block::Bullet("copy-on-select — copy selections to the clipboard automatically"),
+            Block::Bullet(
+                "clipboard-paste-protection — confirm before a risky paste (off by default)",
+            ),
+            Block::Bullet(
+                "shell-integration — inject OSC 133/7 hooks for prompt-jump and cwd (on)",
+            ),
+            Block::Bullet("session-restore — reopen tabs/splits on launch (off by default)"),
+            Block::Bullet("confirm-quit — warn on quit if a process is still running (on)"),
             Block::Heading("Keybindings"),
             Block::Para(
                 "Bind keys with `keybind = trigger=action`, for example \
@@ -206,7 +248,7 @@ const ARTICLES: &[Article] = &[
         accent: theme::Rgb::new(255, 69, 58),
         summary: "The full default keymap in one place.",
         blocks: &[
-            Block::Heading("Shell"),
+            Block::Heading("File"),
             Block::Key("New window", "\u{2318} N"),
             Block::Key("New tab", "\u{2318} T"),
             Block::Key("Split right", "\u{2318} D"),
@@ -217,11 +259,21 @@ const ARTICLES: &[Article] = &[
             Block::Heading("Edit"),
             Block::Key("Copy", "\u{2318} C"),
             Block::Key("Paste", "\u{2318} V"),
+            Block::Key("Select all", "\u{2318} A"),
+            Block::Key("Start / end of line", "\u{2318} \u{2190} / \u{2318} \u{2192}"),
+            Block::Key("Word left / right", "\u{2325} \u{2190} / \u{2325} \u{2192}"),
             Block::Key("Find", "\u{2318} F"),
             Block::Key("Semantic find", "\u{2318} \u{21e7} F"),
             Block::Key("Explain output", "\u{2318} \u{21e7} E"),
             Block::Key("Compose command", "\u{2318} \u{21e7} G"),
+            Block::Heading("Workspace"),
+            Block::Key("Split right", "\u{2318} D"),
+            Block::Key("Split down", "\u{2318} \u{21e7} D"),
+            Block::Key("Focus split", "\u{2318} \u{2325} arrows"),
+            Block::Key("Broadcast input", "\u{2318} \u{21e7} B"),
+            Block::Key("Record session", "\u{2318} \u{21e7} R"),
             Block::Heading("View"),
+            Block::Key("Command palette", "\u{2318} \u{21e7} P"),
             Block::Key("Increase font size", "\u{2318} +"),
             Block::Key("Decrease font size", "\u{2318} -"),
             Block::Key("Reset font size", "\u{2318} 0"),
@@ -232,7 +284,6 @@ const ARTICLES: &[Article] = &[
             Block::Key("Previous tab", "\u{2318} \u{21e7} ["),
             Block::Key("Next tab", "\u{2318} \u{21e7} ]"),
             Block::Key("Settings", "\u{2318} ,"),
-            Block::Key("Reload config", "\u{2318} \u{21e7} ,"),
             Block::Key("Quit", "\u{2318} Q"),
         ],
     },

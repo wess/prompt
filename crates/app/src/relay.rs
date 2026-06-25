@@ -129,6 +129,30 @@ pub fn ensure_running(opts: &config::Options) -> bool {
     running()
 }
 
+/// Start the daemon now (AI → Relay → Start Server).
+pub fn start(opts: &config::Options) {
+    let _ = std::fs::create_dir_all(home());
+    run_bg(start_args(opts));
+}
+
+/// Stop the daemon now (AI → Relay → Stop Server).
+pub fn stop() {
+    run_bg(vec!["--home".into(), home_str(), "stop".into()]);
+}
+
+/// Restart the daemon: stop, then start, as one background sequence so the
+/// new instance never races the old one for the address.
+pub fn restart(opts: &config::Options) {
+    let _ = std::fs::create_dir_all(home());
+    let bin = binary();
+    let stop_args = vec!["--home".to_string(), home_str(), "stop".to_string()];
+    let start = start_args(opts);
+    std::thread::spawn(move || {
+        let _ = std::process::Command::new(&bin).args(&stop_args).output();
+        let _ = std::process::Command::new(&bin).args(&start).output();
+    });
+}
+
 /// Reconcile the daemon with current settings after a config reload.
 pub fn on_reload(opts: &config::Options) {
     let _ = std::fs::create_dir_all(home());

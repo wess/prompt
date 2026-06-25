@@ -13,12 +13,19 @@ pub(crate) enum Dcs {
     None,
     /// Accumulating an XTGETTCAP query payload (the hex capability list).
     XtGetTcap(Vec<u8>),
+    /// Accumulating a sixel image payload.
+    Sixel(Vec<u8>),
 }
 
-/// Begin a DCS. XTGETTCAP is `DCS + q ...`: intermediate `+`, final `q`.
+/// Begin a DCS. XTGETTCAP is `DCS + q ...` (intermediate `+`, final `q`);
+/// sixel is `DCS <params> q ...` (final `q`, no `+`).
 pub(crate) fn hook(inner: &mut Inner, intermediates: &[u8], action: char) {
-    inner.dcs = if intermediates == [b'+'] && action == 'q' {
-        Dcs::XtGetTcap(Vec::new())
+    inner.dcs = if action == 'q' {
+        if intermediates == [b'+'] {
+            Dcs::XtGetTcap(Vec::new())
+        } else {
+            Dcs::Sixel(Vec::new())
+        }
     } else {
         Dcs::None
     };
@@ -26,17 +33,26 @@ pub(crate) fn hook(inner: &mut Inner, intermediates: &[u8], action: char) {
 
 /// Accumulate a payload byte.
 pub(crate) fn put(inner: &mut Inner, byte: u8) {
-    if let Dcs::XtGetTcap(buf) = &mut inner.dcs {
-        buf.push(byte);
+    match &mut inner.dcs {
+        Dcs::XtGetTcap(buf) | Dcs::Sixel(buf) => buf.push(byte),
+        Dcs::None => {}
     }
 }
 
-/// Finish the DCS and emit any reply.
+/// Finish the DCS and act on the payload.
 pub(crate) fn unhook(inner: &mut Inner) {
-    if let Dcs::XtGetTcap(buf) = std::mem::take(&mut inner.dcs) {
-        for cap in buf.split(|&b| b == b';') {
-            reply_cap(inner, cap);
+    match std::mem::take(&mut inner.dcs) {
+        Dcs::XtGetTcap(buf) => {
+            for cap in buf.split(|&b| b == b';') {
+                reply_cap(inner, cap);
+            }
         }
+        Dcs::Sixel(buf) => {
+            if let Some(image) = crate::sixel::decode(&buf) {
+                inner.place_sixel(image);
+            }
+        }
+        Dcs::None => {}
     }
 }
 

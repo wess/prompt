@@ -35,7 +35,7 @@ impl CellFlags {
         .union(CellFlags::DASHED_UNDERLINE);
 }
 
-/// One terminal cell. Copy, 16 bytes-ish; the grid stores these densely.
+/// One terminal cell. Copy; the grid stores these densely.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Cell {
     pub ch: char,
@@ -46,6 +46,11 @@ pub struct Cell {
     /// OSC 8 hyperlink this cell belongs to, if any (see
     /// [`crate::hyperlink`]). The `NonZeroU16` niche keeps this 2 bytes.
     pub hyperlink: Option<HyperlinkId>,
+    /// A zero-width combining mark / joiner that follows `ch` in the same
+    /// grapheme (e.g. a base letter plus a combining accent). Inline so the
+    /// cell stays `Copy`, small, and rides along through scroll/reflow; `'\0'`
+    /// means none. One slot keeps the cell dense; extra marks are dropped.
+    pub zw: char,
 }
 
 impl Default for Cell {
@@ -57,6 +62,7 @@ impl Default for Cell {
             underline_color: Color::Default,
             flags: CellFlags::empty(),
             hyperlink: None,
+            zw: '\0',
         }
     }
 }
@@ -77,6 +83,27 @@ impl Cell {
 
     pub fn is_wide_spacer(&self) -> bool {
         self.flags.contains(CellFlags::WIDE_SPACER)
+    }
+
+    /// Attach a zero-width combining mark to this cell; the first one wins.
+    pub fn push_combining(&mut self, c: char) {
+        if c != '\0' && self.zw == '\0' {
+            self.zw = c;
+        }
+    }
+
+    /// The combining mark attached to this cell, if any.
+    pub fn combining(&self) -> impl Iterator<Item = char> + '_ {
+        (self.zw != '\0').then_some(self.zw).into_iter()
+    }
+
+    /// Push `ch` followed by any combining marks onto `out` — the cell's full
+    /// grapheme as text.
+    pub fn write_grapheme(&self, out: &mut String) {
+        out.push(self.ch);
+        for c in self.combining() {
+            out.push(c);
+        }
     }
 }
 

@@ -65,21 +65,78 @@ fn scroll_clamps_oversized_count() {
 #[test]
 fn resize_grows_and_shrinks() {
     let mut g = grid_with_letters(3);
-    g.resize(8, 5);
+    g.resize(8, 5, (0, 0));
     assert_eq!(g.cols(), 8);
     assert_eq!(g.rows(), 5);
     assert_eq!(g.row(0).text(), "a");
     assert_eq!(g.row(4).text(), "");
-    g.resize(2, 2);
+    // Shrinking to 2 rows pushes the oldest reflowed line ("a") to scrollback.
+    g.resize(2, 2, (0, 0));
     assert_eq!(g.cols(), 2);
     assert_eq!(g.rows(), 2);
-    assert_eq!(g.row(1).text(), "b");
+    assert_eq!(g.row(0).text(), "b");
+    assert_eq!(g.row(1).text(), "c");
+}
+
+#[test]
+fn reflow_rejoins_and_rewraps_wrapped_line() {
+    // Two rows forming one logical line "abcdef" wrapped at width 3.
+    let mut g = Grid::new(3, 4, 100);
+    for (c, ch) in "abc".chars().enumerate() {
+        g.cell_mut(0, c).ch = ch;
+    }
+    g.row_mut(0).wrapped = true;
+    for (c, ch) in "def".chars().enumerate() {
+        g.cell_mut(1, c).ch = ch;
+    }
+    // Widen to 6: the logical line now fits on one row.
+    g.resize(6, 4, (1, 0));
+    assert_eq!(g.cols(), 6);
+    assert_eq!(g.row(0).text(), "abcdef");
+    assert!(!g.row(0).wrapped);
+    // Narrow to 2: it re-wraps into three rows abc/def -> "ab","cd","ef".
+    g.resize(2, 4, (0, 0));
+    assert_eq!(g.row(0).text(), "ab");
+    assert_eq!(g.row(1).text(), "cd");
+    assert_eq!(g.row(2).text(), "ef");
+    assert!(g.row(0).wrapped);
+    assert!(g.row(1).wrapped);
+    assert!(!g.row(2).wrapped);
+}
+
+#[test]
+fn reflow_follows_the_cursor() {
+    // Logical line "abcdef" wrapped at 3; cursor on the 'e' (row 1, col 1).
+    let mut g = Grid::new(3, 4, 100);
+    for (c, ch) in "abc".chars().enumerate() {
+        g.cell_mut(0, c).ch = ch;
+    }
+    g.row_mut(0).wrapped = true;
+    for (c, ch) in "def".chars().enumerate() {
+        g.cell_mut(1, c).ch = ch;
+    }
+    // Widen to 6: 'e' is the 5th char (offset 4) -> row 0, col 4.
+    let cursor = g.resize(6, 4, (1, 1));
+    assert_eq!(cursor, (0, 4));
+}
+
+#[test]
+fn reflow_preserves_prompt_mark_on_first_segment() {
+    let mut g = Grid::new(6, 4, 100);
+    for (c, ch) in "abcdef".chars().enumerate() {
+        g.cell_mut(0, c).ch = ch;
+    }
+    g.row_mut(0).prompt = true;
+    g.resize(3, 4, (0, 0));
+    // Splits into "abc"/"def"; the prompt mark rides the first segment only.
+    assert!(g.row(0).prompt);
+    assert!(!g.row(1).prompt);
 }
 
 #[test]
 fn resize_clamps_to_one() {
     let mut g = Grid::new(4, 4, 0);
-    g.resize(0, 0);
+    g.resize(0, 0, (0, 0));
     assert_eq!(g.cols(), 1);
     assert_eq!(g.rows(), 1);
 }
@@ -115,7 +172,7 @@ fn scroll_escalates_to_full() {
 fn resize_and_scrollback_clear_escalate_to_full() {
     let mut g = grid_with_letters(3);
     g.take_damage();
-    g.resize(8, 5);
+    g.resize(8, 5, (0, 0));
     assert_eq!(g.take_damage(), Damage::Full);
     g.clear_scrollback();
     assert_eq!(g.take_damage(), Damage::Full);

@@ -140,12 +140,25 @@ impl Grid {
         self.damage.mark_full();
     }
 
-    /// Simple resize: truncate or pad rows and columns.
-    /// TODO: reflow soft-wrapped lines (the `Row::wrapped` flag is already
-    /// tracked for this) instead of truncating/padding.
-    pub fn resize(&mut self, cols: usize, rows: usize) {
+    /// Resize the grid, returning the cursor's new `(row, col)`.
+    ///
+    /// When the width changes on a screen with scrollback (the primary
+    /// screen), soft-wrapped logical lines are rejoined and re-wrapped at the
+    /// new width — content reflows instead of being truncated. The alternate
+    /// screen (no scrollback) and height-only changes use a plain
+    /// truncate/pad, matching what full-screen apps expect.
+    pub fn resize(&mut self, cols: usize, rows: usize, cursor: (usize, usize)) -> (usize, usize) {
         let cols = cols.max(1);
         let rows = rows.max(1);
+        if cols == self.cols || self.scrollback.limit() == 0 {
+            self.simple_resize(cols, rows);
+            return (cursor.0.min(rows - 1), cursor.1.min(cols - 1));
+        }
+        self.reflow(cols, rows, cursor)
+    }
+
+    /// Truncate or pad rows and columns without reflowing.
+    fn simple_resize(&mut self, cols: usize, rows: usize) {
         for line in &mut self.lines {
             line.resize(cols, Cell::default());
         }
@@ -160,6 +173,111 @@ impl Grid {
         self.cols = cols;
         self.rows = rows;
         self.damage.mark_full();
+    }
+
+    /// Rejoin soft-wrapped lines and re-wrap them at `cols`, partitioning the
+    /// result into `rows` live lines plus scrollback. Returns the cursor's new
+    /// position. Wide-character pairs are not specially protected at the new
+    /// wrap boundary (a rare split renders one column off).
+    fn reflow(&mut self, cols: usize, rows: usize, cursor: (usize, usize)) -> (usize, usize) {
+        let (cur_row, cur_col) = cursor;
+        // Content extends to the cursor or the last non-blank live row,
+        // whichever is lower; rows below that are unused screen padding.
+        let last_content = self
+            .lines
+            .iter()
+            .rposition(|r| r.wrapped || r.prompt || r.cells.iter().any(|c| *c != Cell::default()))
+            .unwrap_or(0);
+        let content_end = cur_row.max(last_content);
+
+        // The full ordered run of rows: scrollback (oldest first) then the
+        // live content rows. The cursor sits at this combined index.
+        let mut combined: Vec<Row> = self.scrollback.iter().cloned().collect();
+        let cursor_combined = combined.len() + cur_row;
+        combined.extend(self.lines[..=content_end].iter().cloned());
+
+        // Group into logical lines (a run joined by `wrapped`), tracking which
+        // logical line the cursor lands in and its column offset there.
+        let mut logicals: Vec<(Vec<Cell>, bool)> = Vec::new();
+        let mut cur_logical = 0usize;
+        let mut cur_offset = 0usize;
+        let mut i = 0;
+        while i < combined.len() {
+            let start = i;
+            let prompt = combined[start].prompt;
+            let mut cells: Vec<Cell> = Vec::new();
+            loop {
+                if i == cursor_combined {
+                    cur_logical = logicals.len();
+                    cur_offset = cells.len() + cur_col;
+                }
+                let wrapped = combined[i].wrapped;
+                cells.extend_from_slice(&combined[i].cells);
+                i += 1;
+                if !wrapped || i >= combined.len() {
+                    break;
+                }
+            }
+            let has_cursor = (start..i).contains(&cursor_combined);
+            // Trim the trailing blank padding of a hard-ended line, but never
+            // past the cursor column on its own line.
+            let mut end = cells.len();
+            while end > 0 && cells[end - 1] == Cell::default() {
+                end -= 1;
+            }
+            if has_cursor {
+                end = end.max(cur_offset + 1);
+            }
+            if end < cells.len() {
+                cells.truncate(end);
+            } else if end > cells.len() {
+                cells.resize(end, Cell::default());
+            }
+            logicals.push((cells, prompt));
+        }
+
+        // Re-wrap each logical line into `cols`-wide rows.
+        let mut out: Vec<Row> = Vec::new();
+        let mut cur_flat_row = 0usize;
+        let mut cur_new_col = 0usize;
+        for (li, (cells, prompt)) in logicals.iter().enumerate() {
+            let base = out.len();
+            if cells.is_empty() {
+                let mut row = Row::new(cols);
+                row.prompt = *prompt;
+                out.push(row);
+            } else {
+                let nseg = cells.len().div_ceil(cols);
+                for (si, chunk) in cells.chunks(cols).enumerate() {
+                    let mut row = Row::filled(cols, Cell::default());
+                    row.cells[..chunk.len()].copy_from_slice(chunk);
+                    row.wrapped = si + 1 < nseg;
+                    row.prompt = si == 0 && *prompt;
+                    out.push(row);
+                }
+            }
+            if li == cur_logical {
+                cur_flat_row = base + cur_offset / cols;
+                cur_new_col = cur_offset % cols;
+            }
+        }
+
+        // The last `rows` rows stay live; the rest become scrollback.
+        let live_start = out.len().saturating_sub(rows);
+        self.scrollback.clear();
+        for row in out.drain(..live_start) {
+            self.scrollback.push(row);
+        }
+        while out.len() < rows {
+            out.push(Row::new(cols));
+        }
+        self.lines = out;
+        self.cols = cols;
+        self.rows = rows;
+        self.damage.mark_full();
+
+        let live_row = cur_flat_row.saturating_sub(live_start).min(rows - 1);
+        (live_row, cur_new_col.min(cols - 1))
     }
 }
 

@@ -1,4 +1,4 @@
-//! Ghostty-style `key = value` parser. Never hard-fails: bad lines become
+//! `key = value` config parser. Never hard-fails: bad lines become
 //! diagnostics and parsing continues.
 
 use crate::apply::apply;

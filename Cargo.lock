@@ -243,7 +243,7 @@ checksum = "7f202df86484c868dbad7eaa557ef785d5c66295e41b460ef922eca0723b842c"
 
 [[package]]
 name = "app"
-version = "0.4.0"
+version = "1.0.0"
 dependencies = [
  "assist",
  "config",
@@ -251,6 +251,7 @@ dependencies = [
  "global-hotkey",
  "gpui",
  "gpui_platform",
+ "image",
  "input",
  "macros",
  "mcp",
@@ -262,6 +263,7 @@ dependencies = [
  "raw-window-handle",
  "serde",
  "serde_json",
+ "smallvec",
  "terminal",
  "theme",
  "vt",
@@ -351,7 +353,7 @@ dependencies = [
 
 [[package]]
 name = "assist"
-version = "0.4.0"
+version = "1.0.0"
 dependencies = [
  "candle-core",
 ]
@@ -1054,6 +1056,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "cast"
+version = "1.0.0"
+dependencies = [
+ "serde_json",
+]
+
+[[package]]
 name = "castaway"
 version = "0.2.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1355,7 +1364,7 @@ dependencies = [
 
 [[package]]
 name = "config"
-version = "0.4.0"
+version = "1.0.0"
 
 [[package]]
 name = "console_error_panic_hook"
@@ -3546,7 +3555,7 @@ dependencies = [
 
 [[package]]
 name = "input"
-version = "0.4.0"
+version = "1.0.0"
 
 [[package]]
 name = "instant"
@@ -3981,7 +3990,7 @@ checksum = "670fdfda89751bc4a84ac13eaa63e205cf0fd22b4c9a5fbfa085b63c1f1d3a30"
 
 [[package]]
 name = "macros"
-version = "0.4.0"
+version = "1.0.0"
 
 [[package]]
 name = "malloc_buf"
@@ -4019,7 +4028,7 @@ dependencies = [
 
 [[package]]
 name = "mcp"
-version = "0.4.0"
+version = "1.0.0"
 dependencies = [
  "serde_json",
 ]
@@ -4996,7 +5005,7 @@ checksum = "19f132c84eca552bf34cab8ec81f1c1dcc229b811638f9d283dceabe58c5569e"
 
 [[package]]
 name = "plugin"
-version = "0.4.0"
+version = "1.0.0"
 
 [[package]]
 name = "png"
@@ -5187,7 +5196,7 @@ dependencies = [
 
 [[package]]
 name = "pty"
-version = "0.4.0"
+version = "1.0.0"
 dependencies = [
  "rustix 0.38.44",
 ]
@@ -6652,15 +6661,16 @@ dependencies = [
 
 [[package]]
 name = "terminal"
-version = "0.4.0"
+version = "1.0.0"
 dependencies = [
+ "cast",
  "pty",
  "vt",
 ]
 
 [[package]]
 name = "theme"
-version = "0.4.0"
+version = "1.0.0"
 
 [[package]]
 name = "thiserror"
@@ -7369,7 +7379,7 @@ dependencies = [
 
 [[package]]
 name = "vt"
-version = "0.4.0"
+version = "1.0.0"
 dependencies = [
  "bitflags 2.13.0",
  "unicode-width",
@@ -8362,7 +8372,7 @@ dependencies = [
 
 [[package]]
 name = "workspace"
-version = "0.4.0"
+version = "1.0.0"
 
 [[package]]
 name = "writeable"

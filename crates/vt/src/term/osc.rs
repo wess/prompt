@@ -58,7 +58,7 @@ pub(crate) fn dispatch(inner: &mut Inner, params: &[&[u8]], bell_terminated: boo
             };
             inner.screen_mut().cursor.pen.hyperlink = hid;
         }
-        // Shell integration semantic prompts (FinalTerm/OSC 133). `A`
+        // Shell integration semantic prompts (OSC 133). `A`
         // marks the start of a prompt; that row becomes a jump target.
         // `B`/`C`/`D` (command start / output / end) are accepted but not
         // yet acted on.

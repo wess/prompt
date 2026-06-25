@@ -56,7 +56,9 @@ With AI enabled, an **AI** menu appears; with Relay on it offers:
   submenu — click a saved agent to relaunch it.
 - **Open Feed** — opens a split streaming every message on the bus (who said what
   to whom), the one view of cross-agent traffic.
-- **Open Log** — tails the relay server log (`server.log`) in a split.
+- **Relay ▸** — server controls: a live running/stopped status line, then **Start
+  Server**, **Stop Server**, **Restart Server**, and **View Logs** (tails the relay
+  server log, `server.log`, in a split).
 - **Teams ▸** — open a whole team at once (see [Teams & tiles](#teams--tiles)).
 
 A typical session: launch a `supervisor`, launch a couple of workers
@@ -172,7 +174,7 @@ role = "frontend"
 Built-ins: `web` (lead + frontend + backend + reviewer, main-bottom) and `pair`
 (driver + reviewer, columns).
 
-**Tiles** live in Prompt under **View → Tiles**: built-in presets (Two/Three
+**Tiles** live in Prompt under the **Workspace** menu: built-in presets (Two/Three
 Columns, Two Rows, Grid, Main + Bottom Row, Main + Right Stack) open that
 arrangement of shells in a new tab. **Save Current Layout…** captures the focused
 tab's split structure, asks for a name, and adds it to the menu (stored as JSON

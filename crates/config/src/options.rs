@@ -88,7 +88,7 @@ impl ClipboardAccess {
     }
 }
 
-/// All configuration options with Ghostty-flavored defaults.
+/// All configuration options with their defaults.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Options {
     /// File key: `font-family`, repeated to build a fallback chain (first
@@ -162,8 +162,22 @@ pub struct Options {
     pub copy_on_select: bool,
     /// File key: `confirm-close-surface`.
     pub confirm_close_surface: bool,
+    /// File key: `confirm-quit`. Warn before quitting while a process is still
+    /// running in one of the panes. On by default.
+    pub confirm_quit: bool,
+    /// File key: `clipboard-paste-protection`. When set, a paste flagged as
+    /// risky prompts for confirmation before reaching the shell. Off by
+    /// default so pasting is friction-free.
+    pub clipboard_paste_protection: bool,
     /// File key: `mouse-hide-while-typing`.
     pub mouse_hide_while_typing: bool,
+    /// File key: `session-restore`. Save the window's tabs/splits/cwds on quit
+    /// and restore them on the next launch. Off by default.
+    pub session_restore: bool,
+    /// File key: `shell-integration`. Inject OSC 133 prompt marks + OSC 7 cwd
+    /// reporting into the spawned shell (zsh/bash/fish) so jump-to-prompt and
+    /// cwd inheritance work without editing your shell rc. On by default.
+    pub shell_integration: bool,
     /// File key: `palette`, repeated `N=#rrggbb` entries (accumulated).
     pub palette: Vec<(u8, String)>,
     /// File key: `plugin`, repeated plugin directories or manifest paths.
@@ -248,7 +262,11 @@ impl Default for Options {
             working_directory: None,
             copy_on_select: false,
             confirm_close_surface: true,
+            confirm_quit: true,
+            clipboard_paste_protection: false,
             mouse_hide_while_typing: false,
+            shell_integration: true,
+            session_restore: false,
             palette: Vec::new(),
             plugin: Vec::new(),
             keybind: Vec::new(),

@@ -1,4 +1,4 @@
-//! Keybind actions, Ghostty-style: a name plus an optional `:param`.
+//! Keybind actions: a name plus an optional `:param`.
 
 /// Direction for `new_split`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -96,7 +96,7 @@ impl SplitFocus {
     }
 }
 
-/// A keybind action. Names follow Ghostty: `new_tab`, `goto_tab:3`,
+/// A keybind action. Names like `new_tab`, `goto_tab:3`,
 /// `increase_font_size:1`, `unbind`, ...
 #[derive(Debug, Clone, PartialEq)]
 pub enum Action {
@@ -126,6 +126,13 @@ pub enum Action {
     MoveTab(i32),
     Copy,
     Paste,
+    /// Select the entire terminal buffer (scrollback + screen).
+    SelectAll,
+    /// Write raw bytes straight to the pty. Built from
+    /// `text:<chars>` (literal, with `\xNN`/`\e`/`\n`… escapes) and
+    /// `esc:<chars>` (an ESC prefix plus those chars). Used for the macOS
+    /// readline navigation defaults (word/line motion).
+    SendText(Vec<u8>),
     IncreaseFontSize(f32),
     DecreaseFontSize(f32),
     ResetFontSize,
@@ -152,11 +159,12 @@ pub enum Action {
     MacroRecord,
     /// Replay a saved macro by name (`macro:<name>`).
     MacroReplay(String),
+    /// Open the fuzzy command palette.
+    CommandPalette,
     /// Toggle the settings panel.
     ToggleSettings,
     /// Open the documentation window.
     ShowHelp,
-    ReloadConfig,
     ToggleFullscreen,
     /// Minimize the window to the Dock.
     MinimizeWindow,
@@ -176,6 +184,10 @@ pub enum Action {
     ChangeTerminalTitle,
     /// Toggle input gating on the focused pane.
     ToggleReadOnly,
+    /// Toggle mirroring typed input to every pane in the active tab.
+    ToggleBroadcast,
+    /// Start/stop recording the focused pane as an asciinema cast.
+    ToggleRecording,
     /// Toggle the Quake-style dropdown quick terminal.
     ToggleQuickTerminal,
     /// Open the Relay agent-mesh feed in a split.
@@ -184,6 +196,12 @@ pub enum Action {
     RelayLaunch,
     /// Tail the Relay server log in a split.
     RelayLog,
+    /// Start the Relay server daemon.
+    RelayStart,
+    /// Stop the Relay server daemon.
+    RelayStop,
+    /// Restart the Relay server daemon.
+    RelayRestart,
     /// Apply a tile layout by id (preset or saved custom).
     Tile(String),
     /// Save the current tab's layout as a named custom tile.
@@ -200,9 +218,11 @@ pub enum Action {
 impl Action {
     /// Parse `name` or `name:param`. Unknown names or bad params are errors.
     pub fn parse(s: &str) -> Result<Self, String> {
-        let (name, param) = match s.split_once(':') {
-            Some((n, p)) => (n.trim().to_ascii_lowercase(), Some(p.trim())),
-            None => (s.trim().to_ascii_lowercase(), None),
+        // `raw` keeps the parameter untrimmed: for `text:`/`esc:` payloads
+        // whitespace is significant (e.g. `text: ` sends a literal space).
+        let (name, param, raw) = match s.split_once(':') {
+            Some((n, p)) => (n.trim().to_ascii_lowercase(), Some(p.trim()), Some(p)),
+            None => (s.trim().to_ascii_lowercase(), None, None),
         };
         match name.as_str() {
             "new_window" => only(Self::NewWindow, &name, param),
@@ -243,6 +263,13 @@ impl Action {
             "move_tab" => Ok(Self::MoveTab(int(&name, param)?)),
             "copy_to_clipboard" | "copy" => only(Self::Copy, &name, param),
             "paste_from_clipboard" | "paste" => only(Self::Paste, &name, param),
+            "select_all" => only(Self::SelectAll, &name, param),
+            "text" => Ok(Self::SendText(decode_text(req(&name, raw)?)?)),
+            "esc" => {
+                let mut bytes = vec![0x1b];
+                bytes.extend(decode_text(req(&name, raw)?)?);
+                Ok(Self::SendText(bytes))
+            }
             "increase_font_size" => Ok(Self::IncreaseFontSize(amount(&name, param)?)),
             "decrease_font_size" => Ok(Self::DecreaseFontSize(amount(&name, param)?)),
             "reset_font_size" => only(Self::ResetFontSize, &name, param),
@@ -273,9 +300,9 @@ impl Action {
                     Err("macro requires a name ([a-z0-9.-])".to_string())
                 }
             }
+            "command_palette" => only(Self::CommandPalette, &name, param),
             "open_settings" | "toggle_settings" => only(Self::ToggleSettings, &name, param),
             "show_help" | "help" => only(Self::ShowHelp, &name, param),
-            "reload_config" => only(Self::ReloadConfig, &name, param),
             "toggle_fullscreen" => only(Self::ToggleFullscreen, &name, param),
             "minimize_window" | "minimize" => only(Self::MinimizeWindow, &name, param),
             "zoom_window" => only(Self::ZoomWindow, &name, param),
@@ -288,12 +315,17 @@ impl Action {
             "change_tab_title" => only(Self::ChangeTabTitle, &name, param),
             "change_terminal_title" => only(Self::ChangeTerminalTitle, &name, param),
             "toggle_read_only" => only(Self::ToggleReadOnly, &name, param),
+            "toggle_broadcast" | "broadcast_input" => only(Self::ToggleBroadcast, &name, param),
+            "toggle_recording" | "record_session" => only(Self::ToggleRecording, &name, param),
             "toggle_quick_terminal" | "quick_terminal" => {
                 only(Self::ToggleQuickTerminal, &name, param)
             }
             "relay_feed" => only(Self::RelayFeed, &name, param),
             "relay_launch" => only(Self::RelayLaunch, &name, param),
             "relay_log" => only(Self::RelayLog, &name, param),
+            "relay_start" => only(Self::RelayStart, &name, param),
+            "relay_stop" => only(Self::RelayStop, &name, param),
+            "relay_restart" => only(Self::RelayRestart, &name, param),
             "tile" => Ok(Self::Tile(req(&name, param)?.to_string())),
             "save_layout" => only(Self::SaveLayout, &name, param),
             "open_team" => Ok(Self::OpenTeam(req(&name, param)?.to_string())),
@@ -325,6 +357,8 @@ impl Action {
             Self::MoveTab(n) => format!("move_tab:{n}"),
             Self::Copy => "copy_to_clipboard".into(),
             Self::Paste => "paste_from_clipboard".into(),
+            Self::SelectAll => "select_all".into(),
+            Self::SendText(bytes) => format!("text:{}", encode_text(bytes)),
             Self::IncreaseFontSize(a) => font_size_action("increase_font_size", *a),
             Self::DecreaseFontSize(a) => font_size_action("decrease_font_size", *a),
             Self::ResetFontSize => "reset_font_size".into(),
@@ -341,6 +375,9 @@ impl Action {
             Self::RelayFeed => "relay_feed".into(),
             Self::RelayLaunch => "relay_launch".into(),
             Self::RelayLog => "relay_log".into(),
+            Self::RelayStart => "relay_start".into(),
+            Self::RelayStop => "relay_stop".into(),
+            Self::RelayRestart => "relay_restart".into(),
             Self::Tile(s) => format!("tile:{s}"),
             Self::SaveLayout => "save_layout".into(),
             Self::OpenTeam(s) => format!("open_team:{s}"),
@@ -348,9 +385,9 @@ impl Action {
             Self::PluginCommand(s) => format!("plugin_command:{s}"),
             Self::MacroRecord => "macro_record".into(),
             Self::MacroReplay(s) => format!("macro:{s}"),
+            Self::CommandPalette => "command_palette".into(),
             Self::ToggleSettings => "toggle_settings".into(),
             Self::ShowHelp => "show_help".into(),
-            Self::ReloadConfig => "reload_config".into(),
             Self::ToggleFullscreen => "toggle_fullscreen".into(),
             Self::MinimizeWindow => "minimize_window".into(),
             Self::ZoomWindow => "zoom_window".into(),
@@ -361,6 +398,8 @@ impl Action {
             Self::ChangeTabTitle => "change_tab_title".into(),
             Self::ChangeTerminalTitle => "change_terminal_title".into(),
             Self::ToggleReadOnly => "toggle_read_only".into(),
+            Self::ToggleBroadcast => "toggle_broadcast".into(),
+            Self::ToggleRecording => "toggle_recording".into(),
             Self::ToggleQuickTerminal => "toggle_quick_terminal".into(),
             Self::Quit => "quit".into(),
             Self::Unbound => "unbind".into(),
@@ -388,6 +427,66 @@ fn valid_id(s: &str) -> bool {
     !s.is_empty()
         && s.bytes()
             .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'.' || b == b'-')
+}
+
+/// Decode a `text:`/`esc:` payload into raw bytes, honoring C-style escapes:
+/// `\n \r \t \e \0 \\` and `\xNN` (two hex digits). An unknown escape keeps the
+/// backslash and the following char verbatim. Everything else is UTF-8.
+fn decode_text(s: &str) -> Result<Vec<u8>, String> {
+    let mut out = Vec::with_capacity(s.len());
+    let mut chars = s.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c != '\\' {
+            let mut buf = [0u8; 4];
+            out.extend_from_slice(c.encode_utf8(&mut buf).as_bytes());
+            continue;
+        }
+        match chars.next() {
+            Some('n') => out.push(b'\n'),
+            Some('r') => out.push(b'\r'),
+            Some('t') => out.push(b'\t'),
+            Some('e') => out.push(0x1b),
+            Some('0') => out.push(0x00),
+            Some('\\') => out.push(b'\\'),
+            Some('x') => {
+                let hi = chars.next();
+                let lo = chars.next();
+                match (hi, lo) {
+                    (Some(h), Some(l)) => {
+                        let byte = u8::from_str_radix(&format!("{h}{l}"), 16)
+                            .map_err(|_| format!("invalid \\x escape `\\x{h}{l}`"))?;
+                        out.push(byte);
+                    }
+                    _ => return Err("`\\x` needs two hex digits".to_string()),
+                }
+            }
+            Some(other) => {
+                out.push(b'\\');
+                let mut buf = [0u8; 4];
+                out.extend_from_slice(other.encode_utf8(&mut buf).as_bytes());
+            }
+            None => out.push(b'\\'),
+        }
+    }
+    Ok(out)
+}
+
+/// Re-encode raw bytes into a `text:` payload that [`decode_text`] reads back.
+/// Printable ASCII passes through (backslash doubled); everything else uses
+/// `\xNN`.
+fn encode_text(bytes: &[u8]) -> String {
+    let mut out = String::with_capacity(bytes.len());
+    for &b in bytes {
+        match b {
+            b'\\' => out.push_str("\\\\"),
+            // Escape space: the keybind line parser trims whole values, so a
+            // literal edge space would not survive a config-file round-trip.
+            b' ' => out.push_str("\\x20"),
+            0x21..=0x7e => out.push(b as char),
+            _ => out.push_str(&format!("\\x{b:02x}")),
+        }
+    }
+    out
 }
 
 /// The action takes no parameter.

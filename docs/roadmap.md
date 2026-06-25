@@ -2,7 +2,7 @@
 
 Prompt is a terminal emulator written in Rust.
 
-- Feature target: parity with Ghostty (https://ghostty.org/docs)
+- Feature target: a complete, modern terminal feature set
 - Architecture: Zed-style (https://github.com/zed-industries/zed) — a cargo
   workspace of small, focused crates under `crates/`, GPUI for the UI layer.
 
@@ -22,7 +22,7 @@ Conventions (non-negotiable):
   cell/color/sgr, grid + scrollback, primary/alt screens, scroll regions, tab
   stops, cursor save/restore, charsets, modes (DECAWM, DECTCEM, DECOM, 1049,
   2004), OSC title, DSR responses. `pty` crate: openpty, shell spawn, resize,
-  read/write. `config` crate: Ghostty-style `key = value` config file. `theme`
+  read/write. `config` crate: `key = value` config file. `theme`
   crate: ANSI palette, truecolor, builtin schemes. All unit-tested,
   `cargo test --workspace` green.
 - [x] **2. Event loop integration** — wire pty output through vt in a
@@ -38,7 +38,7 @@ Conventions (non-negotiable):
   for selection.
 - [x] **5. Tabs & splits** — Zed-style workspace/pane tree model, keybindings,
   pane resize, tab bar UI.
-- [x] **6. Config & themes deep pass** — live reload, all Ghostty-style core
+- [x] **6. Config & themes deep pass** — live reload, all core
   options (fonts, padding, cursor style, shell, keybind = trigger=action,
   window opts), theme option + builtin scheme library. (Deferred to later
   phases: font-feature application → phase 8; GUI runtime verification of
@@ -76,7 +76,7 @@ Conventions (non-negotiable):
   Identified next optimization: per-row damage-clipped shaping (vt damage
   tracking exists from phase 2; the renderer currently drains it and
   re-shapes the full viewport per frame).
-- [x] **12. Ghostty parity audit** — feature-by-feature coverage map in
+- [x] **12. Feature coverage audit** — feature-by-feature coverage map in
   `docs/parity.md`, with implemented areas, partial areas, and the
   remaining gaps prioritized.
 - [x] **13. Plugin foundation** — Zed-style manifest plugins under
@@ -229,7 +229,7 @@ Conventions (non-negotiable):
   channels/agent/model as overridable defaults. See `docs/relay.md`.
 - 2026-06-24: tiles, teams, and the AI menu. Tiles (`app/tiles.rs`): pane-layout
   presets (columns/rows/grid/main-bottom/main-right, generated for any N as a
-  binary split tree) applied via **View → Tiles** into a fresh tab; **Save Current
+  binary split tree) applied via the **Workspace** menu into a fresh tab; **Save Current
   Layout…** captures the focused tab's tree and stores it as JSON under
   `~/.config/prompt/layouts/` (named via the rename modal). Teams (`relay team
   {list,info,create,edit,delete}`, `--json` for Prompt; layered project → user →

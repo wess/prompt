@@ -181,7 +181,7 @@ pub fn text(grid: &Grid, sel: &Selection) -> String {
         for c in first..=last {
             let cell = &row.cells[c];
             if !cell.is_wide_spacer() {
-                logical.push(cell.ch);
+                cell.write_grapheme(&mut logical);
             }
         }
         if row.wrapped && line != end.line {

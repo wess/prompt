@@ -28,6 +28,14 @@ pub fn options(
     session.spawn.cwd = inherit
         .or_else(|| opts.working_directory.as_ref().map(PathBuf::from))
         .or_else(home);
+    // Inject OSC 133 / OSC 7 shell integration into the spawned shell.
+    if opts.shell_integration {
+        let program = session.spawn.argv.first().cloned().unwrap_or_default();
+        session
+            .spawn
+            .env
+            .extend(crate::shellinteg::overrides_for(&program));
+    }
     session
 }
 

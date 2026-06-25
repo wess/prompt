@@ -169,7 +169,6 @@ fn defaults_cover_the_hardcoded_set() {
     assert_eq!(find(cmd, "0"), Action::ResetFontSize);
     assert_eq!(find(cmd, "k"), Action::ClearScreen);
     assert_eq!(find(cmd, ","), Action::ToggleSettings);
-    assert_eq!(find(cmd_shift, ","), Action::ReloadConfig);
     assert_eq!(find(cmd, "q"), Action::Quit);
     // No duplicate triggers among defaults.
     for (i, a) in binds.iter().enumerate() {

@@ -1,5 +1,4 @@
-//! Default dark scheme: Ghostty-like dark background with the
-//! standard xterm ANSI 16.
+//! Default dark scheme: a dark background with the standard ANSI 16 colors.
 
 use crate::rgb::Rgb;
 use crate::scheme::Scheme;

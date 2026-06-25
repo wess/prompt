@@ -14,6 +14,35 @@ fn write_char_advances() {
 }
 
 #[test]
+fn combining_mark_attaches_to_previous_cell() {
+    let mut t = term();
+    t.inner.write_char('e');
+    t.inner.write_char('\u{0301}'); // combining acute accent
+    assert_eq!(t.cursor_pos(), (0, 1)); // mark does not advance the cursor
+    assert_eq!(t.cell(0, 0).combining().collect::<Vec<_>>(), vec!['\u{0301}']);
+    assert_eq!(t.row_text(0), "e\u{0301}");
+}
+
+#[test]
+fn combining_mark_attaches_to_wide_head() {
+    let mut t = term();
+    t.inner.write_char('漢');
+    t.inner.write_char('\u{0301}');
+    assert_eq!(t.cell(0, 0).combining().collect::<Vec<_>>(), vec!['\u{0301}']);
+    assert!(t.cell(0, 1).combining().next().is_none());
+}
+
+#[test]
+fn combining_keeps_first_mark() {
+    let mut t = term();
+    t.inner.write_char('a');
+    for m in ['\u{0301}', '\u{0302}'] {
+        t.inner.write_char(m);
+    }
+    assert_eq!(t.cell(0, 0).combining().collect::<Vec<_>>(), vec!['\u{0301}']);
+}
+
+#[test]
 fn wide_char_takes_two_cells() {
     let mut t = term();
     t.inner.write_char('漢');

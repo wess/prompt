@@ -12,6 +12,7 @@ pub mod screen;
 pub mod search;
 pub mod selection;
 pub mod sgr;
+pub mod sixel;
 pub mod term;
 pub mod url;
 
@@ -29,4 +30,5 @@ pub use mode::{Modes, MouseMode};
 pub use screen::Screen;
 pub use search::Match;
 pub use selection::{Point, Selection, SelectionMode};
+pub use sixel::Image;
 pub use term::{Clipboard, ReportColors, Terminal};

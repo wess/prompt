@@ -24,7 +24,6 @@ fn simple_actions() {
         ("toggle_semantic_search", Action::ToggleSemanticSearch),
         ("explain_output", Action::ExplainOutput),
         ("compose_command", Action::ComposeCommand),
-        ("reload_config", Action::ReloadConfig),
         ("show_help", Action::ShowHelp),
         ("help", Action::ShowHelp),
         ("toggle_fullscreen", Action::ToggleFullscreen),
@@ -183,7 +182,7 @@ fn param_on_paramless_action_is_error() {
 
 #[test]
 fn unknown_action_is_error() {
-    assert!(Action::parse("select_all").is_err());
+    assert!(Action::parse("frobnicate").is_err());
     assert!(Action::parse("").is_err());
 }
 
@@ -202,6 +201,13 @@ fn to_config_round_trips() {
         Action::MoveTab(-2),
         Action::Copy,
         Action::Paste,
+        Action::SelectAll,
+        Action::SendText(vec![0x01]),
+        Action::SendText(vec![0x1b, b'b']),
+        Action::SendText(vec![0x1b, 0x7f]),
+        Action::SendText("hello".into()),
+        Action::SendText(vec![0x20]),
+        Action::SendText(b"git status ".to_vec()),
         Action::IncreaseFontSize(1.0),
         Action::IncreaseFontSize(2.5),
         Action::DecreaseFontSize(1.0),
@@ -209,6 +215,12 @@ fn to_config_round_trips() {
         Action::PluginCommand("tools/top".into()),
         Action::MacroReplay("deploy".into()),
         Action::ToggleQuickTerminal,
+        Action::ToggleBroadcast,
+        Action::ToggleRecording,
+        Action::CommandPalette,
+        Action::RelayStart,
+        Action::RelayStop,
+        Action::RelayRestart,
         Action::Quit,
         Action::Unbound,
     ];
@@ -216,4 +228,33 @@ fn to_config_round_trips() {
         let s = want.to_config();
         assert_eq!(Action::parse(&s), Ok(want.clone()), "{s}");
     }
+}
+
+#[test]
+fn text_and_esc_decode_escapes() {
+    assert_eq!(Action::parse("text:\\x01"), Ok(Action::SendText(vec![0x01])));
+    assert_eq!(
+        Action::parse("text:\\e\\t\\n\\r\\0"),
+        Ok(Action::SendText(vec![0x1b, b'\t', b'\n', b'\r', 0x00]))
+    );
+    // esc: prepends an ESC to its decoded payload.
+    assert_eq!(
+        Action::parse("esc:b"),
+        Ok(Action::SendText(vec![0x1b, b'b']))
+    );
+    // Whitespace in a text:/esc: payload is significant and not trimmed away.
+    assert_eq!(Action::parse("text: "), Ok(Action::SendText(vec![0x20])));
+    assert_eq!(
+        Action::parse("text:  hi"),
+        Ok(Action::SendText(b"  hi".to_vec()))
+    );
+    // Backslash escaping and plain text round-trip.
+    assert_eq!(
+        Action::parse("text:a\\\\b"),
+        Ok(Action::SendText(b"a\\b".to_vec()))
+    );
+    // text:/esc: require a payload, and a short \x is rejected.
+    assert!(Action::parse("text").is_err());
+    assert!(Action::parse("esc").is_err());
+    assert!(Action::parse("text:\\x0").is_err());
 }

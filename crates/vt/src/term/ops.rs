@@ -19,7 +19,8 @@ impl Inner {
     pub(crate) fn write_char(&mut self, c: char) {
         let width = c.width().unwrap_or(0);
         if width == 0 {
-            // TODO: combining characters should attach to the previous cell.
+            // Combining mark / joiner: attach to the base cell just written.
+            self.attach_combining(c);
             return;
         }
         self.last_printed = Some(c);
@@ -86,6 +87,57 @@ impl Inner {
         }
     }
 
+    /// Attach a zero-width mark to the base cell — the last printed glyph,
+    /// which sits left of the cursor (or under it when a wrap is pending).
+    /// Steps onto the wide head when the base is a 2-column character.
+    fn attach_combining(&mut self, c: char) {
+        let scr = self.screen_mut();
+        let row = scr.cursor.row;
+        let mut col = if scr.cursor.pending_wrap {
+            scr.cursor.col
+        } else if scr.cursor.col > 0 {
+            scr.cursor.col - 1
+        } else {
+            return;
+        };
+        if scr.grid.cell(row, col).is_wide_spacer() && col > 0 {
+            col -= 1;
+        }
+        scr.grid.cell_mut(row, col).push_combining(c);
+    }
+
+    /// Anchor a decoded sixel image at the cursor and reserve enough rows
+    /// below it (by line-feeding) that following output doesn't overwrite it.
+    pub(crate) fn place_sixel(&mut self, image: crate::sixel::Image) {
+        let cell_h = self.cell_px.1.max(1) as usize;
+        let rows = image.image_rows(cell_h);
+        let id = self.image_seq;
+        self.image_seq += 1;
+        let placement = crate::sixel::Placement {
+            id,
+            line: self.screen().cursor.row as isize,
+            col: self.screen().cursor.col,
+            image,
+        };
+        self.images.push(placement);
+        self.carriage_return();
+        for _ in 0..rows {
+            self.linefeed();
+        }
+    }
+
+    /// Slide image anchors up by `pushed` rows as the buffer scrolls, dropping
+    /// any whose bottom has fallen off the end of scrollback.
+    fn shift_images_up(&mut self, pushed: usize, scrollback_len: usize) {
+        let cell_h = self.cell_px.1.max(1) as usize;
+        let oldest = -(scrollback_len as isize);
+        for img in &mut self.images {
+            img.line -= pushed as isize;
+        }
+        self.images
+            .retain(|img| img.line + img.image.image_rows(cell_h) as isize > oldest);
+    }
+
     /// REP: repeat the last printed character.
     pub(crate) fn repeat_last(&mut self, n: usize) {
         if let Some(c) = self.last_printed {
@@ -144,6 +196,7 @@ impl Inner {
         }
         if save {
             let len = self.screen().grid.scrollback().len();
+            self.shift_images_up(pushed, len);
             if self.display_offset > 0 {
                 self.display_offset = (self.display_offset + pushed).min(len);
             }
@@ -272,6 +325,11 @@ impl Inner {
                 self.selection_clear_range(isize::MIN, -1);
                 self.display_offset = 0;
             }
+            _ => {}
+        }
+        match mode {
+            2 => self.images.retain(|i| i.line < 0), // keep scrolled-back images
+            3 => self.images.retain(|i| i.line >= 0), // keep on-screen images
             _ => {}
         }
         let scr = self.screen_mut();
@@ -489,14 +547,17 @@ impl Inner {
         self.selection = None;
         self.hyperlinks.clear();
         self.dcs = super::dcs::Dcs::None;
+        self.images.clear();
         self.full_damage = true;
     }
 
     /// DECALN: fill the screen with `E`, reset margins, home the cursor.
     pub(crate) fn screen_alignment_test(&mut self) {
         let scr = self.screen_mut();
-        let mut cell = Cell::default();
-        cell.ch = 'E';
+        let cell = Cell {
+            ch: 'E',
+            ..Cell::default()
+        };
         let rows = scr.grid.rows();
         for r in 0..rows {
             scr.grid.row_mut(r).fill(cell);
@@ -527,6 +588,7 @@ impl Inner {
         self.modes.insert(Modes::ALT_SCREEN);
         self.display_offset = 0;
         self.selection = None;
+        self.images.clear();
         self.full_damage = true;
     }
 

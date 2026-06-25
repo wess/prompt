@@ -51,14 +51,12 @@ impl Row {
     }
 
     /// Row contents as text, skipping wide spacers, right-trimmed.
-    /// Primarily for tests and debugging.
+    /// Includes any combining marks. Primarily for tests and debugging.
     pub fn text(&self) -> String {
-        let s: String = self
-            .cells
-            .iter()
-            .filter(|c| !c.is_wide_spacer())
-            .map(|c| c.ch)
-            .collect();
+        let mut s = String::with_capacity(self.cells.len());
+        for c in self.cells.iter().filter(|c| !c.is_wide_spacer()) {
+            c.write_grapheme(&mut s);
+        }
         s.trim_end().to_string()
     }
 }

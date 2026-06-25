@@ -8,6 +8,7 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 use std::sync::Arc;
+use std::time::Duration;
 
 use config::{Action, Keybind, ResizeDir, SplitDirection, SplitFocus};
 use futures::StreamExt;
@@ -58,6 +59,11 @@ pub struct MenuPick(pub usize);
 /// pane's key handler feeds and the workspace toggles.
 pub struct MacroRecorder(pub macros::Recorder);
 impl gpui::Global for MacroRecorder {}
+
+/// Whether typed input is mirrored to every pane in the active tab. A global
+/// so the focused pane's `key_down` can check it without a workspace handle.
+pub struct Broadcast(pub bool);
+impl gpui::Global for Broadcast {}
 
 /// App-global count of panes currently replaying a macro. Tracked in a global
 /// (rather than per-workspace state) so a detached replay task can clear it
@@ -170,6 +176,9 @@ impl WorkspaceView {
         this.focusactive(window, cx);
         this.startwatch(window, cx);
         crate::relay::on_launch(&this.opts);
+        if this.opts.session_restore {
+            this.try_restore(window, cx);
+        }
         this
     }
 
@@ -235,9 +244,10 @@ impl WorkspaceView {
         let mut actions: Vec<Action> = Vec::new();
         let mut menus = vec![
             self.prompt_menu(&mut actions),
-            self.shell_menu(&mut actions),
+            self.shell_menu(&mut actions, cx),
             self.edit_menu(&mut actions),
             self.view_menu(&mut actions, cx),
+            self.workspace_menu(&mut actions, cx),
             self.window_menu(&mut actions),
         ];
         if self.opts.ai_enabled {
@@ -254,12 +264,26 @@ impl WorkspaceView {
         cx.set_menus(menus);
     }
 
+    /// Rebuild the menus after a short delay, so the Relay status line catches
+    /// up with a server start/stop that runs in the background.
+    fn refresh_menus_soon(&self, window: &mut Window, cx: &mut Context<Self>) {
+        let weak = cx.weak_entity();
+        window
+            .spawn(cx, async move |cx| {
+                cx.background_executor()
+                    .timer(Duration::from_millis(1500))
+                    .await;
+                let _ = weak.update(cx, |this, cx| this.setmenus(cx));
+            })
+            .detach();
+    }
+
     fn ai_menu(&self, a: &mut Vec<Action>) -> Menu {
         let mut items: Vec<Option<MenuItem>> = Vec::new();
         if crate::relay::enabled(&self.opts) {
             items.push(Some(MenuItem::submenu(self.agents_submenu(a))));
+            items.push(Some(MenuItem::submenu(self.relay_submenu(a))));
             items.push(self.pick(a, "Open Feed", Action::RelayFeed));
-            items.push(self.pick(a, "Open Log", Action::RelayLog));
             let teams = crate::relay::team_list();
             if !teams.is_empty() {
                 let mut t: Vec<Option<MenuItem>> = Vec::new();
@@ -288,6 +312,41 @@ impl WorkspaceView {
         Self::menu("Agents", items)
     }
 
+    /// Relay server controls and logs (AI → Relay). Shows the live server
+    /// state, then start/stop/restart and a jump to the server log.
+    fn relay_submenu(&self, a: &mut Vec<Action>) -> Menu {
+        let status = if crate::relay::running() {
+            "\u{25cf} Server running"
+        } else {
+            "\u{25cb} Server stopped"
+        };
+        Self::menu(
+            "Relay",
+            vec![
+                Some(Self::status_item(status)),
+                Some(MenuItem::separator()),
+                self.pick(a, "Start Server", Action::RelayStart),
+                self.pick(a, "Stop Server", Action::RelayStop),
+                self.pick(a, "Restart Server", Action::RelayRestart),
+                Some(MenuItem::separator()),
+                self.pick(a, "View Logs", Action::RelayLog),
+            ],
+        )
+    }
+
+    /// A greyed-out, non-interactive informational menu row.
+    fn status_item(label: &str) -> MenuItem {
+        MenuItem::Action {
+            name: label.to_string().into(),
+            // Disabled, so this index is never dispatched; out-of-range is a
+            // no-op in `menupick` regardless.
+            action: Box::new(MenuPick(usize::MAX)),
+            os_action: None,
+            checked: false,
+            disabled: true,
+        }
+    }
+
     fn menu(name: &str, items: Vec<Option<MenuItem>>) -> Menu {
         Menu {
             name: name.to_string().into(),
@@ -302,22 +361,26 @@ impl WorkspaceView {
             vec![
                 Some(MenuItem::action("About Prompt", ShowAbout)),
                 Some(MenuItem::separator()),
-                self.pick(a, "Reload Config", Action::ReloadConfig),
+                self.pick(a, "Command Palette\u{2026}", Action::CommandPalette),
+                self.pick(a, "Settings\u{2026}", Action::ToggleSettings),
                 Some(MenuItem::separator()),
                 self.pick(a, "Quit Prompt", Action::Quit),
             ],
         )
     }
 
-    fn shell_menu(&self, a: &mut Vec<Action>) -> Menu {
+    fn shell_menu(&self, a: &mut Vec<Action>, cx: &App) -> Menu {
+        let recording = self
+            .panes
+            .get(&self.tabs.focused())
+            .is_some_and(|p| p.view.read(cx).is_recording());
         Self::menu(
-            "Shell",
+            "File",
             vec![
                 self.pick(a, "New Window", Action::NewWindow),
                 self.pick(a, "New Tab", Action::NewTab),
-                self.pick(a, "Split Right", Action::NewSplit(SplitDirection::Right)),
-                self.pick(a, "Split Left", Action::NewSplit(SplitDirection::Left)),
-                self.pick(a, "Split Down", Action::NewSplit(SplitDirection::Down)),
+                Some(MenuItem::separator()),
+                Some(self.pick_checked(a, "Record Session", Action::ToggleRecording, recording)),
                 Some(MenuItem::separator()),
                 self.pick(a, "Close", Action::CloseSurface),
                 self.pick(a, "Close Tab", Action::CloseTab),
@@ -333,6 +396,7 @@ impl WorkspaceView {
             vec![
                 self.pick(a, "Copy", Action::Copy),
                 self.pick(a, "Paste", Action::Paste),
+                self.pick(a, "Select All", Action::SelectAll),
                 Some(MenuItem::separator()),
                 self.pick(a, "Find\u{2026}", Action::ToggleSearch),
                 self.pick(a, "Semantic Find", Action::ToggleSemanticSearch),
@@ -342,7 +406,7 @@ impl WorkspaceView {
         )
     }
 
-    /// Matches Ghostty's View menu (font size + title/read-only group).
+    /// View menu: font size plus the title/read-only group.
     fn view_menu(&self, a: &mut Vec<Action>, cx: &App) -> Menu {
         let read_only = self
             .panes
@@ -359,17 +423,16 @@ impl WorkspaceView {
                 self.pick(a, "Change Terminal Title\u{2026}", Action::ChangeTerminalTitle),
                 Some(self.pick_checked(a, "Terminal Read-only", Action::ToggleReadOnly, read_only)),
                 Some(MenuItem::separator()),
-                Some(MenuItem::submenu(self.tiles_submenu(a))),
-                Some(MenuItem::separator()),
                 self.pick(a, "Quick Terminal", Action::ToggleQuickTerminal),
             ],
         )
     }
 
-    /// Matches Ghostty's Window menu (minus Float on Top, unsupported by
-    /// gpui). Tab navigation is listed explicitly since Prompt does not use
-    /// native macOS tabs that macOS would populate automatically.
-    fn window_menu(&self, a: &mut Vec<Action>) -> Menu {
+    /// Workspace: split creation, navigation, sizing, saved tile presets, and
+    /// broadcast input. Splitting is pane-tree (workspace) based, so it lives
+    /// here rather than scattered across Shell/View/Window.
+    fn workspace_menu(&self, a: &mut Vec<Action>, cx: &App) -> Menu {
+        let broadcasting = cx.try_global::<Broadcast>().is_some_and(|b| b.0);
         let select_split = Self::menu(
             "Select Split",
             vec![
@@ -389,6 +452,44 @@ impl WorkspaceView {
                 self.pick(a, "Move Divider Right", Action::ResizeSplit(ResizeDir::Right)),
             ],
         );
+        let mut items = vec![
+            self.pick(a, "Split Right", Action::NewSplit(SplitDirection::Right)),
+            self.pick(a, "Split Left", Action::NewSplit(SplitDirection::Left)),
+            self.pick(a, "Split Down", Action::NewSplit(SplitDirection::Down)),
+            Some(MenuItem::separator()),
+            self.pick(a, "Zoom Split", Action::ZoomSplit),
+            self.pick(a, "Select Previous Split", Action::GotoSplit(SplitFocus::Previous)),
+            self.pick(a, "Select Next Split", Action::GotoSplit(SplitFocus::Next)),
+            Some(MenuItem::submenu(select_split)),
+            Some(MenuItem::submenu(resize_split)),
+            Some(MenuItem::separator()),
+        ];
+        // Tile presets (formerly View > Tiles), inlined for quicker reach.
+        for (id, label, _, _) in crate::tiles::presets() {
+            items.push(self.pick(a, label, Action::Tile((*id).to_string())));
+        }
+        let custom = crate::tiles::list_custom();
+        if !custom.is_empty() {
+            items.push(Some(MenuItem::separator()));
+            for name in custom {
+                items.push(self.pick(a, &name, Action::Tile(name.clone())));
+            }
+        }
+        items.push(Some(MenuItem::separator()));
+        items.push(self.pick(a, "Save Current Layout\u{2026}", Action::SaveLayout));
+        items.push(Some(MenuItem::separator()));
+        items.push(Some(self.pick_checked(
+            a,
+            "Broadcast Input",
+            Action::ToggleBroadcast,
+            broadcasting,
+        )));
+        Self::menu("Workspace", items)
+    }
+
+    /// Window menu. Tab navigation is listed explicitly since Prompt does not
+    /// use the native macOS tabs that macOS would populate automatically.
+    fn window_menu(&self, a: &mut Vec<Action>) -> Menu {
         Self::menu(
             "Window",
             vec![
@@ -396,12 +497,6 @@ impl WorkspaceView {
                 self.pick(a, "Zoom", Action::ZoomWindow),
                 self.pick(a, "Toggle Full Screen", Action::ToggleFullscreen),
                 self.pick(a, "Show/Hide All Terminals", Action::HideAll),
-                Some(MenuItem::separator()),
-                self.pick(a, "Zoom Split", Action::ZoomSplit),
-                self.pick(a, "Select Previous Split", Action::GotoSplit(SplitFocus::Previous)),
-                self.pick(a, "Select Next Split", Action::GotoSplit(SplitFocus::Next)),
-                Some(MenuItem::submenu(select_split)),
-                Some(MenuItem::submenu(resize_split)),
                 Some(MenuItem::separator()),
                 self.pick(a, "Return To Default Size", Action::ReturnToDefaultSize),
                 self.pick(a, "Use as Default", Action::UseAsDefault),
@@ -435,7 +530,7 @@ impl WorkspaceView {
     /// Re-read the config file and apply everything that can change at
     /// runtime: theme/colors, font family/size, padding, cursor style,
     /// copy-on-select. Shell, scrollback and window size only affect new
-    /// sessions or need a restart, matching Ghostty.
+    /// sessions or need a restart.
     fn reload(&mut self, cx: &mut Context<Self>) {
         let (opts, diagnostics) = config::load();
         for d in &diagnostics {
@@ -476,6 +571,7 @@ impl WorkspaceView {
             cursor_default: self.opts.cursor_style,
             copy_on_select: self.opts.copy_on_select,
             option_as_alt: self.opts.macos_option_as_alt,
+            paste_protection: self.opts.clipboard_paste_protection,
         };
         for pane in self.panes.values() {
             pane.view
@@ -523,6 +619,7 @@ impl WorkspaceView {
                 self.opts.cursor_style,
                 self.opts.copy_on_select,
                 self.opts.macos_option_as_alt,
+                self.opts.clipboard_paste_protection,
                 fallback,
                 window,
                 cx,
@@ -586,7 +683,39 @@ impl WorkspaceView {
                 cx.notify(); // tab labels
             }
             ViewEvent::Exited => self.closepane(pane, window, cx),
+            ViewEvent::Input(bytes) => self.broadcast(pane, bytes, cx),
+            ViewEvent::Action(action) => {
+                // A right-click menu pick targets the pane it was opened in.
+                self.tabs.focus(pane);
+                self.focusactive(window, cx);
+                self.dispatch(action.clone(), window, cx);
+            }
         }
+    }
+
+    /// Mirror `bytes` (already encoded by the source pane) to every other pane
+    /// in the active tab. The source already wrote them to its own pty.
+    fn broadcast(&mut self, source: PaneId, bytes: &[u8], cx: &mut Context<Self>) {
+        for id in self.tabs.active().tree.panes() {
+            if id == source {
+                continue;
+            }
+            if let Some(pane) = self.panes.get(&id) {
+                pane.view.update(cx, |view, cx| view.send_text(bytes, cx));
+            }
+        }
+    }
+
+    /// Toggle broadcast input. Repaints panes (for the indicator) and rebuilds
+    /// menus (for the checkmark).
+    fn toggle_broadcast(&mut self, cx: &mut Context<Self>) {
+        let on = cx.try_global::<Broadcast>().is_some_and(|b| b.0);
+        cx.set_global(Broadcast(!on));
+        self.setmenus(cx);
+        for pane in self.panes.values() {
+            pane.view.update(cx, |_v, cx| cx.notify());
+        }
+        cx.notify();
     }
 
     /// Close one pane: collapse its split, or close its tab when it is the
@@ -643,6 +772,7 @@ impl WorkspaceView {
     /// open; only when this is the last window do we honor
     /// `quit-after-last-window-closed` (macOS keeps the app alive otherwise).
     fn close_window(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.save_state(cx);
         let last_window = cx.windows().len() <= 1;
         if last_window && self.opts.quit_after_last_window_closed {
             cx.quit();
@@ -944,6 +1074,35 @@ impl WorkspaceView {
         }
     }
 
+    /// Run an action from outside the keymap (the command palette).
+    pub fn run_action(&mut self, action: Action, window: &mut Window, cx: &mut Context<Self>) {
+        self.dispatch(action, window, cx);
+    }
+
+    /// Open the command palette over the curated action catalog, each entry
+    /// labeled and tagged with its current keybind.
+    fn open_palette(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(handle) = window.window_handle().downcast::<WorkspaceView>() else {
+            return;
+        };
+        let items = palette_catalog()
+            .into_iter()
+            .map(|(label, action)| {
+                let shortcut = self
+                    .keybinds
+                    .iter()
+                    .find(|k| k.action == action)
+                    .and_then(|k| keys::shortcut_glyphs(k.mods, &k.key));
+                crate::palette::Item {
+                    label: label.to_string(),
+                    shortcut,
+                    action,
+                }
+            })
+            .collect();
+        crate::palette::open(window, handle, items, cx);
+    }
+
     /// Carry out one config action.
     fn dispatch(&mut self, action: Action, window: &mut Window, cx: &mut Context<Self>) {
         match action {
@@ -996,6 +1155,8 @@ impl WorkspaceView {
             Action::MoveTab(delta) => self.movetab(delta, cx),
             Action::Copy => self.onfocused(cx, |v, cx| v.copy_selection(cx)),
             Action::Paste => self.onfocused(cx, |v, cx| v.paste_clipboard(cx)),
+            Action::SelectAll => self.onfocused(cx, |v, cx| v.select_all(cx)),
+            Action::SendText(bytes) => self.onfocused(cx, |v, cx| v.send_text(&bytes, cx)),
             Action::IncreaseFontSize(amount) => {
                 self.setfontsize(px(f32::from(self.font_size) + amount), cx)
             }
@@ -1022,9 +1183,9 @@ impl WorkspaceView {
                     eprintln!("prompt: {error}");
                 }
             }
+            Action::CommandPalette => self.open_palette(window, cx),
             Action::ToggleSettings => crate::settings::open(window, cx),
             Action::ShowHelp => crate::help::open(window, cx),
-            Action::ReloadConfig => self.reload(cx),
             Action::ToggleFullscreen => window.toggle_fullscreen(),
             Action::MinimizeWindow => window.minimize_window(),
             Action::ZoomWindow => window.zoom_window(),
@@ -1041,6 +1202,12 @@ impl WorkspaceView {
                 // Rebuild menus so the read-only checkmark reflects the change.
                 self.setmenus(cx);
             }
+            Action::ToggleBroadcast => self.toggle_broadcast(cx),
+            Action::ToggleRecording => {
+                self.onfocused(cx, |v, cx| v.toggle_recording(cx));
+                // Refresh the Shell menu checkmark.
+                self.setmenus(cx);
+            }
             Action::ToggleQuickTerminal => crate::quick::toggle(cx),
             Action::RelayFeed => {
                 self.splitcommand(&crate::relay::feed_command(), Axis::Vertical, false, window, cx)
@@ -1055,6 +1222,18 @@ impl WorkspaceView {
             Action::RelayLog => {
                 self.splitcommand(&crate::relay::log_command(), Axis::Vertical, false, window, cx)
             }
+            Action::RelayStart => {
+                crate::relay::start(&self.opts);
+                self.refresh_menus_soon(window, cx);
+            }
+            Action::RelayStop => {
+                crate::relay::stop();
+                self.refresh_menus_soon(window, cx);
+            }
+            Action::RelayRestart => {
+                crate::relay::restart(&self.opts);
+                self.refresh_menus_soon(window, cx);
+            }
             Action::Tile(id) => self.apply_tile(&id, window, cx),
             Action::SaveLayout => self.open_save_layout(window, cx),
             Action::OpenTeam(name) => self.open_team(&name, window, cx),
@@ -1064,7 +1243,7 @@ impl WorkspaceView {
                     self.splitcommand(&cmd, Axis::Horizontal, false, window, cx);
                 }
             }
-            Action::Quit => cx.quit(),
+            Action::Quit => self.request_quit(window, cx),
             Action::Unbound => {}
         }
     }
@@ -1339,6 +1518,174 @@ impl WorkspaceView {
         cx.notify();
     }
 
+    /// Spawn a pane rooted at `cwd` (or the configured default when `None`).
+    fn spawn_cwd(
+        &mut self,
+        cwd: Option<std::path::PathBuf>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<PaneId> {
+        let options = session::options(&self.opts, SPAWN_COLS, SPAWN_ROWS, cwd);
+        self.spawn(options, window, cx)
+    }
+
+    /// Realize a restored tab: build the split tree, spawning each pane in its
+    /// saved working directory.
+    fn restore_layout(
+        &mut self,
+        layout: &crate::tiles::Layout,
+        cwds: &[Option<std::path::PathBuf>],
+        title: Option<&str>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(root) = self.spawn_cwd(cwds.first().cloned().flatten(), window, cx) else {
+            return;
+        };
+        self.tabs.new_tab(root);
+        self.realize_restore(layout, root, 0, cwds, window, cx);
+        if let Some(t) = title {
+            let idx = self.tabs.active_index();
+            self.rename_tab(idx, t, cx);
+        }
+        self.focusactive(window, cx);
+    }
+
+    /// Like [`Self::realize_into`] but seeds panes from saved working
+    /// directories instead of commands.
+    fn realize_restore(
+        &mut self,
+        node: &crate::tiles::Layout,
+        host: PaneId,
+        host_index: usize,
+        cwds: &[Option<std::path::PathBuf>],
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let crate::tiles::Layout::Split {
+            axis,
+            ratio,
+            first,
+            second,
+        } = node
+        else {
+            return;
+        };
+        let second_index = host_index + first.leaves();
+        let cwd = cwds.get(second_index).cloned().flatten();
+        let Some(newpane) = self.spawn_cwd(cwd, window, cx) else {
+            return;
+        };
+        match self
+            .tabs
+            .active_mut()
+            .tree
+            .split(host, axis.axis(), newpane, false)
+        {
+            Some(split) => {
+                self.tabs.active_mut().tree.set_ratio(split, *ratio);
+            }
+            None => {
+                self.panes.remove(&newpane);
+                return;
+            }
+        }
+        self.realize_restore(first, host, host_index, cwds, window, cx);
+        self.realize_restore(second, newpane, second_index, cwds, window, cx);
+    }
+
+    /// Rebuild the saved session into this fresh window, then drop the empty
+    /// default tab it launched with. No-op without a saved session.
+    fn try_restore(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(state) = crate::sessionstate::load() else {
+            return;
+        };
+        if state.tabs.is_empty() {
+            return;
+        }
+        for tab in &state.tabs {
+            let cwds: Vec<Option<std::path::PathBuf>> = tab
+                .cwds
+                .iter()
+                .map(|s| s.as_ref().map(std::path::PathBuf::from))
+                .collect();
+            self.restore_layout(&tab.layout, &cwds, tab.title.as_deref(), window, cx);
+        }
+        // The restored tabs were appended after the launch default at index 0.
+        self.closetab(0, window, cx);
+        let active = state.active.min(self.tabs.len().saturating_sub(1));
+        self.activatetab(active, window, cx);
+    }
+
+    /// Quit, but warn first when a process is still running in a pane and
+    /// `confirm-quit` is on. The native dialog runs async; we quit only if the
+    /// user confirms.
+    fn request_quit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.opts.confirm_quit || !self.any_process_running(cx) {
+            self.save_state(cx);
+            cx.quit();
+            return;
+        }
+        let answer = window.prompt(
+            gpui::PromptLevel::Warning,
+            "Quit Prompt?",
+            Some("A process is still running in one of your terminals. Quitting will end it."),
+            &["Quit", "Cancel"],
+            cx,
+        );
+        let weak = cx.weak_entity();
+        window
+            .spawn(cx, async move |cx| {
+                if let Ok(0) = answer.await {
+                    let _ = weak.update(cx, |this, cx| {
+                        this.save_state(cx);
+                        cx.quit();
+                    });
+                }
+            })
+            .detach();
+    }
+
+    /// Whether any pane in this window has a live foreground process.
+    fn any_process_running(&self, cx: &App) -> bool {
+        self.panes
+            .values()
+            .any(|p| p.view.read(cx).has_running_process())
+    }
+
+    /// Persist this window's tabs/splits/cwds for the next launch.
+    fn save_state(&self, cx: &App) {
+        if !self.opts.session_restore {
+            return;
+        }
+        let tabs = (0..self.tabs.len())
+            .filter_map(|i| {
+                let tab = self.tabs.get(i)?;
+                let cwds = tab
+                    .tree
+                    .panes()
+                    .iter()
+                    .map(|id| {
+                        self.panes
+                            .get(id)
+                            .and_then(|p| p.view.read(cx).cwd())
+                            .and_then(|osc| session::cwdpath(&osc))
+                            .map(|p| p.to_string_lossy().into_owned())
+                    })
+                    .collect();
+                Some(crate::sessionstate::TabState {
+                    layout: crate::tiles::from_tree(tab.tree.root()),
+                    cwds,
+                    title: tab.title.clone(),
+                })
+            })
+            .collect();
+        crate::sessionstate::save(&crate::sessionstate::SessionState {
+            tabs,
+            active: self.tabs.active_index(),
+        });
+    }
+
     /// Recursively split `host` to realize `node`; `host_index` is the pre-order
     /// index of the subtree's anchor (left/top-most) leaf.
     fn realize_into(
@@ -1447,22 +1794,6 @@ impl WorkspaceView {
         self.setmenus(cx);
     }
 
-    fn tiles_submenu(&self, a: &mut Vec<Action>) -> Menu {
-        let mut items: Vec<Option<MenuItem>> = Vec::new();
-        for (id, label, _, _) in crate::tiles::presets() {
-            items.push(self.pick(a, label, Action::Tile((*id).to_string())));
-        }
-        let custom = crate::tiles::list_custom();
-        if !custom.is_empty() {
-            items.push(Some(MenuItem::separator()));
-            for name in custom {
-                items.push(self.pick(a, &name, Action::Tile(name.clone())));
-            }
-        }
-        items.push(Some(MenuItem::separator()));
-        items.push(self.pick(a, "Save Current Layout\u{2026}", Action::SaveLayout));
-        Self::menu("Tiles", items)
-    }
 }
 
 impl Render for WorkspaceView {
@@ -1542,6 +1873,21 @@ impl Render for WorkspaceView {
             base = base.child(pill);
         }
 
+        // Floating indicator while broadcast input is on — typed keys reach
+        // every pane in the tab, so make that unmissable.
+        if cx.try_global::<Broadcast>().is_some_and(|b| b.0) {
+            base = base.child(broadcast_pill(&self.colors));
+        }
+
+        // Floating indicator while any pane is recording a cast.
+        if self
+            .panes
+            .values()
+            .any(|p| p.view.read(cx).is_recording())
+        {
+            base = base.child(recording_pill(&self.colors));
+        }
+
         // Client-side decorations (Linux) need app-drawn resize edges.
         #[cfg(target_os = "linux")]
         if matches!(window.window_decorations(), gpui::Decorations::Client { .. }) {
@@ -1585,6 +1931,116 @@ fn loadplugins(opts: &config::Options) -> Vec<plugin::Plugin> {
 
 /// Build the floating macro indicator pill, shown while recording a macro or
 /// replaying one. Recording wins when both are somehow active.
+/// The curated set of actions the command palette offers, with display
+/// labels. Ordered roughly by how often they're reached.
+fn palette_catalog() -> Vec<(&'static str, Action)> {
+    vec![
+        ("New Window", Action::NewWindow),
+        ("New Tab", Action::NewTab),
+        ("Close Pane", Action::CloseSurface),
+        ("Close Tab", Action::CloseTab),
+        ("Close Window", Action::CloseWindow),
+        ("Split Right", Action::NewSplit(SplitDirection::Right)),
+        ("Split Left", Action::NewSplit(SplitDirection::Left)),
+        ("Split Down", Action::NewSplit(SplitDirection::Down)),
+        ("Zoom Split", Action::ZoomSplit),
+        ("Equalize Splits", Action::EqualizeSplits),
+        ("Select Split Up", Action::GotoSplit(SplitFocus::Up)),
+        ("Select Split Down", Action::GotoSplit(SplitFocus::Down)),
+        ("Select Split Left", Action::GotoSplit(SplitFocus::Left)),
+        ("Select Split Right", Action::GotoSplit(SplitFocus::Right)),
+        ("Broadcast Input", Action::ToggleBroadcast),
+        ("Save Current Layout", Action::SaveLayout),
+        ("Previous Tab", Action::PreviousTab),
+        ("Next Tab", Action::NextTab),
+        ("Copy", Action::Copy),
+        ("Paste", Action::Paste),
+        ("Select All", Action::SelectAll),
+        ("Find", Action::ToggleSearch),
+        ("Semantic Find", Action::ToggleSemanticSearch),
+        ("Explain Output", Action::ExplainOutput),
+        ("Compose Command", Action::ComposeCommand),
+        ("Clear Screen", Action::ClearScreen),
+        ("Jump to Previous Prompt", Action::JumpToPrompt(-1)),
+        ("Jump to Next Prompt", Action::JumpToPrompt(1)),
+        ("Increase Font Size", Action::IncreaseFontSize(1.0)),
+        ("Decrease Font Size", Action::DecreaseFontSize(1.0)),
+        ("Reset Font Size", Action::ResetFontSize),
+        ("Change Tab Title", Action::ChangeTabTitle),
+        ("Change Terminal Title", Action::ChangeTerminalTitle),
+        ("Terminal Read-only", Action::ToggleReadOnly),
+        ("Toggle Full Screen", Action::ToggleFullscreen),
+        ("Quick Terminal", Action::ToggleQuickTerminal),
+        ("Record Macro", Action::MacroRecord),
+        ("Record Session (cast)", Action::ToggleRecording),
+        ("Settings", Action::ToggleSettings),
+        ("Documentation", Action::ShowHelp),
+        ("Relay: Launch Agent", Action::RelayLaunch),
+        ("Relay: Open Feed", Action::RelayFeed),
+        ("Relay: View Logs", Action::RelayLog),
+        ("Relay: Start Server", Action::RelayStart),
+        ("Relay: Stop Server", Action::RelayStop),
+        ("Relay: Restart Server", Action::RelayRestart),
+        ("Quit", Action::Quit),
+    ]
+}
+
+/// A floating pill shown while a cast recording is capturing, stacked below
+/// the macro/broadcast pills so the three never collide.
+fn recording_pill(palette: &Colors) -> AnyElement {
+    let accent = theme::Rgb::new(255, 69, 58);
+    let mut bg = colors::hsla(palette.bg);
+    bg.a = 0.9;
+    let mut border = colors::hsla(accent);
+    border.a = 0.5;
+    div()
+        .absolute()
+        .top(px(56.0))
+        .right(px(8.0))
+        .flex()
+        .items_center()
+        .gap_1()
+        .px_2()
+        .py(px(2.0))
+        .rounded(px(6.0))
+        .bg(bg)
+        .border_1()
+        .border_color(border)
+        .text_size(px(11.0))
+        .text_color(colors::hsla(accent))
+        .child(SharedString::from("\u{25cf}"))
+        .child(SharedString::from("REC"))
+        .into_any_element()
+}
+
+/// A floating pill warning that broadcast input is active, placed beside the
+/// macro pill (one notch lower so they never collide).
+fn broadcast_pill(palette: &Colors) -> AnyElement {
+    let accent = theme::Rgb::new(255, 196, 0);
+    let mut bg = colors::hsla(palette.bg);
+    bg.a = 0.9;
+    let mut border = colors::hsla(accent);
+    border.a = 0.5;
+    div()
+        .absolute()
+        .top(px(32.0))
+        .right(px(8.0))
+        .flex()
+        .items_center()
+        .gap_1()
+        .px_2()
+        .py(px(2.0))
+        .rounded(px(6.0))
+        .bg(bg)
+        .border_1()
+        .border_color(border)
+        .text_size(px(11.0))
+        .text_color(colors::hsla(accent))
+        .child(SharedString::from("\u{1f4e1}"))
+        .child(SharedString::from("BROADCAST"))
+        .into_any_element()
+}
+
 fn macro_pill(recording: bool, replaying: bool, palette: &Colors) -> Option<AnyElement> {
     if !recording && !replaying {
         return None;

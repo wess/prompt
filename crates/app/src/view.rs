@@ -7,9 +7,11 @@ use std::time::{Duration, Instant};
 
 use gpui::prelude::*;
 use gpui::{
-    div, px, AnyElement, App, ClipboardItem, Context, EventEmitter, FocusHandle, Focusable,
-    KeyDownEvent, SharedString, Subscription, Window,
+    anchored, deferred, div, px, AnyElement, App, ClipboardItem, Context, EventEmitter,
+    FocusHandle, Focusable, KeyDownEvent, MouseButton, MouseDownEvent, Pixels, Point, SharedString,
+    Subscription, Window,
 };
+use config::{Action, SplitDirection};
 use terminal::{Event, Session};
 
 use crate::colors::{self, Colors};
@@ -33,12 +35,18 @@ const REPLAY_TIMEOUT: Duration = Duration::from_secs(20);
 const REPLAY_FALLBACK_GAP: Duration = Duration::from_millis(150);
 
 /// Pane events the workspace root reacts to.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum ViewEvent {
     /// The vt title changed: refresh tab labels / the window title.
     Title,
     /// The child exited: close this pane.
     Exited,
+    /// Typed input to mirror to sibling panes (broadcast mode). Carries the
+    /// already-encoded pty bytes from the focused pane.
+    Input(Vec<u8>),
+    /// A config action picked from this pane's right-click menu; the workspace
+    /// focuses this pane and dispatches it.
+    Action(Action),
 }
 
 /// Pane title: the vt title when set and non-blank, else the fallback.
@@ -84,6 +92,7 @@ pub struct Appearance {
     pub cursor_default: config::CursorStyle,
     pub copy_on_select: bool,
     pub option_as_alt: config::OptionAsAlt,
+    pub paste_protection: bool,
 }
 
 pub struct TerminalView {
@@ -97,8 +106,15 @@ pub struct TerminalView {
     copy_on_select: bool,
     /// How the macOS Option key is treated for pty input (`macos-option-as-alt`).
     option_as_alt: config::OptionAsAlt,
+    /// When set, a risky paste prompts for confirmation before reaching the
+    /// shell (`clipboard-paste-protection`).
+    paste_protection: bool,
+    /// Open right-click menu, at its window-coordinate anchor.
+    context_menu: Option<Point<Pixels>>,
     /// Pointer state shared with the element's per-frame event closures.
     mouse: Rc<RefCell<MouseState>>,
+    /// Decoded sixel textures, keyed by placement id; persists across frames.
+    image_cache: Rc<RefCell<std::collections::HashMap<u64, Arc<gpui::RenderImage>>>>,
     focus: FocusHandle,
     /// Last vt title (OSC 0/2); `None` until the child sets one.
     title: Option<String>,
@@ -172,6 +188,7 @@ impl TerminalView {
         cursor_default: config::CursorStyle,
         copy_on_select: bool,
         option_as_alt: config::OptionAsAlt,
+        paste_protection: bool,
         fallback: String,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -199,7 +216,10 @@ impl TerminalView {
             cursor_default,
             copy_on_select,
             option_as_alt,
+            paste_protection,
+            context_menu: None,
             mouse: Rc::new(RefCell::new(MouseState::default())),
+            image_cache: Rc::new(RefCell::new(std::collections::HashMap::new())),
             focus,
             title: None,
             override_title: None,
@@ -268,6 +288,7 @@ impl TerminalView {
         self.cursor_default = a.cursor_default;
         self.copy_on_select = a.copy_on_select;
         self.option_as_alt = a.option_as_alt;
+        self.paste_protection = a.paste_protection;
         self.session
             .with_term(|term| term.set_report_colors(colors::report_colors(&self.colors)));
         cx.notify();
@@ -651,6 +672,15 @@ impl TerminalView {
             ctrl: keystroke.modifiers.control,
             cmd: keystroke.modifiers.platform,
         };
+        // Escape closes an open right-click menu before anything else.
+        if self.context_menu.is_some() {
+            if keystroke.key == "escape" {
+                self.context_menu = None;
+                cx.notify();
+                cx.stop_propagation();
+            }
+            return;
+        }
         if self.search.is_some() {
             self.search_key(keystroke, mods, cx);
             cx.stop_propagation();
@@ -688,6 +718,14 @@ impl TerminalView {
         if let Some(bytes) = input::encode_key(&keystroke.key, text, mods, state) {
             self.scroll_to_bottom(cx);
             let _ = self.session.write(&bytes);
+            // Broadcast mode: hand the encoded bytes to the workspace, which
+            // mirrors them to every other pane in the active tab.
+            if cx
+                .try_global::<crate::root::Broadcast>()
+                .is_some_and(|b| b.0)
+            {
+                cx.emit(ViewEvent::Input(bytes));
+            }
             cx.stop_propagation();
         }
     }
@@ -724,6 +762,131 @@ impl TerminalView {
         }
     }
 
+    /// Whether a foreground process (beyond the shell) is running in this pane.
+    pub fn has_running_process(&self) -> bool {
+        self.session.foreground_running()
+    }
+
+    /// Whether this pane is recording an asciinema cast.
+    pub fn is_recording(&self) -> bool {
+        self.session.is_recording()
+    }
+
+    /// Start or stop recording this pane to an asciinema `.cast` file. On stop,
+    /// surfaces the saved path in a dismissable message.
+    pub fn toggle_recording(&mut self, cx: &mut Context<Self>) {
+        if self.session.is_recording() {
+            let body = match self.session.stop_recording() {
+                Some(path) => path.display().to_string(),
+                None => "(no file written)".to_string(),
+            };
+            self.assist = Some(Assist::Message {
+                title: "Recording saved".to_string(),
+                body,
+            });
+        } else if let Some((path, ts)) = recording_target() {
+            let title = self.title().to_string();
+            if self.session.start_recording(path, Some(&title), Some(ts)).is_err() {
+                self.assist = Some(Assist::Message {
+                    title: "Recording failed".to_string(),
+                    body: "could not create the cast file".to_string(),
+                });
+            }
+        }
+        cx.notify();
+    }
+
+    /// Right mouse button: open the context menu, unless the app is capturing
+    /// the mouse (then the press is reported to the child instead).
+    fn right_down(&mut self, e: &MouseDownEvent, _window: &mut Window, cx: &mut Context<Self>) {
+        let reporting = self
+            .session
+            .with_term(|t| crate::mouse::reports(t.mouse_mode(), e.modifiers.shift));
+        if reporting {
+            return;
+        }
+        self.context_menu = Some(e.position);
+        cx.stop_propagation();
+        cx.notify();
+    }
+
+    /// The right-click menu overlay anchored at `pos`, with a full-pane
+    /// backdrop that dismisses it on an outside click.
+    fn context_menu_overlay(&self, pos: Point<Pixels>, cx: &mut Context<Self>) -> AnyElement {
+        // (label, action); `None` is a separator.
+        let items: [Option<(&str, Action)>; 8] = [
+            Some(("Copy", Action::Copy)),
+            Some(("Paste", Action::Paste)),
+            Some(("Select All", Action::SelectAll)),
+            None,
+            Some(("Split Right", Action::NewSplit(SplitDirection::Right))),
+            Some(("Split Down", Action::NewSplit(SplitDirection::Down))),
+            None,
+            Some(("Clear", Action::ClearScreen)),
+        ];
+        let mut menu = div()
+            .flex()
+            .flex_col()
+            .min_w(px(180.0))
+            .p_1()
+            .rounded(px(8.0))
+            .border_1()
+            .border_color(colors::rgba(self.colors.selection_bg))
+            .bg(colors::rgba(self.colors.bg))
+            .text_color(colors::rgba(self.colors.fg))
+            .shadow_lg();
+        for item in items {
+            match item {
+                None => {
+                    let mut line = colors::rgba(self.colors.fg);
+                    line.a = 0.15;
+                    menu = menu.child(div().my_1().mx_2().h(px(1.0)).bg(line));
+                }
+                Some((label, action)) => {
+                    let action = action.clone();
+                    menu = menu.child(
+                        div()
+                            .px_2()
+                            .py(px(4.0))
+                            .rounded(px(5.0))
+                            .hover(|s| s.bg(colors::rgba(self.colors.selection_bg)))
+                            .child(SharedString::from(label))
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(move |this, _e: &MouseDownEvent, _w, cx| {
+                                    this.context_menu = None;
+                                    cx.emit(ViewEvent::Action(action.clone()));
+                                    cx.stop_propagation();
+                                    cx.notify();
+                                }),
+                            ),
+                    );
+                }
+            }
+        }
+        let dismiss = |this: &mut Self, _e: &MouseDownEvent, _w: &mut Window, cx: &mut Context<Self>| {
+            this.context_menu = None;
+            cx.stop_propagation();
+            cx.notify();
+        };
+        deferred(
+            div()
+                .absolute()
+                .top_0()
+                .left_0()
+                .size_full()
+                .on_mouse_down(MouseButton::Left, cx.listener(dismiss))
+                .on_mouse_down(MouseButton::Right, cx.listener(dismiss))
+                .child(
+                    anchored()
+                        .position(pos)
+                        .snap_to_window_with_margin(px(6.0))
+                        .child(menu),
+                ),
+        )
+        .into_any_element()
+    }
+
     /// Copy the current selection to the clipboard, if any.
     pub fn copy_selection(&mut self, cx: &mut Context<Self>) {
         let Some(text) = self.session.with_term(|term| term.selection_text()) else {
@@ -745,14 +908,43 @@ impl TerminalView {
         if text.is_empty() {
             return;
         }
-        let risk = assist::analyze(&text);
-        if risk.risky() {
-            self.search = None;
-            self.assist = Some(Assist::Paste { text, risk });
-            cx.notify();
-            return;
+        if self.paste_protection {
+            let risk = assist::analyze(&text);
+            if risk.risky() {
+                self.search = None;
+                self.assist = Some(Assist::Paste { text, risk });
+                cx.notify();
+                return;
+            }
         }
         self.write_paste(&text, cx);
+    }
+
+    /// Write raw bytes to the pty, snapping the view to the live bottom.
+    /// Backs the macOS readline navigation keybinds (`text:`/`esc:`).
+    pub fn send_text(&mut self, bytes: &[u8], cx: &mut Context<Self>) {
+        if self.read_only || bytes.is_empty() {
+            return;
+        }
+        self.scroll_to_bottom(cx);
+        let _ = self.session.write(bytes);
+    }
+
+    /// Select the entire buffer — every scrollback row plus the live screen —
+    /// so it can be copied. Mirrors a top-left to bottom-right cell drag.
+    pub fn select_all(&mut self, cx: &mut Context<Self>) {
+        self.session.with_term(|term| {
+            let grid = term.grid();
+            let (rows, cols) = (grid.rows(), grid.cols());
+            if rows == 0 || cols == 0 {
+                return;
+            }
+            let top = -(grid.scrollback().len() as isize);
+            let bottom = rows as isize - 1;
+            term.start_selection(vt::SelectionMode::Cell, vt::Point::new(top, 0));
+            term.update_selection(vt::Point::new(bottom, cols - 1));
+        });
+        cx.notify();
     }
 
     /// Run a trusted plugin command in the focused shell.
@@ -1015,6 +1207,18 @@ impl TerminalView {
     }
 }
 
+/// Path for a new recording under `~/.config/prompt/recordings/`, plus the
+/// unix timestamp for its header. `None` if the directory can't be made.
+fn recording_target() -> Option<(std::path::PathBuf, u64)> {
+    let ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()?
+        .as_secs();
+    let dir = config::default_path()?.parent()?.join("recordings");
+    std::fs::create_dir_all(&dir).ok()?;
+    Some((dir.join(format!("prompt-{ts}.cast")), ts))
+}
+
 impl EventEmitter<ViewEvent> for TerminalView {}
 
 impl Focusable for TerminalView {
@@ -1036,6 +1240,9 @@ impl Render for TerminalView {
             self.search_bar(&before, &after, pos, total)
         });
         let assist = self.assist_panel();
+        let menu = self
+            .context_menu
+            .map(|pos| self.context_menu_overlay(pos, cx));
         div()
             .relative()
             .size_full()
@@ -1043,6 +1250,7 @@ impl Render for TerminalView {
             .key_context("Terminal")
             .track_focus(&self.focus)
             .on_key_down(cx.listener(Self::key_down))
+            .on_mouse_down(MouseButton::Right, cx.listener(Self::right_down))
             .child(TerminalElement::new(
                 self.session.clone(),
                 self.colors.clone(),
@@ -1054,9 +1262,11 @@ impl Render for TerminalView {
                 self.mouse.clone(),
                 self.copy_on_select,
                 query,
+                self.image_cache.clone(),
             ))
             .children(bar)
             .children(assist)
+            .children(menu)
     }
 }
 

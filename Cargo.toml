@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "crates/assist",
     "crates/app",
+    "crates/cast",
     "crates/config",
     "crates/input",
     "crates/macros",
@@ -26,7 +27,7 @@ async-task = { git = "https://github.com/smol-rs/async-task.git", rev = "b4486cd
 block = { path = "thirdparty/block" }
 
 [workspace.package]
-version = "0.4.0"
+version = "1.0.0"
 edition = "2021"
 license = "Apache-2.0"
 

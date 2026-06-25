@@ -1,8 +1,8 @@
-# Ghostty parity audit
+# Terminal feature coverage
 
-A feature-by-feature map of Prompt against Ghostty (https://ghostty.org/docs),
-as of phases 1–12. Status key: **✓** implemented, **◑** partial (works for
-the common case, with documented limits), **✗** not yet.
+A feature-by-feature map of Prompt's terminal support, as of phases 1–12.
+Status key: **✓** implemented, **◑** partial (works for the common case, with
+documented limits), **✗** not yet.
 
 ## Terminal emulation (VT)
 
@@ -15,8 +15,8 @@ the common case, with documented limits), **✗** not yet.
 | Charsets (G0/G1, DEC special) | ✓ | line-drawing via SCS + SO/SI |
 | Scrollback + alt screen | ✓ | ring buffer, content-anchored offset, no scrollback on alt |
 | Wide characters | ✓ | width 2 + spacer cells |
-| Combining characters | ✗ | width-0 chars dropped (needs per-cell grapheme storage) |
-| Reflow on resize | ✗ | truncate/pad only; `Row::wrapped` flag is tracked but unused |
+| Combining characters | ◑ | one inline combining mark per cell (covers diacritics; stacked marks beyond the first are dropped) |
+| Reflow on resize | ✓ | rejoins `wrapped` lines and re-wraps at the new width, cursor follows, overflow → scrollback |
 | Damage tracking | ✓ | per-row + full-escalation (renderer does not yet clip to it) |
 
 ## Input
@@ -49,7 +49,7 @@ the common case, with documented limits), **✗** not yet.
 |------|--------|-------|
 | Semantic prompts (OSC 133) | ✓ | A marks prompt rows (into scrollback) |
 | Jump-to-prompt | ✓ | `jump_to_prompt:N`, default cmd+up/down |
-| Auto-injected shell scripts | ✗ | bash/zsh/fish hooks that *emit* 133/7 are shell-side packaging |
+| Auto-injected shell scripts | ✓ | `shell-integration` injects OSC 133/7 hooks via env (zsh ZDOTDIR, fish vendor_conf.d, bash PROMPT_COMMAND); no rc edits |
 | sudo / title helpers | ✗ | part of the shell scripts above |
 
 ## Fonts & rendering
@@ -63,7 +63,8 @@ the common case, with documented limits), **✗** not yet.
 | Font features | ✓ | `+liga`/`-calt`/`ss01`/`cv01=2` |
 | Box-drawing / blocks | ◑ | light lines/junctions, blocks, shades, eighths drawn custom; heavy/double/dashed/rounded fall back to font |
 | Cursor styles (DECSCUSR) | ✓ | block/bar/underline, config default |
-| Images (kitty graphics / sixel) | ✗ | sequences consumed without corruption; pixel decode + GPU compositing not yet done |
+| Images (sixel) | ✓ | sixel decoded (RGB/HLS palette, RLE, raster attrs) and GPU-composited, anchored to the grid so it scrolls with text |
+| Images (kitty graphics) | ✗ | APC `_G` is not delivered by the pinned vte 0.13 (no APC callback); needs a vte bump/fork |
 
 ## UI / workspace
 
@@ -79,19 +80,23 @@ the common case, with documented limits), **✗** not yet.
 | Settings panel (GUI) | ✓ | cmd+, modal: click controls (theme/font size+style/cursor/padding/scrollback/copy-on-select) plus editable text fields (font family, shell, foreground, background) via a built-in text-input widget; all written back to the config file |
 | Text-input widget | ✓ | `textedit` model (insert/delete/cursor, unicode) + in-panel field with caret; also backs the search query |
 | Keybindings (`trigger = action`) | ✓ | config-driven, defaults + user overrides + unbind |
+| Command palette | ✓ | cmd+shift+p fuzzy launcher over the action catalog, shows keybinds |
+| Broadcast input | ✓ | cmd+shift+b mirrors typed keys to every pane in the tab (floating indicator) |
+| Session restore | ✓ | `session-restore` saves tabs/splits/cwds on quit, rebuilds on launch |
+| Session recording | ✓ | record a pane to an asciinema v2 `.cast` (cmd+shift+r); plays with `asciinema play`, embeddable |
 | Themes | ✓ | 22 builtin schemes + overrides |
-| Native macOS menu bar | ✓ | Prompt/Shell/Edit/View/Window menus, items reuse config actions (shortcuts shown); includes an About panel (icon, version, release date) |
+| Native macOS menu bar | ✓ | Prompt/File/Edit/View/Workspace/Window menus (plus AI when enabled), items reuse config actions (shortcuts shown); includes an About panel (icon, version, release date) |
 | Custom window titlebar | ✓ | transparent native bar; app-drawn strip with tabs folded in and drag-to-move. macOS keeps the traffic lights; Linux draws its own minimize/maximize/close + resize edges (client-side decorations) |
 | macOS status-bar (tray) item | ✗ | NSStatusBar is not exposed by the UI layer; needs custom native code |
 
 ## Prioritized remaining gaps
 
-1. **Image rendering** (kitty graphics + sixel) — the largest missing feature;
-   needs pixel decode (PNG/zlib for kitty, custom for sixel) and GPU image
-   compositing in the element.
-2. **Reflow on resize** — rewrap soft-wrapped lines using the `wrapped` flag.
-3. **Combining characters** — per-cell grapheme storage so width-0 marks attach.
-4. **Damage-clipped rendering** — shape only dirty rows for big-throughput wins.
-5. **Kitty release/repeat events** — needs key-up delivery from the host layer.
-6. **Heavy/double/dashed/rounded box-drawing** — extend `boxdraw` geometry.
-7. **Shell-integration auto-injection** — ship + source the shell hook scripts.
+1. **Kitty graphics protocol** — blocked on the pinned vte 0.13, whose `Perform`
+   has no APC callback; needs a vte bump/fork to capture `ESC _ G … ST`. (Sixel
+   already works.)
+2. **Stacked combining marks** — only the first combining mark per cell is kept;
+   full grapheme clusters / ZWJ emoji need spillover storage.
+3. **Damage-clipped rendering** — shape only dirty rows for big-throughput wins.
+4. **Kitty release/repeat events** — needs key-up delivery from the host layer.
+5. **Heavy/double/dashed/rounded box-drawing** — extend `boxdraw` geometry.
+6. **macOS status-bar (tray) item** — needs native NSStatusBar code.

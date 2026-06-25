@@ -141,6 +141,14 @@ window-padding-y = 8
 shell = /bin/zsh
 scrollback-limit = 10000
 copy-on-select = true
+# Confirm before sending a risky paste (off by default)
+clipboard-paste-protection = false
+# Warn on quit if a process is still running in a pane
+confirm-quit = true
+# OSC 133/7 hooks for jump-to-prompt + cwd inheritance (zsh/bash/fish)
+shell-integration = true
+# Reopen the previous window's tabs/splits/cwds on launch (off by default)
+session-restore = false
 
 # AI — opt-in (also editable in Settings → AI); see docs/relay.md
 ai-enabled = true
@@ -237,6 +245,8 @@ and optionally start it on launch. An **AI** menu then appears:
 - **Launch Agent…** — opens a split, prompts for a name, and runs your default
   agent there, wired to the bus and a register → `wait`-loop harness.
 - **Open Feed** — streams every message on the bus in a split.
+- **Relay ▸** — server controls: shows whether the server is running, then
+  Start / Stop / Restart it and **View Logs** (tails the server log in a split).
 - **Teams ▸** — open a whole **team** at once: Prompt arranges a tile layout and
   launches the right agent in each pane.
 
@@ -250,8 +260,8 @@ Agents launch with a **role** — a reusable brief (and optional channels/agent)
 that shapes what they do. Built-ins (`supervisor`, `frontend`, `backend`,
 `reviewer`, …) ship in the box; manage your own with `relay role list|create|edit`
 (an `$EDITOR` drop-in, layered project → user → built-in). **Teams** bundle a
-roster with a layout (`relay team …`), and **View → Tiles** offers layout presets
-plus *Save Current Layout* for any tab.
+roster with a layout (`relay team …`), and the **Workspace** menu offers layout
+presets plus *Save Current Layout* for any tab.
 
 Full details — config keys, the CLI, the MCP tools agents call, and supported
 agents — are in [`docs/relay.md`](docs/relay.md).
@@ -268,17 +278,27 @@ agents — are in [`docs/relay.md`](docs/relay.md).
 | ⌘D / ⌘⇧D | Split right / down |
 | ⌘⌥ arrows | Move focus between splits |
 | ⌘C / ⌘V | Copy / paste |
+| ⌘A † | Select all (scrollback + screen) |
+| ⌘← / ⌘→ † | Jump to start / end of line |
+| ⌥← / ⌥→ † | Jump back / forward a word |
+| ⌘⌫ / ⌥⌫ † | Delete to line start / delete previous word |
 | ⌘F | Search scrollback |
+| ⌘⇧P | Command palette |
+| ⌘⇧B | Broadcast input to all panes in the tab |
+| ⌘⇧R | Record session to an asciinema `.cast` |
 | ⌘↑ / ⌘↓ | Jump to previous / next prompt |
 | ⌘+ / ⌘− / ⌘0 | Font size up / down / reset |
 | ⌘K | Clear screen |
 | ⌘, | Open settings |
-| ⌘⇧, | Reload config |
 | ⌘Q | Quit |
 
 ⌘ is **Command on macOS** and **Ctrl on Linux & Windows** — the same config
 binding works everywhere. Every binding is a config default; override or
 unbind any of them.
+
+† macOS only — these readline navigation defaults are not registered on Linux
+or Windows, where ⌘ maps to Ctrl and would shadow the shell's own
+Ctrl-A/Ctrl-E/Ctrl-U/Ctrl-W bindings. Bind them yourself if you want them.
 
 ## Themes
 

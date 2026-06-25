@@ -30,6 +30,49 @@ pub fn keystroke(mods: config::Mods, key: &str) -> Option<String> {
     Some(s)
 }
 
+/// A human keybind hint for menus/palette: macOS modifier glyphs followed by
+/// the key. `None` for an unprintable key. Modifier order matches the macOS
+/// convention (⌃⌥⇧⌘).
+pub fn shortcut_glyphs(mods: config::Mods, key: &str) -> Option<String> {
+    if key.is_empty() {
+        return None;
+    }
+    let mut s = String::new();
+    if mods.ctrl {
+        s.push('\u{2303}'); // ⌃
+    }
+    if mods.alt {
+        s.push('\u{2325}'); // ⌥
+    }
+    if mods.shift {
+        s.push('\u{21e7}'); // ⇧
+    }
+    if mods.cmd {
+        s.push('\u{2318}'); // ⌘
+    }
+    s.push_str(&key_glyph(key));
+    Some(s)
+}
+
+/// A display glyph for a key in a shortcut hint.
+fn key_glyph(key: &str) -> String {
+    match key {
+        "left" => "\u{2190}".into(),
+        "right" => "\u{2192}".into(),
+        "up" => "\u{2191}".into(),
+        "down" => "\u{2193}".into(),
+        "enter" => "\u{21a9}".into(),
+        "backspace" => "\u{232b}".into(),
+        "delete" => "\u{2326}".into(),
+        "escape" => "esc".into(),
+        "space" => "space".into(),
+        "page_up" => "\u{21de}".into(),
+        "page_down" => "\u{21df}".into(),
+        other if other.chars().count() == 1 => other.to_uppercase(),
+        other => other.to_string(),
+    }
+}
+
 /// Map config key names onto gpui's spellings. Most match; only the paged
 /// navigation keys differ (`page_up` vs `pageup`).
 fn gpui_key(key: &str) -> String {

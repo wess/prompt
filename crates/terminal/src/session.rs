@@ -24,6 +24,8 @@ pub struct Session {
     term: Arc<Mutex<vt::Terminal>>,
     /// `true` while an unconsumed [`Event::Wakeup`] sits in the channel.
     wakeup_pending: Arc<AtomicBool>,
+    /// Active asciinema recording; the reader thread writes output into it.
+    recorder: Arc<Mutex<Option<cast::Recorder>>>,
     reader: Option<JoinHandle<()>>,
 }
 
@@ -53,6 +55,7 @@ impl Session {
         let term = Arc::new(Mutex::new(vt::Terminal::new(cols, rows, scrollback_limit)));
         let pty = Arc::new(Mutex::new(pty));
         let wakeup_pending = Arc::new(AtomicBool::new(false));
+        let recorder: Arc<Mutex<Option<cast::Recorder>>> = Arc::new(Mutex::new(None));
         let (events, receiver) = mpsc::channel();
 
         let reader = thread::Builder::new()
@@ -61,7 +64,8 @@ impl Session {
                 let pty = Arc::clone(&pty);
                 let term = Arc::clone(&term);
                 let pending = Arc::clone(&wakeup_pending);
-                move || read_loop(output, replies, pty, term, pending, events)
+                let recorder = Arc::clone(&recorder);
+                move || read_loop(output, replies, pty, term, pending, recorder, events)
             })?;
 
         Ok((
@@ -70,6 +74,7 @@ impl Session {
                 writer,
                 term,
                 wakeup_pending,
+                recorder,
                 reader: Some(reader),
             },
             receiver,
@@ -87,6 +92,46 @@ impl Session {
         self.term.lock().expect("terminal lock").resize(cols, rows);
         let size = pty::Winsize::new(cols as u16, rows as u16);
         self.pty.lock().expect("pty lock").resize(size)
+    }
+
+    /// Whether an asciinema recording is currently capturing this session.
+    pub fn is_recording(&self) -> bool {
+        self.recorder
+            .lock()
+            .map(|r| r.is_some())
+            .unwrap_or(false)
+    }
+
+    /// Begin recording output to `path` as an asciinema v2 cast. Replaces any
+    /// recording already in progress.
+    pub fn start_recording(
+        &self,
+        path: std::path::PathBuf,
+        title: Option<&str>,
+        timestamp: Option<u64>,
+    ) -> io::Result<()> {
+        let (cols, rows) = {
+            let term = self.term.lock().expect("terminal lock");
+            (term.cols(), term.rows())
+        };
+        let recorder = cast::Recorder::create(path, cols, rows, title, timestamp)?;
+        *self.recorder.lock().expect("recorder lock") = Some(recorder);
+        Ok(())
+    }
+
+    /// Stop recording, flushing the file. Returns the saved path, if any.
+    pub fn stop_recording(&self) -> Option<std::path::PathBuf> {
+        let recorder = self.recorder.lock().ok()?.take()?;
+        recorder.finish().ok()
+    }
+
+    /// Whether a foreground process other than the shell is running on the pty
+    /// (e.g. an editor or a long-running command), for quit/close warnings.
+    pub fn foreground_running(&self) -> bool {
+        self.pty
+            .lock()
+            .expect("pty lock")
+            .foreground_running()
     }
 
     /// Run `f` with the terminal locked, for rendering or inspection.
@@ -139,6 +184,7 @@ fn read_loop(
     pty: Arc<Mutex<pty::Pty>>,
     term: Arc<Mutex<vt::Terminal>>,
     pending: Arc<AtomicBool>,
+    recorder: Arc<Mutex<Option<cast::Recorder>>>,
     events: Sender<Event>,
 ) {
     let mut buf = [0u8; 8192];
@@ -146,7 +192,15 @@ fn read_loop(
         match output.read(&mut buf) {
             // EOF: every slave-side fd is closed (macOS reports this).
             Ok(0) => break,
-            Ok(n) => apply_chunk(&buf[..n], &mut replies, &term, &pending, &events),
+            Ok(n) => {
+                // Tap the raw output for an active recording before emulation.
+                if let Ok(mut rec) = recorder.lock() {
+                    if let Some(rec) = rec.as_mut() {
+                        let _ = rec.output(&buf[..n]);
+                    }
+                }
+                apply_chunk(&buf[..n], &mut replies, &term, &pending, &events);
+            }
             Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
             // Linux reports EIO instead of EOF once the child is gone.
             Err(_) => break,

@@ -6,14 +6,16 @@
 //! shaping happens after the lock is released.
 
 use std::cell::RefCell;
+use std::collections::HashMap;
 use std::rc::Rc;
 use std::sync::Arc;
 
 use gpui::{
-    fill, point, px, relative, size, App, Bounds, ContentMask, DispatchPhase, Element, ElementId,
-    FontStyle, FontWeight, GlobalElementId, Hsla, InspectorElementId, IntoElement, LayoutId,
-    MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, ScrollWheelEvent, ShapedLine,
-    StrikethroughStyle, Style, TextAlign, TextRun, UnderlineStyle, Window,
+    fill, point, px, relative, size, App, Bounds, ContentMask, Corners, DispatchPhase, Element,
+    ElementId, FontStyle, FontWeight, GlobalElementId, Hsla, InspectorElementId, IntoElement,
+    LayoutId, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, RenderImage,
+    ScrollWheelEvent, ShapedLine, StrikethroughStyle, Style, TextAlign, TextRun, UnderlineStyle,
+    Window,
 };
 use terminal::Session;
 use theme::Rgb;
@@ -51,6 +53,9 @@ pub struct TerminalElement {
     mouse: Rc<RefCell<MouseState>>,
     copy_on_select: bool,
     search: Option<SearchQuery>,
+    /// GPU textures for decoded sixel images, keyed by placement id and shared
+    /// with the view so they survive across frames.
+    image_cache: Rc<RefCell<HashMap<u64, Arc<RenderImage>>>>,
 }
 
 impl TerminalElement {
@@ -66,6 +71,7 @@ impl TerminalElement {
         mouse: Rc<RefCell<MouseState>>,
         copy_on_select: bool,
         search: Option<SearchQuery>,
+        image_cache: Rc<RefCell<HashMap<u64, Arc<RenderImage>>>>,
     ) -> Self {
         Self {
             session,
@@ -78,8 +84,32 @@ impl TerminalElement {
             mouse,
             copy_on_select,
             search,
+            image_cache,
         }
     }
+}
+
+/// A decoded image positioned for drawing: its absolute content line, column,
+/// pixel size, and shared GPU texture.
+struct ImageDraw {
+    line: isize,
+    col: usize,
+    width: f32,
+    height: f32,
+    image: Arc<RenderImage>,
+}
+
+/// Build a GPU texture from a decoded sixel image (RGBA -> the BGRA gpui wants).
+fn render_image(img: &vt::Image) -> Arc<RenderImage> {
+    let mut bgra = img.rgba.clone();
+    for px in bgra.chunks_exact_mut(4) {
+        px.swap(0, 2);
+    }
+    let buf = image::RgbaImage::from_raw(img.width as u32, img.height as u32, bgra)
+        .unwrap_or_else(|| image::RgbaImage::new(1, 1));
+    Arc::new(RenderImage::new(smallvec::SmallVec::from_buf([
+        image::Frame::new(buf),
+    ])))
 }
 
 /// A horizontal run of equal non-default background color, in cells.
@@ -99,6 +129,9 @@ struct Span {
     text: String,
     /// Columns covered (wide characters cover two).
     width: usize,
+    /// Set once a wide (2-column) glyph joins the span; such spans never take
+    /// further cells, so forced cell-width shaping can't misplace glyphs.
+    has_wide: bool,
     fg: Rgb,
     flags: CellFlags,
 }
@@ -132,12 +165,22 @@ struct Snapshot {
     /// Display offset and scrollback length, for the scrollback indicator.
     offset: usize,
     scrollback: usize,
+    images: Vec<ImageDraw>,
 }
 
 /// Capture visible rows as background runs and styled spans. Resolves all
 /// colors (theme palette + OSC 4 overrides + inverse + bold brightening +
 /// selection) so nothing after this needs the lock.
-fn snapshot(term: &mut vt::Terminal, colors: &Colors, search: Option<&SearchQuery>) -> Snapshot {
+fn snapshot(
+    term: &mut vt::Terminal,
+    colors: &Colors,
+    search: Option<&SearchQuery>,
+    cell: CellSize,
+    image_cache: &mut HashMap<u64, Arc<RenderImage>>,
+) -> Snapshot {
+    // Keep the emulator's cell metrics current so sixel reserves the right
+    // number of rows.
+    term.set_cell_pixels(cell.width.round() as u16, cell.height.round() as u16);
     // TODO(perf): use the damage to clip painting; for now drain it so the
     // accumulator does not grow without bound.
     let _ = term.take_damage();
@@ -254,23 +297,28 @@ fn snapshot(term: &mut vt::Terminal, colors: &Colors, search: Option<&SearchQuer
                 // shaping cannot misplace the following glyphs.
                 Some(span)
                     if width == 1
-                        && span.width == span.text.chars().count()
+                        && !span.has_wide
                         && span.row == row_i
                         && span.col + span.width == col
                         && span.fg == fg
                         && span.flags == style =>
                 {
-                    span.text.push(cell.ch);
+                    cell.write_grapheme(&mut span.text);
                     span.width += 1;
                 }
-                _ => spans.push(Span {
-                    row: row_i,
-                    col,
-                    text: cell.ch.to_string(),
-                    width,
-                    fg,
-                    flags: style,
-                }),
+                _ => {
+                    let mut text = String::new();
+                    cell.write_grapheme(&mut text);
+                    spans.push(Span {
+                        row: row_i,
+                        col,
+                        text,
+                        width,
+                        has_wide: width == 2,
+                        fg,
+                        flags: style,
+                    });
+                }
             }
         }
     }
@@ -292,6 +340,28 @@ fn snapshot(term: &mut vt::Terminal, colors: &Colors, search: Option<&SearchQuer
         }
     });
 
+    // Resolve sixel placements to drawable textures, caching by id so the GPU
+    // upload happens once. Drop textures whose placement is gone.
+    let placements = term.images();
+    let live: std::collections::HashSet<u64> = placements.iter().map(|p| p.id).collect();
+    image_cache.retain(|id, _| live.contains(id));
+    let images = placements
+        .iter()
+        .map(|p| {
+            let image = image_cache
+                .entry(p.id)
+                .or_insert_with(|| render_image(&p.image))
+                .clone();
+            ImageDraw {
+                line: p.line,
+                col: p.col,
+                width: p.image.width as f32,
+                height: p.image.height as f32,
+                image,
+            }
+        })
+        .collect();
+
     Snapshot {
         bg_runs,
         spans,
@@ -299,6 +369,7 @@ fn snapshot(term: &mut vt::Terminal, colors: &Colors, search: Option<&SearchQuer
         cursor,
         offset,
         scrollback: term.grid().scrollback().len(),
+        images,
     }
 }
 
@@ -356,6 +427,8 @@ pub struct Frame {
     lines: Vec<(Point<Pixels>, ShapedLine)>,
     cursor: Option<CursorFrame>,
     indicator: Option<Bounds<Pixels>>,
+    /// Sixel images, as positioned pixel bounds plus their texture.
+    images: Vec<(Bounds<Pixels>, Arc<RenderImage>)>,
     /// Grid size at prepaint, for pointer hit testing.
     grid: (usize, usize),
 }
@@ -561,12 +634,34 @@ impl Element for TerminalElement {
             let _ = self.session.resize(cols, rows);
         }
 
-        let snap = self
-            .session
-            .with_term(|term| snapshot(term, &self.colors, self.search.as_ref()));
+        let snap = {
+            let mut cache = self.image_cache.borrow_mut();
+            self.session.with_term(|term| {
+                snapshot(term, &self.colors, self.search.as_ref(), self.cell, &mut cache)
+            })
+        };
 
         let cell_w = px(self.cell.width);
         let cell_h = px(self.cell.height);
+
+        // Position each sixel image at its anchor line (offset for scrollback),
+        // dropping any scrolled out of view.
+        let images = snap
+            .images
+            .iter()
+            .filter_map(|img| {
+                let row = img.line + snap.offset as isize;
+                if row < 0 || row as usize >= rows {
+                    return None;
+                }
+                let pos = point(
+                    origin.x + cell_w * img.col as f32,
+                    origin.y + cell_h * row as f32,
+                );
+                let bounds = Bounds::new(pos, size(px(img.width), px(img.height)));
+                Some((bounds, img.image.clone()))
+            })
+            .collect();
         let bg_quads = snap
             .bg_runs
             .iter()
@@ -641,6 +736,7 @@ impl Element for TerminalElement {
             lines,
             cursor,
             indicator: scroll_indicator(&bounds, rows, snap.offset, snap.scrollback),
+            images,
             grid: (cols, rows),
         }
     }
@@ -663,6 +759,11 @@ impl Element for TerminalElement {
             }
             for (quad, color) in &frame.box_quads {
                 window.paint_quad(fill(*quad, *color));
+            }
+            for (bounds, image) in &frame.images {
+                window
+                    .paint_image(*bounds, Corners::default(), image.clone(), 0, false)
+                    .ok();
             }
             for (pos, line) in &frame.lines {
                 line.paint(*pos, line_height, TextAlign::Left, None, window, cx)
