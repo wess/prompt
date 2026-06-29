@@ -27,6 +27,8 @@ jobs:
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v5
+        with:
+          submodules: recursive
 
       - name: Install system dependencies
         run: |
