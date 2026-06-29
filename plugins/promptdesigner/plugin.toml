@@ -1,0 +1,12 @@
+id = "promptdesigner"
+name = "Prompt Designer"
+version = "0.1.0"
+description = "Design your shell prompt visually and apply it to your shell"
+
+[runtime]
+command = "bun run plugin.ts"
+
+[panel]
+id = "promptdesigner"
+title = "Prompt Designer"
+icon = "✎"

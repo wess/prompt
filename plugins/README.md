@@ -179,11 +179,12 @@ terminal (`pane` | `tab` | `split_right` | `split_down`). See
 
 IPC panel plugins (live side-drawer panels):
 
-| Plugin                  | What it does                                        | Requires        |
-| ----------------------- | --------------------------------------------------- | --------------- |
-| [git](./git/)           | Live branch/changes panel with stage/fetch/log      | `bun`, `git`    |
-| [sysinfo](./sysinfo/)   | Host load + disk panel with a monitor shortcut      | `bun`           |
-| [docker](./docker/)     | Running-containers panel with stats/prune actions   | `bun`, `docker` |
+| Plugin                              | What it does                                        | Requires        |
+| ----------------------------------- | --------------------------------------------------- | --------------- |
+| [git](./git/)                       | Live branch/changes panel with stage/fetch/log      | `bun`, `git`    |
+| [sysinfo](./sysinfo/)               | Host load + disk panel with a monitor shortcut      | `bun`           |
+| [docker](./docker/)                 | Running-containers panel with stats/prune actions   | `bun`, `docker` |
+| [promptdesigner](./promptdesigner/) | Design your shell prompt and apply it to your shell | `bun`           |
 
 Command plugins (run a shell command in a pane/tab/split):
 
