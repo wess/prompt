@@ -6,7 +6,7 @@
 //! clear them. Zed-style.
 
 use gpui::prelude::*;
-use gpui::{div, px, Context, MouseButton, Window, WindowControlArea};
+use gpui::{div, px, Context, Window, WindowControlArea};
 
 use crate::colors::{self, Colors};
 use crate::root::WorkspaceView;
@@ -14,7 +14,7 @@ use crate::tabbar;
 
 /// macOS traffic-light clearance, with a little breathing room before the
 /// first tab (the lights themselves end around 67px).
-const TRAFFIC_LIGHT_INSET: f32 = 88.0;
+pub const TRAFFIC_LIGHT_INSET: f32 = 88.0;
 
 /// Title bar height, matching Zed: 1.75rem, floored at 34px.
 pub fn height(window: &Window) -> gpui::Pixels {
@@ -22,9 +22,11 @@ pub fn height(window: &Window) -> gpui::Pixels {
 }
 
 /// The titlebar strip rendered as the first child of the workspace root.
+#[allow(clippy::too_many_arguments)]
 pub fn bar(
     tabs: &[tabbar::TabInfo],
     active: usize,
+    max_visible: usize,
     colors: &Colors,
     font: &gpui::Font,
     font_size: gpui::Pixels,
@@ -39,7 +41,7 @@ pub fn bar(
         px(8.0)
     };
 
-    let mut bar = div()
+    let bar = div()
         .w_full()
         .h(height(window))
         .flex()
@@ -49,42 +51,14 @@ pub fn bar(
         // Whole bar is a platform drag region (native drag on macOS).
         .window_control_area(WindowControlArea::Drag)
         .pl(lead)
-        .child(tabbar::tabs(tabs, active, colors, font, font_size, cx));
-
-    // The empty area to the right of the tabs is the window drag handle. gpui
-    // ignores the `window_control_area(Drag)` hint on macOS, so we begin the
-    // move explicitly on mouse-down — its mac impl calls
-    // performWindowDragWithEvent, and the same call drives the move on Linux.
-    let mut spacer = div()
-        .id("titlebar-drag")
-        .flex_1()
-        .h_full()
-        .window_control_area(WindowControlArea::Drag)
-        .on_mouse_down(MouseButton::Left, |_, window, _| window.start_window_move());
-    #[cfg(target_os = "macos")]
-    {
-        spacer = spacer.on_click(|ev, window, _| {
-            if ev.click_count() == 2 {
-                window.titlebar_double_click();
-            }
-        });
-    }
-    #[cfg(target_os = "linux")]
-    {
-        spacer = spacer.on_click(|ev, window, _| {
-            if ev.click_count() == 2 {
-                window.zoom_window();
-            }
-        });
-    }
-    bar = bar.child(spacer);
+        // The tab strip fills the bar width and carries the trailing drag
+        // handle itself, so the tabs stretch and the controls sit flush right.
+        .child(tabbar::tabs(tabs, active, max_visible, colors, font, font_size, cx));
 
     // Linux/Windows have no native window buttons under a transparent bar, so
     // draw our own at the trailing edge.
     #[cfg(target_os = "linux")]
-    {
-        bar = bar.child(window_controls(colors));
-    }
+    let bar = bar.child(window_controls(colors));
 
     bar
 }

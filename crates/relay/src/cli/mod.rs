@@ -190,6 +190,10 @@ pub struct LaunchArgs {
     /// Custom launch template; placeholders: {prompt} {mcp} {url} {name}.
     #[arg(long)]
     pub cmd: Option<String>,
+    /// Explicit path to the agent binary, overriding the PATH lookup for the
+    /// built-in agent. Ignored for --cmd and the ollama bridge.
+    #[arg(long)]
+    pub bin: Option<String>,
     /// Run as a server-managed background worker instead of in this terminal.
     #[arg(long)]
     pub background: bool,

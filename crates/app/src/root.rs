@@ -14,8 +14,9 @@ use config::{Action, Keybind, ResizeDir, SplitDirection, SplitFocus};
 use futures::StreamExt;
 use gpui::prelude::*;
 use gpui::{
-    div, px, size, AnyElement, App, Context, Entity, Focusable as _, KeyBinding, Menu, MenuItem,
-    SharedString, Subscription, WeakEntity, Window,
+    anchored, deferred, div, point, px, size, AnyElement, App, Context, Entity, Focusable as _,
+    KeyBinding, Menu, MenuItem, MouseButton, MouseDownEvent, SharedString, Subscription,
+    WeakEntity, Window,
 };
 use serde_json::{json, Value};
 use terminal::Session;
@@ -115,6 +116,8 @@ pub struct WorkspaceView {
     menu_actions: Vec<Action>,
     /// When set, the focused pane fills the tab (Window > Zoom Split).
     zoomed: bool,
+    /// When true, the tab-overflow `…` dropdown is open.
+    tab_overflow: bool,
     /// Configured font size, restored by `reset_font_size`.
     base_font_size: gpui::Pixels,
     /// Config-file watcher; kept alive so live reload keeps working.
@@ -164,6 +167,7 @@ impl WorkspaceView {
             macros: loadmacros(),
             menu_actions: Vec::new(),
             zoomed: false,
+            tab_overflow: false,
             _watch: None,
         };
         this.applykeybinds(cx);
@@ -189,10 +193,12 @@ impl WorkspaceView {
         cx.clear_key_bindings();
         let mut bindings = Vec::new();
         for (i, kb) in self.keybinds.iter().enumerate() {
-            let Some(ks) = keys::keystroke(kb.mods, &kb.key) else {
+            let Some(ks) = keys::keystroke_seq(kb) else {
                 continue;
             };
-            if gpui::Keystroke::parse(&ks).is_err() {
+            // `ks` may be a space-joined chord; validate each stroke since
+            // `Keystroke::parse` only handles one at a time.
+            if ks.split(' ').any(|s| gpui::Keystroke::parse(s).is_err()) {
                 continue;
             }
             bindings.push(KeyBinding::new(&ks, RunBind(i), Some("Workspace")));
@@ -784,11 +790,136 @@ impl WorkspaceView {
     }
 
     pub fn activatetab(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
+        self.tab_overflow = false;
         if self.tabs.activate(index) {
             self.zoomed = false;
             self.focusactive(window, cx);
             cx.notify();
         }
+    }
+
+    /// Toggle the tab-overflow `…` dropdown.
+    pub fn toggle_tab_overflow(&mut self, cx: &mut Context<Self>) {
+        self.tab_overflow = !self.tab_overflow;
+        cx.notify();
+    }
+
+    /// How many tab slots fit inline before overflowing, from the window width.
+    /// Mirrors the titlebar's leading inset so the count matches what renders.
+    fn tab_max_visible(&self, window: &Window) -> usize {
+        let width = f32::from(window.viewport_size().width);
+        let lead = if cfg!(target_os = "macos") && !window.is_fullscreen() {
+            crate::titlebar::TRAFFIC_LIGHT_INSET
+        } else {
+            8.0
+        };
+        // Reserve room for the leading inset, the `…` and `+` buttons, and a
+        // minimum drag area to the right of the strip.
+        let reserve = lead + 34.0 + 34.0 + 80.0;
+        crate::tabbar::fit_count(width - reserve)
+    }
+
+    /// The dropdown listing tabs that didn't fit inline. Anchored under the top
+    /// edge near the trailing side of the tab strip; click selects, × closes.
+    fn tab_overflow_menu(
+        &self,
+        tabs: &[crate::tabbar::TabInfo],
+        overflow: &[usize],
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let fg = colors::rgba(self.colors.fg);
+        let bg = colors::rgba(self.colors.bg);
+        let sel = colors::rgba(self.colors.selection_bg);
+        let mut dim = fg;
+        dim.a = 0.6;
+
+        let menu_w = 260.0;
+        let width = f32::from(window.viewport_size().width);
+        let pos = point(px((width - menu_w - 8.0).max(8.0)), crate::titlebar::height(window));
+
+        let mut menu = div()
+            .id("taboverflow-menu")
+            .flex()
+            .flex_col()
+            .min_w(px(menu_w))
+            .max_h(px(420.0))
+            .overflow_y_scroll()
+            .p_1()
+            .rounded(px(8.0))
+            .border_1()
+            .border_color(sel)
+            .bg(bg)
+            .text_color(fg)
+            .shadow_lg();
+        for &index in overflow {
+            let title = tabs[index].title.clone();
+            menu = menu.child(
+                div()
+                    .id(("overflowtab", index))
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .px_2()
+                    .py(px(4.0))
+                    .rounded(px(5.0))
+                    .hover(|s| s.bg(sel))
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(move |this, _e: &MouseDownEvent, window, cx| {
+                            this.activatetab(index, window, cx);
+                            cx.stop_propagation();
+                        }),
+                    )
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w(px(0.0))
+                            .overflow_hidden()
+                            .whitespace_nowrap()
+                            .text_ellipsis()
+                            .child(SharedString::from(title)),
+                    )
+                    .child(
+                        div()
+                            .id(("overflowclose", index))
+                            .px(px(4.0))
+                            .rounded(px(4.0))
+                            .text_color(dim)
+                            .hover(|s| s.bg(sel).text_color(fg))
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(move |this, _e: &MouseDownEvent, window, cx| {
+                                    cx.stop_propagation();
+                                    this.closetab(index, window, cx);
+                                }),
+                            )
+                            .child("\u{00d7}"),
+                    ),
+            );
+        }
+
+        let dismiss = |this: &mut Self, _e: &MouseDownEvent, _w: &mut Window, cx: &mut Context<Self>| {
+            this.tab_overflow = false;
+            cx.stop_propagation();
+            cx.notify();
+        };
+        deferred(
+            div()
+                .absolute()
+                .top_0()
+                .left_0()
+                .size_full()
+                .on_mouse_down(MouseButton::Left, cx.listener(dismiss))
+                .on_mouse_down(MouseButton::Right, cx.listener(dismiss))
+                .child(
+                    anchored()
+                        .position(pos)
+                        .snap_to_window_with_margin(px(6.0))
+                        .child(menu),
+                ),
+        )
+        .into_any_element()
     }
 
     pub fn focuspane(&mut self, pane: PaneId, window: &mut Window, cx: &mut Context<Self>) {
@@ -1124,7 +1255,7 @@ impl WorkspaceView {
                     .keybinds
                     .iter()
                     .find(|k| k.action == action)
-                    .and_then(|k| keys::shortcut_glyphs(k.mods, &k.key));
+                    .and_then(keys::shortcut_glyphs_seq);
                 crate::palette::Item {
                     label: label.to_string(),
                     shortcut,
@@ -1248,7 +1379,7 @@ impl WorkspaceView {
                 let providers = crate::relay::enabled_agents(&self.opts);
                 let roles = crate::relay::role_list();
                 if let Some(handle) = window.window_handle().downcast::<WorkspaceView>() {
-                    crate::newagent::open(window, handle, providers, roles, cx);
+                    crate::newagent::open(window, handle, self.opts.clone(), providers, roles, cx);
                 }
             }
             Action::RelayLog => {
@@ -1271,7 +1402,7 @@ impl WorkspaceView {
             Action::OpenTeam(name) => self.open_team(&name, window, cx),
             Action::AgentDef(name) => {
                 crate::relay::ensure_running(&self.opts);
-                if let Some(cmd) = crate::relay::launch_saved_command(&name) {
+                if let Some(cmd) = crate::relay::launch_saved_command(&self.opts, &name) {
                     self.splitcommand(&cmd, Axis::Horizontal, false, window, cx);
                 }
             }
@@ -1923,15 +2054,25 @@ impl Render for WorkspaceView {
         // The custom titlebar replaces the native one and folds the tabs in,
         // so it is always present (the window opens with no native chrome).
         let tab_infos = self.tab_infos(cx);
+        let max_visible = self.tab_max_visible(window);
+        let (_, overflow) =
+            crate::tabbar::visible_split(tab_infos.len(), self.tabs.active_index(), max_visible);
         base = base.child(crate::titlebar::bar(
             &tab_infos,
             self.tabs.active_index(),
+            max_visible,
             &self.colors,
             &self.font,
             self.font_size,
             window,
             cx,
         ));
+        // The overflow `…` dropdown, when open and there is anything hidden.
+        if self.tab_overflow && !overflow.is_empty() {
+            base = base.child(self.tab_overflow_menu(&tab_infos, &overflow, window, cx));
+        } else if self.tab_overflow {
+            self.tab_overflow = false;
+        }
 
         // Zoom Split: when active with more than one pane, the focused pane
         // fills the area in place of the split layout.
@@ -2191,6 +2332,7 @@ fn resolvekeys(
             binds.push(Keybind {
                 mods: config::Mods::default(),
                 key: String::new(),
+                tail: Vec::new(),
                 action,
             });
         }

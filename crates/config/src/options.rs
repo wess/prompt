@@ -45,9 +45,15 @@ impl FontStyle {
 }
 
 /// How the macOS option key behaves, file key `macos-option-as-alt`.
+///
+/// `Auto` (the default) picks `True` or `False` per the active keyboard layout:
+/// on US / US-International / ABC layouts Option acts as Alt (so `option+b`
+/// sends `ESC b`), while layouts that rely on Option for everyday characters
+/// keep it as a character composer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum OptionAsAlt {
     #[default]
+    Auto,
     False,
     True,
     Left,
@@ -55,9 +61,10 @@ pub enum OptionAsAlt {
 }
 
 impl OptionAsAlt {
-    /// Parse from the config file value: booleans plus left/right.
+    /// Parse from the config file value: `auto`, booleans, plus left/right.
     pub fn parse(s: &str) -> Option<Self> {
         match s.to_ascii_lowercase().as_str() {
+            "auto" => Some(Self::Auto),
             "left" => Some(Self::Left),
             "right" => Some(Self::Right),
             other => match crate::value::parse_bool(other)? {
@@ -209,6 +216,17 @@ pub struct Options {
     pub agent_ollama: bool,
     /// File key: `agent-gemini` — Gemini available as an agent.
     pub agent_gemini: bool,
+    /// File key: `agent-claude-path` — explicit path to the `claude` binary
+    /// (overrides PATH lookup). Empty means search PATH.
+    pub agent_claude_path: Option<String>,
+    /// File key: `agent-codex-path` — explicit path to the `codex` binary.
+    pub agent_codex_path: Option<String>,
+    /// File key: `agent-gemini-path` — explicit path to the `gemini` binary.
+    pub agent_gemini_path: Option<String>,
+    /// File key: `agent-custom` (repeatable) — user-defined agent tools, each
+    /// `label|command template`, where the template may use `{prompt}`, `{mcp}`,
+    /// `{url}`, and `{name}` placeholders.
+    pub agent_custom: Vec<String>,
 }
 
 /// The built-in primary font when none is configured.
@@ -252,7 +270,7 @@ impl Default for Options {
             unfocused_split_opacity: 0.7,
             split_divider_color: None,
             mouse_scroll_multiplier: 1.0,
-            macos_option_as_alt: OptionAsAlt::False,
+            macos_option_as_alt: OptionAsAlt::Auto,
             window_inherit_working_directory: true,
             quit_after_last_window_closed: false,
             title: None,
@@ -286,6 +304,10 @@ impl Default for Options {
             agent_codex: false,
             agent_ollama: false,
             agent_gemini: false,
+            agent_claude_path: None,
+            agent_codex_path: None,
+            agent_gemini_path: None,
+            agent_custom: Vec::new(),
         }
     }
 }

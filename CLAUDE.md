@@ -63,6 +63,9 @@ The workspace is layered bottom-up; each crate depends only on those below it.
 - **`terminal`** — runtime glue: `Session::spawn` runs a child on a pty, feeds
   its bytes into a `vt::Terminal` on a reader thread, and emits `Event`s
   (wakeup, title, bell, exit) over a std channel.
+- **`cast`** — asciinema v2 `.cast` recording: a `Recorder` writes a header line
+  plus timestamped output events as bytes arrive (output only; UTF-8 split
+  across reads is carried over). Used by `terminal` for session capture.
 - **`workspace`** — pure pane-tree + tab model: recursive splits, ratios,
   focus, directional navigation. Generic over content via opaque `PaneId`s; the
   host maps ids to terminals.
@@ -83,6 +86,20 @@ The workspace is layered bottom-up; each crate depends only on those below it.
   suggestions, paste-risk safety checks). Optional `candle` feature (on by
   default) for the candle-core backend; code is gated with
   `#[cfg(feature = "candle")]` and has a non-candle fallback.
+- **`relay`** — the agent mesh, shipped as a standalone sidecar binary
+  (`relay`), **not** part of the terminal. Lets independent coding-agent
+  sessions (Claude Code, Codex, …) coordinate over a shared SQLite bus: agents
+  `register`, message each other / channels, and `wait` (a single blocking SSE
+  call) to park for free between tasks. Built on tokio + axum + sqlx; MCP
+  transport is Streamable HTTP so many sessions share one server. Submodules:
+  `protocol/` (wire types), `db/` (SQLite bus), `state/` (in-memory app +
+  wake signal), `bus.rs` (core park/deliver shared by both planes), `tools/`
+  (MCP tool impls), `mcp/` + `transport/` (MCP dispatch over HTTP), `control/`
+  (plain-HTTP control plane for the CLI and non-MCP bridges), `spawn/`
+  (background workers), and `cli/` (the `relay` subcommands). The app never runs
+  the mesh in-process — `app/src/relay.rs` starts/stops the bundled binary as a
+  detached daemon and launches agents into splits. Reads no env vars; every
+  parameter comes from settings, passed explicitly. See `docs/relay.md`.
 - **`app`** — the gpui application that wires everything together. Owns windows,
   rendering, splits, settings UI, the About panel, font handling, and the
   process-entry dispatch in `main.rs`. The window opens with a transparent
@@ -98,6 +115,8 @@ The `prompt` binary dispatches on argv before starting the GUI:
   terminal (used by Wayland compositor keybinds), then exits.
 - `prompt mcp` — runs the MCP stdio server (`mcpbridge`), bridging tool calls
   into a running GUI instance.
+- `prompt notify [--title T] <message>` — posts a desktop notification, for
+  agent hooks that can't emit an OSC 9/777/99 escape themselves.
 - otherwise — loads config and launches the gpui app.
 
 ### Single-instance IPC (`app/src/ipc.rs`)
@@ -112,6 +131,19 @@ bridge and quick-terminal summon reach the running terminal.
 `terminal::Session` emits events on a blocking std channel; `app/src/bridge.rs`
 forwards them into an async `futures` stream that a gpui foreground task polls.
 Keep the vt/terminal layers free of gpui types — the boundary is the bridge.
+
+## Working in this repo
+
+- In this project Claude has full authority to run git and everything else —
+  branching, committing, pushing, tagging, cutting releases, and any other
+  operation needed to move the work forward. The owner's usual "I handle git"
+  rule does not apply here; act directly.
+- Commit messages, PRs, and release notes must never mention Claude, Claude
+  Code, or Anthropic, and carry no AI/co-author trailer.
+- Releases ship straight from `main`: a workspace version bump committed and
+  pushed to `main` is the release (see the version convention below). Run the
+  full gate first — `cargo test`, `cargo clippy --all-targets`, and a release
+  build — before pushing a version bump.
 
 ## Conventions
 
@@ -133,3 +165,5 @@ Keep the vt/terminal layers free of gpui types — the boundary is the bridge.
 - `docs/parity.md` — terminal feature coverage and known gaps.
 - `docs/release.md` — signing, notarization, release cutting.
 - `docs/gpui.md` — the gpui/zed dependency recipe.
+- `docs/relay.md` — the agent mesh: roles, teams/tiles, the `relay` CLI, and the
+  MCP coordination tools.

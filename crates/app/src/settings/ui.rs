@@ -344,7 +344,7 @@ impl SettingsView {
 
     fn list_rows(&self, kind: ListKind, cx: &mut Context<Self>) -> Vec<AnyElement> {
         let width = match kind {
-            ListKind::Keybind => 420.0,
+            ListKind::Keybind | ListKind::AgentTool => 420.0,
             ListKind::Plugin => 380.0,
             _ => 320.0,
         };
@@ -445,6 +445,41 @@ impl SettingsView {
             .child(self.list(self.list_rows(kind, cx)))
     }
 
+    /// The Keybindings list plus a syntax hint and a Restore-defaults button.
+    fn keyboard_group(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let hint = div()
+            .px_1()
+            .pb_1()
+            .text_color(hsla(MUTED))
+            .child(SharedString::from(
+                "trigger=action, e.g. cmd+shift+t=new_tab. Chain keys with > for a chord \
+                 (ctrl+a>n=new_tab). Use =unbind to remove one.",
+            ));
+        let header = div()
+            .flex()
+            .items_center()
+            .justify_between()
+            .child(self.heading(ListKind::Keybind.label()))
+            .child(
+                button_box("\u{21ba}  Restore defaults")
+                    .px_3()
+                    .text_color(hsla(MUTED))
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|this, _ev, _window, cx| {
+                            this.reset_keybinds(cx);
+                            cx.stop_propagation();
+                        }),
+                    ),
+            );
+        div()
+            .flex()
+            .flex_col()
+            .child(header)
+            .child(hint)
+            .child(self.list(self.list_rows(ListKind::Keybind, cx)))
+    }
+
     // --- Sections ----------------------------------------------------------
 
     fn content(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -476,12 +511,13 @@ impl SettingsView {
                 self.list_group(ListKind::Palette, cx).into_any_element(),
             ],
             Section::Terminal => vec![self.list(self.terminal_rows(cx)).into_any_element()],
-            Section::Keyboard => vec![self.list_group(ListKind::Keybind, cx).into_any_element()],
+            Section::Keyboard => vec![self.keyboard_group(cx).into_any_element()],
             Section::Macros => vec![self.macros_group(cx).into_any_element()],
             Section::Plugins => vec![self.list_group(ListKind::Plugin, cx).into_any_element()],
             Section::Ai => vec![
                 self.list(self.ai_rows(cx)).into_any_element(),
                 self.tools_group(cx).into_any_element(),
+                self.list_group(ListKind::AgentTool, cx).into_any_element(),
             ],
         }
     }
@@ -622,17 +658,23 @@ impl SettingsView {
         self.row(dot, "Relay server", status).into_any_element()
     }
 
-    /// The "Agent tools" group: each known tool with a Test button + toggle.
+    /// The "Agent tools" group: each known tool with a Test button + toggle,
+    /// and an explicit-path field for the CLI tools (so a non-PATH install is
+    /// found). Ollama is reached over its API port, so it has no path.
     fn tools_group(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let accent = Section::Ai.accent();
         div()
             .flex()
             .flex_col()
             .child(self.heading("Agent tools"))
             .child(self.list(vec![
                 self.tool_row(Bool::ToolClaude, "claude", cx),
+                self.field_row(Field::ClaudePath, "\u{2026}", accent, cx),
                 self.tool_row(Bool::ToolCodex, "codex", cx),
+                self.field_row(Field::CodexPath, "\u{2026}", accent, cx),
                 self.tool_row(Bool::ToolOllama, "ollama", cx),
                 self.tool_row(Bool::ToolGemini, "gemini", cx),
+                self.field_row(Field::GeminiPath, "\u{2026}", accent, cx),
             ]))
     }
 

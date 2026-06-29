@@ -39,9 +39,10 @@ pub fn save_agent_def(def: AgentDef) {
 }
 
 /// Build the launch command for a previously-saved agent.
-pub fn launch_saved_command(name: &str) -> Option<String> {
+pub fn launch_saved_command(opts: &config::Options, name: &str) -> Option<String> {
     let def = list_agent_defs().into_iter().find(|d| d.name == name)?;
     Some(launch_agent_command(
+        opts,
         &def.provider,
         &def.name,
         def.role.as_deref(),
@@ -168,7 +169,8 @@ pub fn feed_command() -> String {
     format!("\"{}\" --home \"{}\" feed --follow", binary(), home_str())
 }
 
-/// Enabled agent providers, in display order.
+/// Enabled agent providers, in display order: built-ins that are toggled on,
+/// then user-defined custom tools (by label).
 pub fn enabled_agents(opts: &config::Options) -> Vec<String> {
     let mut v = Vec::new();
     if opts.agent_claude {
@@ -183,7 +185,76 @@ pub fn enabled_agents(opts: &config::Options) -> Vec<String> {
     if opts.agent_gemini {
         v.push("gemini".to_string());
     }
+    for (label, _) in custom_tools(opts) {
+        v.push(label);
+    }
     v
+}
+
+/// Parse the `agent-custom` entries into `(label, command template)` pairs.
+/// Each entry is `label|template`; malformed entries (no `|`, blank label or
+/// template) are skipped.
+pub fn custom_tools(opts: &config::Options) -> Vec<(String, String)> {
+    opts.agent_custom
+        .iter()
+        .filter_map(|e| {
+            let (label, tmpl) = e.split_once('|')?;
+            let (label, tmpl) = (label.trim(), tmpl.trim());
+            (!label.is_empty() && !tmpl.is_empty())
+                .then(|| (label.to_string(), tmpl.to_string()))
+        })
+        .collect()
+}
+
+/// How to launch a provider: a built-in `--agent` (with an optional explicit
+/// `--bin` path), or a custom `--cmd` template.
+struct Resolved {
+    agent: Option<String>,
+    bin: Option<String>,
+    custom: Option<String>,
+}
+
+/// Resolve a provider label to its launch shape using the configured paths and
+/// custom tools. Unknown labels fall back to `--agent <label>`.
+fn resolve_provider(opts: &config::Options, provider: &str) -> Resolved {
+    let bin = |p: &Option<String>| p.clone().filter(|s| !s.trim().is_empty());
+    match provider {
+        "claude" => Resolved {
+            agent: Some("claude".into()),
+            bin: bin(&opts.agent_claude_path),
+            custom: None,
+        },
+        "codex" => Resolved {
+            agent: Some("codex".into()),
+            bin: bin(&opts.agent_codex_path),
+            custom: None,
+        },
+        "gemini" => Resolved {
+            agent: Some("gemini".into()),
+            bin: bin(&opts.agent_gemini_path),
+            custom: None,
+        },
+        "ollama" => Resolved {
+            agent: Some("ollama".into()),
+            bin: None,
+            custom: None,
+        },
+        other => {
+            if let Some((_, tmpl)) = custom_tools(opts).into_iter().find(|(l, _)| l == other) {
+                Resolved {
+                    agent: None,
+                    bin: None,
+                    custom: Some(tmpl),
+                }
+            } else {
+                Resolved {
+                    agent: Some(other.to_string()),
+                    bin: None,
+                    custom: None,
+                }
+            }
+        }
+    }
 }
 
 /// Available role names (built-in + user + project), via the relay CLI.
@@ -205,17 +276,26 @@ pub fn role_list() -> Vec<String> {
 }
 
 /// Build a `relay launch` command for a specific provider/name/role-or-task.
+/// `opts` supplies any configured explicit binary path or custom command
+/// template for the provider.
 pub fn launch_agent_command(
+    opts: &config::Options,
     provider: &str,
     name: &str,
     role: Option<&str>,
     task: Option<&str>,
 ) -> String {
-    let mut s = format!(
-        "\"{}\" --home \"{}\" launch {name} --agent {provider}",
-        binary(),
-        home_str()
-    );
+    let r = resolve_provider(opts, provider);
+    let mut s = format!("\"{}\" --home \"{}\" launch {name}", binary(), home_str());
+    if let Some(agent) = &r.agent {
+        s.push_str(&format!(" --agent {agent}"));
+    }
+    if let Some(bin) = &r.bin {
+        s.push_str(&format!(" --bin \"{}\"", bin.replace('"', "\\\"")));
+    }
+    if let Some(tmpl) = &r.custom {
+        s.push_str(&format!(" --cmd \"{}\"", tmpl.replace('"', "\\\"")));
+    }
     if let Some(r) = role.filter(|r| !r.is_empty()) {
         s.push_str(&format!(" --role {r}"));
     }
@@ -296,22 +376,31 @@ pub fn log_command() -> String {
 }
 
 /// Probe whether a tool is reachable. CLIs are checked with `--version`; Ollama
-/// is probed on its API port. Returns a short detail on success or failure.
-pub fn test_tool(tool: &str) -> Result<String, String> {
+/// is probed on its API port. `path`, when set, is the configured explicit
+/// binary path to probe instead of looking the bare name up on PATH. Returns a
+/// short detail on success or failure.
+pub fn test_tool(tool: &str, path: Option<&str>) -> Result<String, String> {
     if tool == "ollama" {
         let addr: std::net::SocketAddr = "127.0.0.1:11434".parse().unwrap();
         return std::net::TcpStream::connect_timeout(&addr, std::time::Duration::from_millis(500))
             .map(|_| "Ollama reachable".to_string())
             .map_err(|_| "not running — start `ollama serve`".to_string());
     }
-    match std::process::Command::new(tool).arg("--version").output() {
+    let bin = path.map(str::trim).filter(|p| !p.is_empty()).unwrap_or(tool);
+    match std::process::Command::new(bin).arg("--version").output() {
         Ok(out) if out.status.success() => {
             let v = String::from_utf8_lossy(&out.stdout);
             let line = v.lines().next().unwrap_or("ok").trim();
             Ok(if line.is_empty() { "ok".into() } else { line.to_string() })
         }
-        Ok(_) => Err(format!("`{tool} --version` failed")),
-        Err(_) => Err(format!("`{tool}` not found on PATH")),
+        Ok(_) => Err(format!("`{bin} --version` failed")),
+        Err(_) => {
+            if path.is_some() {
+                Err(format!("`{bin}` not found — check the path"))
+            } else {
+                Err(format!("`{bin}` not found on PATH — set its path below"))
+            }
+        }
     }
 }
 

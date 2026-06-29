@@ -37,7 +37,7 @@ fn defaults() {
     assert_eq!(o.unfocused_split_opacity, 0.7);
     assert_eq!(o.split_divider_color, None);
     assert_eq!(o.mouse_scroll_multiplier, 1.0);
-    assert_eq!(o.macos_option_as_alt, OptionAsAlt::False);
+    assert_eq!(o.macos_option_as_alt, OptionAsAlt::Auto);
     assert!(o.window_inherit_working_directory);
     assert!(!o.quit_after_last_window_closed);
     assert_eq!(o.title, None);
@@ -57,6 +57,8 @@ fn font_style_parse() {
 
 #[test]
 fn option_as_alt_parse() {
+    assert_eq!(OptionAsAlt::parse("auto"), Some(OptionAsAlt::Auto));
+    assert_eq!(OptionAsAlt::parse("AUTO"), Some(OptionAsAlt::Auto));
     assert_eq!(OptionAsAlt::parse("false"), Some(OptionAsAlt::False));
     assert_eq!(OptionAsAlt::parse("true"), Some(OptionAsAlt::True));
     assert_eq!(OptionAsAlt::parse("no"), Some(OptionAsAlt::False));

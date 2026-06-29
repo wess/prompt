@@ -8,6 +8,17 @@ fn label_prefers_nonblank_title() {
     assert_eq!(label(None, "zsh"), "zsh");
 }
 
+#[test]
+fn layout_wants_alt_classifies_us_layouts() {
+    assert!(layout_wants_alt("com.apple.keylayout.US"));
+    assert!(layout_wants_alt("com.apple.keylayout.ABC"));
+    assert!(layout_wants_alt("com.apple.keylayout.USInternational-PC"));
+    // Layouts that rely on Option for everyday characters keep composing.
+    assert!(!layout_wants_alt("com.apple.keylayout.German"));
+    assert!(!layout_wants_alt("com.apple.keylayout.British"));
+    assert!(!layout_wants_alt("com.apple.inputmethod.Kotoeri.RomajiTyping.Japanese"));
+}
+
 const OPT: input::Mods = input::Mods {
     shift: false,
     alt: true,

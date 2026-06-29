@@ -2,7 +2,7 @@
 //! plus a new-tab control. Click activates a tab, the × closes it, + opens one.
 
 use gpui::prelude::*;
-use gpui::{div, px, ClickEvent, Context, SharedString};
+use gpui::{div, px, ClickEvent, Context, MouseButton, SharedString, WindowControlArea};
 use theme::Rgb;
 
 use crate::colors::{self, Colors};
@@ -25,11 +25,44 @@ pub struct TabInfo {
 /// Attention accent for a tab with a pending notification.
 const ATTENTION: Rgb = Rgb::new(255, 196, 0);
 
+/// Nominal per-tab width used to decide how many tabs fit before the strip
+/// overflows into the `…` dropdown.
+pub const TAB_BUDGET_PX: f32 = 130.0;
+
+/// How many tab slots fit in `avail` pixels (always at least one).
+pub fn fit_count(avail: f32) -> usize {
+    ((avail / TAB_BUDGET_PX).floor() as usize).max(1)
+}
+
+/// Split tab indices into `(visible, overflow)` given the max inline slots.
+/// The active tab is always kept visible; when everything fits, overflow is
+/// empty. One inline slot is reserved for the `…` button when overflowing.
+pub fn visible_split(n: usize, active: usize, max_visible: usize) -> (Vec<usize>, Vec<usize>) {
+    let max_visible = max_visible.max(1);
+    if n <= max_visible {
+        return ((0..n).collect(), Vec::new());
+    }
+    let show = max_visible.saturating_sub(1).max(1); // reserve a slot for `…`
+    let mut visible: Vec<usize> = (0..show).collect();
+    if !visible.contains(&active) {
+        // Keep the active tab reachable inline by taking the last visible slot.
+        if let Some(last) = visible.last_mut() {
+            *last = active;
+        }
+        visible.sort_unstable();
+    }
+    let overflow: Vec<usize> = (0..n).filter(|i| !visible.contains(i)).collect();
+    (visible, overflow)
+}
+
 /// The inline row of tabs. The active tab keeps the terminal background;
-/// inactive tabs are dimmed and brighten on hover. A trailing + opens a new tab.
+/// inactive tabs are dimmed and brighten on hover. When more tabs exist than
+/// `max_visible` slots, the overflow folds into a trailing `…` button (which
+/// opens a dropdown); a final + opens a new tab.
 pub fn tabs(
     tabs: &[TabInfo],
     active: usize,
+    max_visible: usize,
     colors: &Colors,
     font: &gpui::Font,
     font_size: gpui::Pixels,
@@ -43,14 +76,20 @@ pub fn tabs(
     let mut hover = fg;
     hover.a = 0.10;
 
-    div()
+    let (visible, overflow) = visible_split(tabs.len(), active, max_visible);
+
+    let mut row = div()
+        // Fill the whole strip so the tabs stretch and the trailing controls
+        // sit at the right edge instead of wherever the tab text happens to end.
+        .flex_1()
         .flex()
         .flex_row()
         .items_center()
         .h_full()
         .font_family(font.family.clone())
         .text_size(font_size * 0.85)
-        .children(tabs.iter().enumerate().map(|(index, info)| {
+        .children(visible.into_iter().map(|index| {
+            let info = &tabs[index];
             let isactive = index == active;
             div()
                 .id(("tab", index))
@@ -59,6 +98,13 @@ pub fn tabs(
                 .items_center()
                 .gap(px(6.0))
                 .h_full()
+                // Grow to share the strip width evenly, capped so a lone tab
+                // doesn't span the entire bar. A high grow weight (vs the
+                // drag filler's 1) means the tabs claim space first: when they
+                // overflow they fill the strip and the `…`/`+` sit flush right;
+                // only once every tab hits its max width does the filler take
+                // the slack.
+                .flex_grow(100.0)
                 .min_w(px(100.0))
                 .max_w(px(240.0))
                 .px(px(10.0))
@@ -114,22 +160,74 @@ pub fn tabs(
                         }))
                         .child("\u{00d7}"),
                 )
-        }))
-        .child(
+        }));
+
+    // The overflow `…` button: a count of hidden tabs, opening the dropdown.
+    if !overflow.is_empty() {
+        let n = overflow.len();
+        row = row.child(
             div()
-                .id("newtab")
+                .id("taboverflow")
                 .flex()
                 .items_center()
                 .justify_center()
-                .w(px(34.0))
+                .gap(px(3.0))
+                .px(px(10.0))
                 .h_full()
                 .text_color(dim)
                 .hover(|s| s.bg(hover).text_color(fg))
-                .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
-                    this.newtab(window, cx);
+                .on_click(cx.listener(|this, _: &ClickEvent, _window, cx| {
+                    this.toggle_tab_overflow(cx);
                 }))
-                .child(SharedString::from("+")),
-        )
+                .child(SharedString::from("\u{2026}"))
+                .child(SharedString::from(n.to_string())),
+        );
+    }
+
+    row = row.child(
+        div()
+            .id("newtab")
+            .flex()
+            .items_center()
+            .justify_center()
+            .w(px(34.0))
+            .h_full()
+            .text_color(dim)
+            .hover(|s| s.bg(hover).text_color(fg))
+            .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
+                this.newtab(window, cx);
+            }))
+            .child(SharedString::from("+")),
+    );
+
+    // The leftover space to the right of the controls is the window drag
+    // handle. It lives in this same flex row (not a sibling container) so the
+    // tabs above can stretch first; it only claims space once the tabs hit
+    // their max width. gpui ignores `window_control_area(Drag)` on macOS, so
+    // the move is started explicitly on mouse-down (as on Linux).
+    let mut filler = div()
+        .id("titlebar-drag")
+        .flex_1()
+        .h_full()
+        .window_control_area(WindowControlArea::Drag)
+        .on_mouse_down(MouseButton::Left, |_, window, _| window.start_window_move());
+    #[cfg(target_os = "macos")]
+    {
+        filler = filler.on_click(|ev, window, _| {
+            if ev.click_count() == 2 {
+                window.titlebar_double_click();
+            }
+        });
+    }
+    #[cfg(target_os = "linux")]
+    {
+        filler = filler.on_click(|ev, window, _| {
+            if ev.click_count() == 2 {
+                window.zoom_window();
+            }
+        });
+    }
+    row.child(filler)
 }
 
 #[cfg(test)]

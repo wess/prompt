@@ -18,15 +18,40 @@ pub struct Mods {
 pub struct Keybind {
     pub mods: Mods,
     /// Normalized key: a single character (lowercase) or a named key
-    /// such as `enter` or `page_up`.
+    /// such as `enter` or `page_up`. This is the leader of the sequence.
     pub key: String,
+    /// Extra triggers for a multi-key chord (e.g. `ctrl+a>n`). Empty for a
+    /// plain single-stroke binding; the leader is [`Self::mods`]/[`Self::key`].
+    pub tail: Vec<(Mods, String)>,
     pub action: Action,
 }
 
 impl Keybind {
-    /// The trigger as a config string, e.g. `cmd+shift+t`.
+    /// The trigger as a config string, e.g. `cmd+shift+t` or `ctrl+a>n`.
     pub fn trigger(&self) -> String {
-        format_trigger(self.mods, &self.key)
+        let mut s = format_trigger(self.mods, &self.key);
+        for (m, k) in &self.tail {
+            s.push('>');
+            s.push_str(&format_trigger(*m, k));
+        }
+        s
+    }
+
+    /// All triggers in order, leader first. One entry for a plain binding.
+    pub fn sequence(&self) -> Vec<(Mods, String)> {
+        let mut v = vec![(self.mods, self.key.clone())];
+        v.extend(self.tail.iter().cloned());
+        v
+    }
+
+    /// Whether this is a multi-key chord rather than a single stroke.
+    pub fn is_chord(&self) -> bool {
+        !self.tail.is_empty()
+    }
+
+    /// True when this binding's trigger sequence matches `other`'s.
+    fn same_trigger(&self, other: &Keybind) -> bool {
+        self.mods == other.mods && self.key == other.key && self.tail == other.tail
     }
 
     /// The full `trigger=action` config value for this binding.
@@ -93,29 +118,39 @@ pub fn diff_from_defaults(desired: &[Keybind]) -> Vec<String> {
     for kb in desired {
         let default_action = defaults
             .iter()
-            .find(|d| d.mods == kb.mods && d.key == kb.key)
+            .find(|d| d.same_trigger(kb))
             .map(|d| &d.action);
         if default_action != Some(&kb.action) {
             out.push(kb.config_line());
         }
     }
     for d in &defaults {
-        let kept = desired.iter().any(|kb| kb.mods == d.mods && kb.key == d.key);
+        let kept = desired.iter().any(|kb| kb.same_trigger(d));
         if !kept {
-            out.push(format!("{}=unbind", format_trigger(d.mods, &d.key)));
+            out.push(format!("{}=unbind", d.trigger()));
         }
     }
     out
 }
 
-/// Parse one keybind value, e.g. `ctrl+shift+c=copy_to_clipboard`.
+/// Parse one keybind value, e.g. `ctrl+shift+c=copy_to_clipboard`, or a
+/// multi-key chord like `ctrl+a>n=new_tab`. Triggers are separated by `>`.
 pub fn parse_keybind(s: &str) -> Result<Keybind, String> {
     let (trigger, action) = s
         .split_once('=')
         .ok_or_else(|| "expected `trigger=action`".to_string())?;
-    let (mods, key) = parse_trigger(trigger.trim())?;
+    let mut triggers = Vec::new();
+    for part in trigger.split('>') {
+        triggers.push(parse_trigger(part.trim())?);
+    }
+    let (mods, key) = triggers.remove(0);
     let action = Action::parse(action.trim())?;
-    Ok(Keybind { mods, key, action })
+    Ok(Keybind {
+        mods,
+        key,
+        tail: triggers,
+        action,
+    })
 }
 
 /// Parse a trigger like `cmd+shift+page_up` into modifiers plus a key.
@@ -240,6 +275,7 @@ pub fn default_keybinds() -> Vec<Keybind> {
     let kb = |mods: Mods, key: &str, action: Action| Keybind {
         mods,
         key: key.to_string(),
+        tail: Vec::new(),
         action,
     };
     let mut binds = vec![
@@ -324,7 +360,7 @@ pub fn resolve(raw: &[String]) -> (Vec<Keybind>, Vec<Diagnostic>) {
     for entry in raw {
         match parse_keybind(entry) {
             Ok(kb) => {
-                binds.retain(|b| !(b.mods == kb.mods && b.key == kb.key));
+                binds.retain(|b| !b.same_trigger(&kb));
                 if kb.action != Action::Unbound {
                     binds.push(kb);
                 }

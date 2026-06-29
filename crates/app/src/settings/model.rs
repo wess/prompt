@@ -352,12 +352,13 @@ impl Choice {
             }
             Choice::OptionAsAlt => {
                 let cur = match o.macos_option_as_alt {
-                    config::OptionAsAlt::False => 0,
-                    config::OptionAsAlt::True => 1,
-                    config::OptionAsAlt::Left => 2,
-                    config::OptionAsAlt::Right => 3,
+                    config::OptionAsAlt::Auto => 0,
+                    config::OptionAsAlt::False => 1,
+                    config::OptionAsAlt::True => 2,
+                    config::OptionAsAlt::Left => 3,
+                    config::OptionAsAlt::Right => 4,
                 };
-                (strs(&["false", "true", "left", "right"]), cur)
+                (strs(&["auto", "false", "true", "left", "right"]), cur)
             }
             Choice::ClipboardRead => (strs(&["allow", "ask", "deny"]), clip(o.clipboard_read)),
             Choice::ClipboardWrite => (strs(&["allow", "ask", "deny"]), clip(o.clipboard_write)),
@@ -409,6 +410,9 @@ pub enum Field {
     SplitDivider,
     RelayAddress,
     RelayDefaultAgent,
+    ClaudePath,
+    CodexPath,
+    GeminiPath,
 }
 
 impl Field {
@@ -426,6 +430,9 @@ impl Field {
             Field::SplitDivider => "split-divider-color",
             Field::RelayAddress => "relay-address",
             Field::RelayDefaultAgent => "relay-default-agent",
+            Field::ClaudePath => "agent-claude-path",
+            Field::CodexPath => "agent-codex-path",
+            Field::GeminiPath => "agent-gemini-path",
         }
     }
 
@@ -443,6 +450,9 @@ impl Field {
             Field::SplitDivider => "Split divider color",
             Field::RelayAddress => "Relay address",
             Field::RelayDefaultAgent => "Default agent",
+            Field::ClaudePath => "Claude path",
+            Field::CodexPath => "Codex path",
+            Field::GeminiPath => "Gemini path",
         }
     }
 
@@ -453,6 +463,9 @@ impl Field {
             Field::Title => "Default",
             Field::RelayAddress => "127.0.0.1:7777",
             Field::RelayDefaultAgent => "claude",
+            Field::ClaudePath => "Search PATH (e.g. /usr/local/bin/claude)",
+            Field::CodexPath => "Search PATH",
+            Field::GeminiPath => "Search PATH",
             Field::Foreground
             | Field::Background
             | Field::CursorColor
@@ -481,6 +494,9 @@ impl Field {
             Field::SelectionForeground => &o.selection_foreground,
             Field::SelectionBackground => &o.selection_background,
             Field::SplitDivider => &o.split_divider_color,
+            Field::ClaudePath => &o.agent_claude_path,
+            Field::CodexPath => &o.agent_codex_path,
+            Field::GeminiPath => &o.agent_gemini_path,
             Field::RelayAddress | Field::RelayDefaultAgent => unreachable!(),
         };
         opt.clone().unwrap_or_default()
@@ -495,6 +511,7 @@ pub enum ListKind {
     Palette,
     Plugin,
     Keybind,
+    AgentTool,
 }
 
 impl ListKind {
@@ -505,6 +522,7 @@ impl ListKind {
             ListKind::Palette => "Color palette",
             ListKind::Plugin => "Plugin directories",
             ListKind::Keybind => "Keybindings",
+            ListKind::AgentTool => "Custom tools",
         }
     }
 
@@ -515,6 +533,7 @@ impl ListKind {
             ListKind::Palette => "Add color",
             ListKind::Plugin => "Add plugin",
             ListKind::Keybind => "Add binding",
+            ListKind::AgentTool => "Add tool",
         }
     }
 
@@ -525,6 +544,7 @@ impl ListKind {
             ListKind::Palette => "0=#1d1f21",
             ListKind::Plugin => "~/.config/prompt/plugins/name",
             ListKind::Keybind => "cmd+shift+t=new_tab",
+            ListKind::AgentTool => "mytool|/path/to/bin {prompt} --mcp {mcp}",
         }
     }
 
@@ -543,6 +563,7 @@ impl ListKind {
                 let (binds, _) = config::resolve(&o.keybind);
                 binds.iter().map(|kb| kb.config_line()).collect()
             }
+            ListKind::AgentTool => o.agent_custom.clone(),
         }
     }
 
@@ -562,6 +583,7 @@ impl ListKind {
                     .collect();
                 ("keybind", config::diff_from_defaults(&desired))
             }
+            ListKind::AgentTool => ("agent-custom", clean(entries)),
         }
     }
 }

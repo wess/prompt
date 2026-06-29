@@ -43,7 +43,7 @@ pub async fn launch(a: LaunchArgs) -> Result<()> {
     let mcp = paths::write_mcp_config(&endpoint, &name)?;
     let prompt = agent::harness_prompt(&name, &a.role, &brief, &channels, a.task.as_deref(), interactive);
 
-    let built = agent::build(&agent::Spec {
+    let mut built = agent::build(&agent::Spec {
         agent: &agent_name,
         custom: a.cmd.as_deref(),
         name: &name,
@@ -56,6 +56,15 @@ pub async fn launch(a: LaunchArgs) -> Result<()> {
         channels: &channels,
         skip_perms: a.background,
     })?;
+
+    // An explicit --bin overrides the resolved program for built-in agents
+    // (not for --cmd templates, which carry their own program, nor the ollama
+    // bridge, which runs this relay executable).
+    if let Some(bin) = a.bin.as_deref().map(str::trim).filter(|b| !b.is_empty()) {
+        if a.cmd.is_none() && agent_name != "ollama" {
+            built.program = bin.to_string();
+        }
+    }
 
     if a.background {
         let body = serde_json::json!({

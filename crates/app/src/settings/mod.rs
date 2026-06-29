@@ -100,8 +100,11 @@ impl SettingsView {
         self.tool_tests.insert(tool, ToolTest::Testing);
         cx.notify();
         let executor = cx.background_executor().clone();
+        let path = tool_path(&self.opts, tool);
         cx.spawn(async move |this, cx| {
-            let result = executor.spawn(async move { crate::relay::test_tool(tool) }).await;
+            let result = executor
+                .spawn(async move { crate::relay::test_tool(tool, path.as_deref()) })
+                .await;
             let _ = this.update(cx, |view, cx| {
                 let state = match result {
                     Ok(m) => ToolTest::Ok(m),
@@ -176,8 +179,15 @@ impl SettingsView {
         };
         let action = config::Action::MacroReplay(name.to_string());
         let (mut binds, _) = config::resolve(&self.opts.keybind);
-        binds.retain(|kb| !((kb.mods == mods && kb.key == key) || kb.action == action));
-        binds.push(config::Keybind { mods, key, action });
+        binds.retain(|kb| {
+            !((kb.mods == mods && kb.key == key && kb.tail.is_empty()) || kb.action == action)
+        });
+        binds.push(config::Keybind {
+            mods,
+            key,
+            tail: Vec::new(),
+            action,
+        });
         write_list("keybind", &config::diff_from_defaults(&binds));
         self.reload();
         cx.notify();
@@ -321,6 +331,15 @@ impl SettingsView {
         write_list(key, &values);
     }
 
+    /// Drop every user keybind override, restoring the built-in defaults.
+    fn reset_keybinds(&mut self, cx: &mut Context<Self>) {
+        self.editing = None;
+        self.capturing = false;
+        write_list("keybind", &[]);
+        self.reload();
+        cx.notify();
+    }
+
     fn key_down(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         let ks = &event.keystroke;
         // While armed, every chord (even cmd+w) is captured as the trigger;
@@ -409,6 +428,17 @@ fn capture_trigger(ks: &gpui::Keystroke) -> Option<String> {
         shift: m.shift,
     };
     Some(config::format_trigger(mods, &key))
+}
+
+/// The configured explicit path for a built-in tool, if any.
+fn tool_path(opts: &config::Options, tool: &str) -> Option<String> {
+    let p = match tool {
+        "claude" => &opts.agent_claude_path,
+        "codex" => &opts.agent_codex_path,
+        "gemini" => &opts.agent_gemini_path,
+        _ => &None,
+    };
+    p.clone().filter(|s| !s.trim().is_empty())
 }
 
 /// Write a single `key = value` line to the config file in place.

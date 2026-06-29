@@ -24,6 +24,7 @@ enum Active {
 
 pub struct NewAgentView {
     workspace: WindowHandle<WorkspaceView>,
+    opts: config::Options,
     providers: Vec<String>,
     provider: usize,
     name: TextEdit,
@@ -38,6 +39,7 @@ pub struct NewAgentView {
 pub fn open(
     parent: &Window,
     workspace: WindowHandle<WorkspaceView>,
+    opts: config::Options,
     providers: Vec<String>,
     roles: Vec<String>,
     cx: &mut App,
@@ -60,7 +62,7 @@ pub fn open(
         },
         move |window, cx| {
             window.set_window_title("New Agent");
-            let view = cx.new(|cx| NewAgentView::new(workspace, providers, roles, cx));
+            let view = cx.new(|cx| NewAgentView::new(workspace, opts, providers, roles, cx));
             let handle = view.read(cx).focus.clone();
             window.focus(&handle, cx);
             view
@@ -71,6 +73,7 @@ pub fn open(
 impl NewAgentView {
     fn new(
         workspace: WindowHandle<WorkspaceView>,
+        opts: config::Options,
         providers: Vec<String>,
         roles: Vec<String>,
         cx: &mut Context<Self>,
@@ -78,6 +81,7 @@ impl NewAgentView {
         let custom = roles.is_empty();
         Self {
             workspace,
+            opts,
             providers,
             provider: 0,
             name: TextEdit::new(""),
@@ -108,7 +112,13 @@ impl NewAgentView {
             role: role.clone(),
             task: task.clone(),
         });
-        let cmd = crate::relay::launch_agent_command(&provider, &name, role.as_deref(), task.as_deref());
+        let cmd = crate::relay::launch_agent_command(
+            &self.opts,
+            &provider,
+            &name,
+            role.as_deref(),
+            task.as_deref(),
+        );
         self.workspace
             .update(cx, |ws, window, cx| ws.create_agent(&cmd, window, cx))
             .ok();

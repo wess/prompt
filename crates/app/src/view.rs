@@ -181,7 +181,9 @@ fn option_policy<'k>(
     match policy {
         // Option composes (´, ∫, …): don't treat it as Alt. Drop the modifier
         // so arrows stay plain (`ESC[D`) and emit the glyph macOS produced.
-        config::OptionAsAlt::False => {
+        // `Auto` is resolved to True/False before reaching here; treat it as
+        // compose if it ever slips through.
+        config::OptionAsAlt::False | config::OptionAsAlt::Auto => {
             mods.alt = false;
             (mods, key_char)
         }
@@ -190,6 +192,34 @@ fn option_policy<'k>(
         // text and encode from `key` directly.
         _ => (mods, single_char(key)),
     }
+}
+
+/// Resolve `macos-option-as-alt = auto` to a concrete True/False using the
+/// active keyboard layout. US-style ASCII layouts want Option to act as Alt
+/// (so `option+b` sends `ESC b`); other layouts keep it as a composer.
+fn resolve_auto(policy: config::OptionAsAlt) -> config::OptionAsAlt {
+    if policy != config::OptionAsAlt::Auto {
+        return policy;
+    }
+    let wants = crate::appkit::keyboard_layout_id()
+        .as_deref()
+        .map(layout_wants_alt)
+        .unwrap_or(false);
+    if wants {
+        config::OptionAsAlt::True
+    } else {
+        config::OptionAsAlt::False
+    }
+}
+
+/// Whether a keyboard layout id (e.g. `com.apple.keylayout.US`) is one where
+/// Option should default to Alt. Pure so it can be tested off the macOS path.
+fn layout_wants_alt(id: &str) -> bool {
+    let layout = id.rsplit('.').next().unwrap_or(id);
+    matches!(
+        layout,
+        "US" | "ABC" | "USExtended" | "US-PC" | "USInternational-PC"
+    )
 }
 
 impl TerminalView {
@@ -717,6 +747,25 @@ impl TerminalView {
         cx.notify();
     }
 
+    /// Capture phase: intercept Tab / Shift+Tab before gpui's built-in focus
+    /// traversal consumes them, so they reach the shell (zsh completion, etc.).
+    /// Every other key is left to the normal bubble-phase [`Self::key_down`]
+    /// so keybinding precedence is unchanged. Overlays and read-only panes are
+    /// deferred to the bubble handler, which already routes those cases.
+    fn capture_key(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
+        if event.keystroke.key != "tab" {
+            return;
+        }
+        if self.context_menu.is_some()
+            || self.search.is_some()
+            || self.assist.is_some()
+            || self.read_only
+        {
+            return;
+        }
+        self.key_down(event, window, cx);
+    }
+
     fn key_down(&mut self, event: &KeyDownEvent, _window: &mut Window, cx: &mut Context<Self>) {
         let keystroke = &event.keystroke;
         let mods = input::Mods {
@@ -794,7 +843,7 @@ impl TerminalView {
     ) -> (input::Mods, Option<&'k str>) {
         let option_held = keystroke.modifiers.alt && !keystroke.modifiers.platform;
         option_policy(
-            self.option_as_alt,
+            resolve_auto(self.option_as_alt),
             cfg!(target_os = "macos"),
             option_held,
             &keystroke.key,
@@ -1359,6 +1408,7 @@ impl Render for TerminalView {
             .bg(colors::rgba(self.colors.bg))
             .key_context("Terminal")
             .track_focus(&self.focus)
+            .capture_key_down(cx.listener(Self::capture_key))
             .on_key_down(cx.listener(Self::key_down))
             .on_mouse_down(MouseButton::Right, cx.listener(Self::right_down))
             .child(TerminalElement::new(

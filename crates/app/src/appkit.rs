@@ -27,6 +27,13 @@ pub fn is_visible(window: &Window) -> bool {
     imp::is_visible(window)
 }
 
+/// The active keyboard layout's input-source id (e.g.
+/// `com.apple.keylayout.US`), or `None` off macOS or when it can't be read.
+/// Used to auto-decide `macos-option-as-alt`.
+pub fn keyboard_layout_id() -> Option<String> {
+    imp::keyboard_layout_id()
+}
+
 #[cfg(target_os = "macos")]
 mod imp {
     use gpui::Window;
@@ -72,6 +79,60 @@ mod imp {
         visible
     }
 
+    use std::ffi::{c_char, c_void, CStr};
+
+    type CFTypeRef = *const c_void;
+    type CFStringRef = *const c_void;
+    const UTF8: u32 = 0x0800_0100; // kCFStringEncodingUTF8
+
+    // SAFETY: standard system framework symbols. `TISCopy*` returns a +1
+    // reference we release; `TISGetInputSourceProperty` returns a borrowed
+    // value we must not release.
+    #[allow(non_upper_case_globals)]
+    unsafe extern "C" {
+        fn TISCopyCurrentKeyboardInputSource() -> CFTypeRef;
+        fn TISGetInputSourceProperty(source: CFTypeRef, key: CFStringRef) -> *mut c_void;
+        static kTISPropertyInputSourceID: CFStringRef;
+        fn CFStringGetCStringPtr(s: CFStringRef, encoding: u32) -> *const c_char;
+        fn CFStringGetCString(s: CFStringRef, buf: *mut c_char, size: isize, encoding: u32) -> u8;
+        fn CFStringGetLength(s: CFStringRef) -> isize;
+        fn CFRelease(cf: CFTypeRef);
+    }
+
+    pub fn keyboard_layout_id() -> Option<String> {
+        unsafe {
+            let src = TISCopyCurrentKeyboardInputSource();
+            if src.is_null() {
+                return None;
+            }
+            let id = TISGetInputSourceProperty(src, kTISPropertyInputSourceID) as CFStringRef;
+            let out = if id.is_null() {
+                None
+            } else {
+                cfstring_to_string(id)
+            };
+            CFRelease(src);
+            out
+        }
+    }
+
+    /// Copy a `CFStringRef` into an owned `String`.
+    unsafe fn cfstring_to_string(s: CFStringRef) -> Option<String> {
+        // Fast path: a direct UTF-8 pointer when CoreFoundation has one.
+        let ptr = CFStringGetCStringPtr(s, UTF8);
+        if !ptr.is_null() {
+            return CStr::from_ptr(ptr).to_str().ok().map(str::to_owned);
+        }
+        // Fallback: render into a temporary buffer (up to 4 bytes/char + NUL).
+        let cap = (CFStringGetLength(s) * 4 + 1).max(16);
+        let mut buf = vec![0 as c_char; cap as usize];
+        if CFStringGetCString(s, buf.as_mut_ptr(), cap, UTF8) != 0 {
+            CStr::from_ptr(buf.as_ptr()).to_str().ok().map(str::to_owned)
+        } else {
+            None
+        }
+    }
+
     /// Run `f` with the window's `NSWindow`, if its native handle is live.
     /// Must be called on the main thread (gpui guarantees this for the
     /// `handle.update`/render closures we call it from).
@@ -102,5 +163,8 @@ mod imp {
     pub fn hide(_window: &Window) {}
     pub fn is_visible(_window: &Window) -> bool {
         true
+    }
+    pub fn keyboard_layout_id() -> Option<String> {
+        None
     }
 }

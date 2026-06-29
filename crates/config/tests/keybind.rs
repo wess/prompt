@@ -120,6 +120,35 @@ fn parse_keybind_full() {
 }
 
 #[test]
+fn parse_chord_sequence() {
+    let kb = parse_keybind("ctrl+a>n=new_tab").unwrap();
+    assert_eq!(kb.mods, mods(true, false, false, false));
+    assert_eq!(kb.key, "a");
+    assert!(kb.is_chord());
+    assert_eq!(kb.tail, vec![(mods(false, false, false, false), "n".to_string())]);
+    assert_eq!(kb.action, Action::NewTab);
+    // Round-trips through the trigger formatter.
+    assert_eq!(kb.trigger(), "ctrl+a>n");
+
+    // Three-stroke chord with modifiers on a later stroke.
+    let kb = parse_keybind("ctrl+a>cmd+b>c=new_window").unwrap();
+    assert_eq!(kb.sequence().len(), 3);
+    assert_eq!(kb.trigger(), "ctrl+a>cmd+b>c");
+}
+
+#[test]
+fn chord_dedup_is_by_full_sequence() {
+    // A plain `ctrl+a` and the chord `ctrl+a>n` are distinct triggers.
+    let (binds, diags) = resolve(&[
+        "ctrl+a=new_window".to_string(),
+        "ctrl+a>n=new_tab".to_string(),
+    ]);
+    assert!(diags.is_empty());
+    assert!(binds.iter().any(|b| b.trigger() == "ctrl+a" && b.action == Action::NewWindow));
+    assert!(binds.iter().any(|b| b.trigger() == "ctrl+a>n" && b.action == Action::NewTab));
+}
+
+#[test]
 fn parse_keybind_errors() {
     assert!(parse_keybind("no equals here").is_err());
     assert!(parse_keybind("cmd+t=do_a_flip").is_err());
@@ -291,6 +320,7 @@ fn diff_round_trips_through_resolve() {
     desired.push(Keybind {
         mods: mods(true, true, false, false),
         key: "page_up".into(),
+        tail: Vec::new(),
         action: Action::ScrollPageUp,
     }); // add new
 

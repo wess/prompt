@@ -156,7 +156,7 @@ pub fn apply(opts: &mut Options, key: &str, val: &str) -> Result<(), String> {
             opts.macos_option_as_alt = if empty {
                 d.macos_option_as_alt
             } else {
-                OptionAsAlt::parse(val).ok_or_else(|| bad("false|true|left|right", val))?
+                OptionAsAlt::parse(val).ok_or_else(|| bad("auto|false|true|left|right", val))?
             };
         }
         "window-inherit-working-directory" => {
@@ -390,6 +390,22 @@ pub fn apply(opts: &mut Options, key: &str, val: &str) -> Result<(), String> {
             } else {
                 value::parse_bool(val).ok_or_else(|| bad("boolean", val))?
             };
+        }
+        "agent-claude-path" => {
+            opts.agent_claude_path = if empty { None } else { Some(val.to_string()) };
+        }
+        "agent-codex-path" => {
+            opts.agent_codex_path = if empty { None } else { Some(val.to_string()) };
+        }
+        "agent-gemini-path" => {
+            opts.agent_gemini_path = if empty { None } else { Some(val.to_string()) };
+        }
+        "agent-custom" => {
+            if empty {
+                opts.agent_custom = d.agent_custom.clone();
+            } else {
+                opts.agent_custom.push(val.to_string());
+            }
         }
         _ => return Err(format!("unknown key `{key}`")),
     }
