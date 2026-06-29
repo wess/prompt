@@ -7,7 +7,7 @@
 // (Prompt spawns the plugin fresh per event) reads the current design.
 
 import { homedir } from "node:os";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 type Block =
@@ -51,6 +51,19 @@ const designPath = join(dir, "design.json");
 const promptPath = join(dir, "prompt.sh");
 const BEGIN = "# >>> prompt-designer >>>";
 const END = "# <<< prompt-designer <<<";
+
+// Escape regex metacharacters so the markers can change without breaking match.
+const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+const APPLY_RE = new RegExp(`${esc(BEGIN)}[\\s\\S]*?${esc(END)}`, "g");
+const REMOVE_RE = new RegExp(`\\n*${esc(BEGIN)}[\\s\\S]*?${esc(END)}\\n*`, "g");
+
+// Write via a temp file + rename so an interrupted write can't truncate or
+// corrupt the target (important for the user's shell rc).
+function writeAtomic(path: string, data: string) {
+  const tmp = `${path}.pd-${process.pid}.tmp`;
+  writeFileSync(tmp, data);
+  renameSync(tmp, path);
+}
 
 function load(): Design {
   try {
@@ -133,7 +146,7 @@ function snippet(d: Design, shell: "zsh" | "bash"): string {
 function applyToShell(d: Design): string {
   const shell = shellName();
   mkdirSync(dir, { recursive: true });
-  writeFileSync(promptPath, snippet(d, shell));
+  writeAtomic(promptPath, snippet(d, shell));
 
   const rc = rcPath(shell);
   let body = "";
@@ -144,11 +157,11 @@ function applyToShell(d: Design): string {
   }
   const block = `${BEGIN}\n[ -f "${promptPath}" ] && source "${promptPath}"\n${END}`;
   if (body.includes(BEGIN)) {
-    body = body.replace(new RegExp(`${BEGIN}[\\s\\S]*?${END}`), block);
+    body = body.replace(APPLY_RE, block);
   } else {
     body = body.replace(/\s*$/, "") + `\n\n${block}\n`;
   }
-  writeFileSync(rc, body);
+  writeAtomic(rc, body);
   return rc;
 }
 
@@ -156,8 +169,7 @@ function removeFromShell(): string {
   const rc = rcPath(shellName());
   try {
     const body = readFileSync(rc, "utf8");
-    const stripped = body.replace(new RegExp(`\\n*${BEGIN}[\\s\\S]*?${END}\\n*`), "\n");
-    writeFileSync(rc, stripped);
+    writeAtomic(rc, body.replace(REMOVE_RE, "\n"));
   } catch {
     /* nothing to remove */
   }
@@ -223,12 +235,14 @@ function action(name: string, d: Design): Response {
     return render(d);
   }
   if (name.startsWith("symbol:")) {
-    d.symbol = name.slice(7);
+    const s = name.slice(7);
+    if (SYMBOLS.includes(s)) d.symbol = s; // allowlist: never interpolate arbitrary text into the shell snippet
     save(d);
     return render(d);
   }
   if (name.startsWith("color:")) {
-    d.color = name.slice(6);
+    const c = name.slice(6);
+    if (COLORS.includes(c)) d.color = c;
     save(d);
     return render(d);
   }

@@ -43,41 +43,80 @@ pub fn install(name: &str) -> Result<PathBuf, String> {
     let value: Value = serde_json::from_slice(&body).map_err(|e| format!("parse listing: {e}"))?;
     let entries = value.as_array().ok_or("plugin is not a directory")?;
 
-    std::fs::create_dir_all(&dest).map_err(|e| format!("create {}: {e}", dest.display()))?;
-    let mut wrote = 0usize;
-    for entry in entries {
-        if entry.get("type").and_then(Value::as_str) != Some("file") {
-            continue; // flat folders only for now
+    // Download into a private temp dir in the same directory, then rename over
+    // the destination: an install is all-or-nothing, leaves no partial dir, and
+    // concurrent installs don't interleave files.
+    let tmp = dir.join(format!(".{name}.{}.tmp", std::process::id()));
+    let _ = std::fs::remove_dir_all(&tmp);
+    std::fs::create_dir_all(&tmp).map_err(|e| format!("create {}: {e}", tmp.display()))?;
+
+    let download = || -> Result<usize, String> {
+        let mut wrote = 0usize;
+        for entry in entries {
+            if entry.get("type").and_then(Value::as_str) != Some("file") {
+                continue; // flat folders only for now
+            }
+            let (Some(file), Some(url)) = (
+                entry.get("name").and_then(Value::as_str),
+                entry.get("download_url").and_then(Value::as_str),
+            ) else {
+                continue;
+            };
+            if !valid_file(file) {
+                continue;
+            }
+            let bytes = curl(url)?;
+            std::fs::write(tmp.join(file), bytes).map_err(|e| format!("write {file}: {e}"))?;
+            wrote += 1;
         }
-        let (Some(file), Some(url)) = (
-            entry.get("name").and_then(Value::as_str),
-            entry.get("download_url").and_then(Value::as_str),
-        ) else {
-            continue;
-        };
-        if !valid_file(file) {
-            continue;
+        Ok(wrote)
+    };
+
+    match download() {
+        Ok(0) => {
+            let _ = std::fs::remove_dir_all(&tmp);
+            Err("nothing downloaded".to_string())
         }
-        let bytes = curl(url)?;
-        std::fs::write(dest.join(file), bytes)
-            .map_err(|e| format!("write {file}: {e}"))?;
-        wrote += 1;
+        Ok(_) => {
+            let _ = std::fs::remove_dir_all(&dest);
+            std::fs::rename(&tmp, &dest).map_err(|e| {
+                let _ = std::fs::remove_dir_all(&tmp);
+                format!("install {name}: {e}")
+            })?;
+            Ok(dest)
+        }
+        Err(e) => {
+            let _ = std::fs::remove_dir_all(&tmp);
+            Err(e)
+        }
     }
-    if wrote == 0 {
-        return Err("nothing downloaded".to_string());
-    }
-    Ok(dest)
 }
 
+/// Max bytes we'll accept for any single fetch (catalog listing or plugin
+/// file), so a redirecting endpoint or runaway file can't OOM us.
+const MAX_BYTES: &str = "8388608"; // 8 MiB
+
 fn curl(url: &str) -> Result<Vec<u8>, String> {
+    // Defense in depth: only https, only over https on redirects, a size cap,
+    // and `--` so a URL beginning with `-` can't be read as an option.
+    if !url.starts_with("https://") {
+        return Err("refusing non-https url".to_string());
+    }
     let out = Command::new("curl")
         .args([
             "-sL",
             "--fail",
+            "--proto",
+            "=https",
+            "--proto-redir",
+            "=https",
+            "--max-filesize",
+            MAX_BYTES,
             "-H",
             "Accept: application/vnd.github+json",
             "-H",
             "User-Agent: prompt-terminal",
+            "--",
             url,
         ])
         .output()
@@ -96,14 +135,13 @@ fn valid_name(s: &str) -> bool {
             .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
 }
 
-/// A downloadable file name: a plain file, never a path or hidden traversal.
+/// A downloadable file name: a plain file, never a path, traversal, or dotfile.
 fn valid_file(s: &str) -> bool {
     !s.is_empty()
         && s.len() <= 128
         && !s.contains('/')
         && !s.contains('\\')
-        && s != "."
-        && s != ".."
+        && !s.starts_with('.')
 }
 
 #[cfg(test)]

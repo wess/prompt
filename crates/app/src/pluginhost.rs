@@ -9,8 +9,16 @@
 
 use std::io::Write;
 use std::process::{Command, Stdio};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
+
+/// Kill a plugin that runs longer than this (it runs off the UI thread, but a
+/// hung child would otherwise pin a worker thread and leave the panel stuck).
+const TIMEOUT: Duration = Duration::from_secs(15);
+const POLL: Duration = Duration::from_millis(100);
 
 /// One request sent to a plugin runtime (serialized to stdin as JSON).
 #[derive(Serialize)]
@@ -94,10 +102,13 @@ pub enum Block {
 pub fn invoke(plugin: &plugin::Plugin, req: &Request) -> Result<Response, String> {
     let runtime = plugin.runtime.as_ref().ok_or("plugin has no [runtime]")?;
     let mut parts = runtime.command.split_whitespace();
-    let program = parts.next().ok_or("empty runtime command")?;
-    let args: Vec<&str> = parts.collect();
+    let program = parts.next().ok_or("empty runtime command")?.to_string();
+    let args: Vec<String> = parts.map(str::to_string).collect();
 
-    let mut child = Command::new(program)
+    // Serialize before spawning so a serialize error can't leak a live child.
+    let body = serde_json::to_vec(req).map_err(|e| e.to_string())?;
+
+    let mut child = Command::new(&program)
         .args(&args)
         .current_dir(&plugin.path)
         .stdin(Stdio::piped())
@@ -106,17 +117,43 @@ pub fn invoke(plugin: &plugin::Plugin, req: &Request) -> Result<Response, String
         .spawn()
         .map_err(|e| format!("spawn `{program}`: {e}"))?;
 
-    let body = serde_json::to_vec(req).map_err(|e| e.to_string())?;
-    child
-        .stdin
-        .take()
-        .ok_or("no stdin")?
-        .write_all(&body)
-        .map_err(|e| format!("write request: {e}"))?;
+    // Feed stdin from a separate thread so a plugin that floods stdout before
+    // draining stdin can't deadlock us (we'd block writing while it blocks
+    // writing). Dropping the handle at the end closes stdin.
+    let Some(mut stdin) = child.stdin.take() else {
+        let _ = child.kill();
+        let _ = child.wait();
+        return Err("no stdin".into());
+    };
+    let writer = std::thread::spawn(move || {
+        let _ = stdin.write_all(&body);
+    });
 
-    let out = child
-        .wait_with_output()
-        .map_err(|e| format!("wait: {e}"))?;
+    // Watchdog: SIGKILL the child if it overruns the budget. `done` guards
+    // against killing after a normal exit (and a reused pid).
+    let pid = child.id();
+    let done = Arc::new(AtomicBool::new(false));
+    let flag = done.clone();
+    let watchdog = std::thread::spawn(move || {
+        let mut waited = Duration::ZERO;
+        while waited < TIMEOUT {
+            if flag.load(Ordering::Relaxed) {
+                return;
+            }
+            std::thread::sleep(POLL);
+            waited += POLL;
+        }
+        if !flag.load(Ordering::Relaxed) {
+            unsafe { libc::kill(pid as libc::pid_t, libc::SIGKILL) };
+        }
+    });
+
+    let out = child.wait_with_output();
+    done.store(true, Ordering::Relaxed);
+    let _ = writer.join();
+    let _ = watchdog.join();
+    let out = out.map_err(|e| format!("wait: {e}"))?;
+
     if !out.status.success() {
         return Err(format!("`{program}` exited with {}", out.status));
     }

@@ -19,4 +19,6 @@ fn validates_file_names() {
     assert!(!valid_file(".."));
     assert!(!valid_file("a/b.txt"));
     assert!(!valid_file(""));
+    assert!(!valid_file(".bashrc")); // no dotfiles
+    assert!(!valid_file(".netrc"));
 }

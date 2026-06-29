@@ -189,7 +189,7 @@ impl WorkspaceView {
     }
 
     /// (Re)render a plugin panel by invoking its runtime with a `render`
-    /// request and caching the response. Synchronous; the plugin is short-lived.
+    /// request off the UI thread, caching the response when it returns.
     pub(crate) fn refresh_plugin_panel(&mut self, index: usize, cx: &mut Context<Self>) {
         let plugin = match self.plugin_panel_defs().get(index) {
             Some(p) => (*p).clone(),
@@ -199,21 +199,33 @@ impl WorkspaceView {
             Some(pn) => pn.id.clone(),
             None => return,
         };
-        let cwd = self.focused_cwd(cx);
-        let cwd = cwd.as_ref().map(|p| p.to_string_lossy().into_owned());
-        let req = pluginhost::Request {
-            kind: "render",
-            panel: &panel_id,
-            action: None,
-            cwd: cwd.as_deref(),
-        };
-        let resp = pluginhost::invoke(&plugin, &req).unwrap_or_else(|e| error_response(&e));
-        self.plugin_panels.insert(panel_id, resp);
-        cx.notify();
+        let cwd = self.focused_cwd(cx).map(|p| p.to_string_lossy().into_owned());
+        let executor = cx.background_executor().clone();
+        cx.spawn(async move |this, cx| {
+            let pid = panel_id.clone();
+            let resp = executor
+                .spawn(async move {
+                    let req = pluginhost::Request {
+                        kind: "render",
+                        panel: &pid,
+                        action: None,
+                        cwd: cwd.as_deref(),
+                    };
+                    pluginhost::invoke(&plugin, &req)
+                })
+                .await;
+            let _ = this.update(cx, |view, cx| {
+                view.plugin_panels
+                    .insert(panel_id, resp.unwrap_or_else(|e| error_response(&e)));
+                cx.notify();
+            });
+        })
+        .detach();
     }
 
-    /// Handle a button click in a plugin panel: invoke the runtime with an
-    /// `action` request, run any returned directives, and re-cache the panel.
+    /// Handle a button click in a plugin panel off the UI thread: invoke the
+    /// runtime with an `action` request, then run any returned directives and
+    /// re-cache the panel on the foreground.
     pub(crate) fn plugin_action(
         &mut self,
         panel_id: &str,
@@ -221,35 +233,48 @@ impl WorkspaceView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let plugin = match self
-            .plugins
-            .iter()
-            .find(|p| {
-                p.runtime.is_some() && p.panel.as_ref().map(|pn| pn.id.as_str()) == Some(panel_id)
-            }) {
+        let Some(handle) = window.window_handle().downcast::<WorkspaceView>() else {
+            return;
+        };
+        let plugin = match self.plugins.iter().find(|p| {
+            p.runtime.is_some() && p.panel.as_ref().map(|pn| pn.id.as_str()) == Some(panel_id)
+        }) {
             Some(p) => p.clone(),
             None => return,
         };
-        let cwd = self.focused_cwd(cx);
-        let cwd = cwd.as_ref().map(|p| p.to_string_lossy().into_owned());
-        let req = pluginhost::Request {
-            kind: "action",
-            panel: panel_id,
-            action: Some(action),
-            cwd: cwd.as_deref(),
-        };
-        let resp = pluginhost::invoke(&plugin, &req).unwrap_or_else(|e| error_response(&e));
-        for run in &resp.run {
-            let target = run.target.clone().unwrap_or_else(|| "pane".to_string());
-            let _ = self.mcp_dispatch(
-                "run_command",
-                &json!({ "text": run.text, "target": target }),
-                window,
-                cx,
-            );
-        }
-        self.plugin_panels.insert(panel_id.to_string(), resp);
-        cx.notify();
+        let panel = panel_id.to_string();
+        let action = action.to_string();
+        let cwd = self.focused_cwd(cx).map(|p| p.to_string_lossy().into_owned());
+        let executor = cx.background_executor().clone();
+        cx.spawn(async move |_this, cx| {
+            let p = panel.clone();
+            let resp = executor
+                .spawn(async move {
+                    let req = pluginhost::Request {
+                        kind: "action",
+                        panel: &p,
+                        action: Some(&action),
+                        cwd: cwd.as_deref(),
+                    };
+                    pluginhost::invoke(&plugin, &req)
+                })
+                .await;
+            let resp = resp.unwrap_or_else(|e| error_response(&e));
+            let _ = handle.update(cx, |view, window, cx| {
+                for run in &resp.run {
+                    let target = run.target.as_deref().unwrap_or("pane");
+                    let _ = view.mcp_dispatch(
+                        "run_command",
+                        &json!({ "text": run.text, "target": target }),
+                        window,
+                        cx,
+                    );
+                }
+                view.plugin_panels.insert(panel, resp);
+                cx.notify();
+            });
+        })
+        .detach();
     }
 
     /// Render a plugin panel's body from its cached block tree.
@@ -278,8 +303,7 @@ impl WorkspaceView {
                 body = body.child(self.plugin_note("No content."));
             }
             Some(resp) => {
-                let blocks = resp.blocks.clone();
-                for (i, block) in blocks.iter().enumerate() {
+                for (i, block) in resp.blocks.iter().enumerate() {
                     body = body.child(self.render_block(&panel_id, i, block, cx));
                 }
             }
@@ -353,7 +377,9 @@ impl WorkspaceView {
             Block::Row { children } => {
                 let mut row = div().flex().flex_row().items_center().gap_2().px_2();
                 for (j, child) in children.iter().enumerate() {
-                    row = row.child(self.render_block(panel_id, idx * 100 + j, child, cx));
+                    // Reserve a wide range per parent so child ids can't collide
+                    // with sibling top-level block ids.
+                    row = row.child(self.render_block(panel_id, idx * 1_000_000 + j, child, cx));
                 }
                 row.into_any_element()
             }
