@@ -262,6 +262,8 @@ pub struct WorkspaceView {
     catalog: Option<Vec<String>>,
     /// Status line for the Plugins panel (last fetch/install result).
     catalog_status: Option<String>,
+    /// True while a catalog fetch is in flight (off-thread).
+    catalog_loading: bool,
     /// The guise Spotlight quick-open overlay (cmd+P), rebuilt each open.
     spotlight: Option<Entity<guise::Spotlight>>,
     /// Configured font size, restored by `reset_font_size`.
@@ -317,6 +319,7 @@ impl WorkspaceView {
             plugin_panels: HashMap::new(),
             catalog: None,
             catalog_status: None,
+            catalog_loading: false,
             spotlight: None,
             _watch: None,
         };

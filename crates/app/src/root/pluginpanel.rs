@@ -93,31 +93,60 @@ impl WorkspaceView {
         SidebarPanel::from_id(token)
     }
 
-    /// Fetch the installable catalog (lazily, when the Plugins panel opens).
+    /// Fetch the installable catalog off-thread (the GitHub API call would
+    /// otherwise block the UI), then update the panel.
     pub(crate) fn fetch_catalog(&mut self, cx: &mut Context<Self>) {
-        match crate::catalog::list() {
-            Ok(names) => {
-                self.catalog = Some(names);
-                self.catalog_status = None;
-            }
-            Err(e) => {
-                self.catalog = Some(Vec::new());
-                self.catalog_status = Some(format!("Catalog unavailable: {e}"));
-            }
+        if self.catalog_loading {
+            return;
         }
+        self.catalog_loading = true;
+        self.catalog_status = None;
         cx.notify();
+        let executor = cx.background_executor().clone();
+        cx.spawn(async move |this, cx| {
+            let result = executor.spawn(async { crate::catalog::list() }).await;
+            let _ = this.update(cx, |view, cx| {
+                view.catalog_loading = false;
+                match result {
+                    Ok(names) => {
+                        view.catalog = Some(names);
+                        view.catalog_status = None;
+                    }
+                    Err(e) => {
+                        view.catalog = Some(Vec::new());
+                        view.catalog_status = Some(format!("Catalog unavailable: {e}"));
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
     }
 
-    /// Install a catalog plugin into the user's plugin dir, then reload.
+    /// Install a catalog plugin off-thread (download), then reload plugins on
+    /// the foreground.
     pub(crate) fn install_catalog_plugin(&mut self, name: &str, cx: &mut Context<Self>) {
-        match crate::catalog::install(name) {
-            Ok(_) => {
-                self.catalog_status = Some(format!("Installed {name}"));
-                self.reload_plugins(cx);
-            }
-            Err(e) => self.catalog_status = Some(format!("Install {name} failed: {e}")),
-        }
+        let name = name.to_string();
+        self.catalog_status = Some(format!("Installing {name}\u{2026}"));
         cx.notify();
+        let executor = cx.background_executor().clone();
+        cx.spawn(async move |this, cx| {
+            let target = name.clone();
+            let result = executor
+                .spawn(async move { crate::catalog::install(&target) })
+                .await;
+            let _ = this.update(cx, |view, cx| {
+                match result {
+                    Ok(_) => {
+                        view.catalog_status = Some(format!("Installed {name}"));
+                        view.reload_plugins(cx);
+                    }
+                    Err(e) => view.catalog_status = Some(format!("Install {name} failed: {e}")),
+                }
+                cx.notify();
+            });
+        })
+        .detach();
     }
 
     /// Reload plugins from disk and re-resolve keybindings (after an install).

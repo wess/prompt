@@ -373,24 +373,29 @@ impl WorkspaceView {
         }
 
         body = body.child(self.sidebar_section("Available"));
-        match self.catalog {
-            None => body = body.child(self.sidebar_note("Loading catalog\u{2026}")),
-            Some(_) => {
-                let available = self.available_plugins();
-                if available.is_empty() {
-                    body = body.child(self.sidebar_note("Everything is installed."));
-                }
-                for name in available {
-                    let n = name.clone();
-                    body = body.child(
-                        self.sidebar_row(("sb-pl-avail", row_id), format!("\u{2913} {name}"), false, false, false)
-                            .on_click(cx.listener(move |this, _: &gpui::ClickEvent, _w, cx| {
-                                this.install_catalog_plugin(&n, cx);
-                            })),
-                    );
-                    row_id += 1;
-                }
+        if self.catalog_loading && self.catalog.is_none() {
+            body = body.child(self.sidebar_note("Loading catalog\u{2026}"));
+        } else if self.catalog.is_none() {
+            body = body.child(self.sidebar_note("Open to load the catalog."));
+        } else {
+            let available = self.available_plugins();
+            if available.is_empty() {
+                body = body.child(self.sidebar_note("Everything is installed."));
             }
+            for name in available {
+                let n = name.clone();
+                body = body.child(
+                    self.sidebar_row(("sb-pl-avail", row_id), format!("\u{2913} {name}"), false, false, false)
+                        .on_click(cx.listener(move |this, _: &gpui::ClickEvent, _w, cx| {
+                            this.install_catalog_plugin(&n, cx);
+                        })),
+                );
+                row_id += 1;
+            }
+            body = body.child(
+                self.sidebar_row(("sb-pl-refresh", row_id), "\u{21bb} Refresh catalog".to_string(), false, false, false)
+                    .on_click(cx.listener(|this, _: &gpui::ClickEvent, _w, cx| this.fetch_catalog(cx))),
+            );
         }
         if let Some(status) = self.catalog_status.as_ref() {
             body = body.child(self.sidebar_note(status));
