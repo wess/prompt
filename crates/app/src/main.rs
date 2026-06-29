@@ -4,6 +4,7 @@ mod about;
 mod appkit;
 mod boxdraw;
 mod bridge;
+mod catalog;
 mod colors;
 mod element;
 mod font;

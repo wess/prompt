@@ -35,6 +35,7 @@ impl WorkspaceView {
             SidebarPanel::Layouts => self.panel_layouts(cx),
             SidebarPanel::Relay => self.panel_relay(cx),
             SidebarPanel::Agents => self.panel_agents(cx),
+            SidebarPanel::Plugins => self.panel_pluginlist(cx),
             SidebarPanel::Plugin(_) => self.panel_plugin(panel, cx),
         };
         let content = div()
@@ -327,6 +328,72 @@ impl WorkspaceView {
                         }
                     })),
             );
+        }
+        body.into_any_element()
+    }
+
+    /// Plugins panel: installed plugins (their panels + commands) on top, the
+    /// installable catalog below.
+    fn panel_pluginlist(&self, cx: &mut Context<Self>) -> AnyElement {
+        let mut body = self.sidebar_body("sb-plugins");
+        let mut row_id = 0usize;
+
+        body = body.child(self.sidebar_section("Installed"));
+        if self.plugins.is_empty() {
+            body = body.child(self.sidebar_note("No plugins installed."));
+        }
+        for (pi, plugin) in self.plugins.iter().enumerate() {
+            body = body.child(self.sidebar_row(
+                ("sb-pl-name", pi),
+                plugin.name.clone(),
+                false,
+                false,
+                false,
+            ));
+            if let Some(panel) = plugin.panel.as_ref() {
+                let token = format!("right:plugin:{}", panel.id);
+                body = body.child(
+                    self.sidebar_row(("sb-pl-open", row_id), "\u{25a4} Open panel".to_string(), true, false, false)
+                        .on_click(cx.listener(move |this, _: &gpui::ClickEvent, _w, cx| {
+                            this.toggle_sidebar(&token, cx);
+                        })),
+                );
+                row_id += 1;
+            }
+            for cmd in &plugin.commands {
+                let action = config::Action::PluginCommand(plugin::actionid(&plugin.id, &cmd.id));
+                body = body.child(
+                    self.sidebar_row(("sb-pl-cmd", row_id), format!("\u{25b8} {}", cmd.title), true, false, false)
+                        .on_click(cx.listener(move |this, _: &gpui::ClickEvent, window, cx| {
+                            this.run_action(action.clone(), window, cx);
+                        })),
+                );
+                row_id += 1;
+            }
+        }
+
+        body = body.child(self.sidebar_section("Available"));
+        match self.catalog {
+            None => body = body.child(self.sidebar_note("Loading catalog\u{2026}")),
+            Some(_) => {
+                let available = self.available_plugins();
+                if available.is_empty() {
+                    body = body.child(self.sidebar_note("Everything is installed."));
+                }
+                for name in available {
+                    let n = name.clone();
+                    body = body.child(
+                        self.sidebar_row(("sb-pl-avail", row_id), format!("\u{2913} {name}"), false, false, false)
+                            .on_click(cx.listener(move |this, _: &gpui::ClickEvent, _w, cx| {
+                                this.install_catalog_plugin(&n, cx);
+                            })),
+                    );
+                    row_id += 1;
+                }
+            }
+        }
+        if let Some(status) = self.catalog_status.as_ref() {
+            body = body.child(self.sidebar_note(status));
         }
         body.into_any_element()
     }

@@ -167,17 +167,20 @@ pub enum SidebarPanel {
     Relay,
     /// Saved agent definitions you can launch.
     Agents,
+    /// Installed plugins + the installable catalog.
+    Plugins,
     /// A plugin-contributed panel, by index into [`WorkspaceView::plugin_panel_defs`].
     Plugin(usize),
 }
 
 impl SidebarPanel {
     /// Panels in activity-bar order.
-    pub const ALL: [SidebarPanel; 4] = [
+    pub const ALL: [SidebarPanel; 5] = [
         SidebarPanel::Terminals,
         SidebarPanel::Layouts,
         SidebarPanel::Relay,
         SidebarPanel::Agents,
+        SidebarPanel::Plugins,
     ];
 
     /// Config/id token, round-tripping through [`SidebarPanel::from_id`].
@@ -187,6 +190,7 @@ impl SidebarPanel {
             SidebarPanel::Layouts => "layouts",
             SidebarPanel::Relay => "relay",
             SidebarPanel::Agents => "agents",
+            SidebarPanel::Plugins => "plugins",
             SidebarPanel::Plugin(_) => "plugin",
         }
     }
@@ -202,6 +206,7 @@ impl SidebarPanel {
             SidebarPanel::Layouts => "Layouts",
             SidebarPanel::Relay => "Relay",
             SidebarPanel::Agents => "Agents",
+            SidebarPanel::Plugins => "Plugins",
             SidebarPanel::Plugin(_) => "Plugin",
         }
     }
@@ -213,6 +218,7 @@ impl SidebarPanel {
             SidebarPanel::Layouts => "\u{25f0}",   // ◰ tiles
             SidebarPanel::Relay => "\u{21c4}",     // ⇄ connections
             SidebarPanel::Agents => "\u{25c8}",    // ◈ agents
+            SidebarPanel::Plugins => "\u{29c9}",   // ⧉ plugins
             SidebarPanel::Plugin(_) => "\u{25c9}", // ◉ plugin
         }
     }
@@ -250,6 +256,11 @@ pub struct WorkspaceView {
     right_panel: Option<SidebarPanel>,
     /// Last block-tree response per plugin panel id, refreshed on open/action.
     plugin_panels: HashMap<String, crate::pluginhost::Response>,
+    /// Installable catalog plugin names, fetched lazily when the Plugins panel
+    /// opens; `None` until the first fetch.
+    catalog: Option<Vec<String>>,
+    /// Status line for the Plugins panel (last fetch/install result).
+    catalog_status: Option<String>,
     /// Configured font size, restored by `reset_font_size`.
     base_font_size: gpui::Pixels,
     /// Config-file watcher; kept alive so live reload keeps working.
@@ -301,6 +312,8 @@ impl WorkspaceView {
             left_panel: None,
             right_panel: None,
             plugin_panels: HashMap::new(),
+            catalog: None,
+            catalog_status: None,
             _watch: None,
         };
         this.applykeybinds(cx);

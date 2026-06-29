@@ -93,6 +93,64 @@ impl WorkspaceView {
         SidebarPanel::from_id(token)
     }
 
+    /// Fetch the installable catalog (lazily, when the Plugins panel opens).
+    pub(crate) fn fetch_catalog(&mut self, cx: &mut Context<Self>) {
+        match crate::catalog::list() {
+            Ok(names) => {
+                self.catalog = Some(names);
+                self.catalog_status = None;
+            }
+            Err(e) => {
+                self.catalog = Some(Vec::new());
+                self.catalog_status = Some(format!("Catalog unavailable: {e}"));
+            }
+        }
+        cx.notify();
+    }
+
+    /// Install a catalog plugin into the user's plugin dir, then reload.
+    pub(crate) fn install_catalog_plugin(&mut self, name: &str, cx: &mut Context<Self>) {
+        match crate::catalog::install(name) {
+            Ok(_) => {
+                self.catalog_status = Some(format!("Installed {name}"));
+                self.reload_plugins(cx);
+            }
+            Err(e) => self.catalog_status = Some(format!("Install {name} failed: {e}")),
+        }
+        cx.notify();
+    }
+
+    /// Reload plugins from disk and re-resolve keybindings (after an install).
+    pub(crate) fn reload_plugins(&mut self, cx: &mut Context<Self>) {
+        self.plugins = loadplugins(&self.opts);
+        let (keybinds, diags) = resolvekeys(&self.opts, &self.plugins);
+        for d in &diags {
+            eprintln!("prompt: {}: {}", d.key, d.message);
+        }
+        self.keybinds = keybinds;
+        self.applykeybinds(cx);
+    }
+
+    /// Plugin ids currently installed (folder/manifest ids).
+    pub(crate) fn installed_ids(&self) -> std::collections::HashSet<String> {
+        self.plugins.iter().map(|p| p.id.clone()).collect()
+    }
+
+    /// Catalog names with no matching installed plugin id.
+    pub(crate) fn available_plugins(&self) -> Vec<String> {
+        let installed = self.installed_ids();
+        self.catalog
+            .as_ref()
+            .map(|names| {
+                names
+                    .iter()
+                    .filter(|n| !installed.contains(*n))
+                    .cloned()
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
     /// The focused pane's working directory, passed to plugins so they act on
     /// the right place.
     fn focused_cwd(&self, cx: &App) -> Option<std::path::PathBuf> {

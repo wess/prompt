@@ -56,6 +56,10 @@ impl WorkspaceView {
         if let Some(SidebarPanel::Plugin(i)) = next {
             self.refresh_plugin_panel(i, cx);
         }
+        // Lazily fetch the installable catalog the first time Plugins opens.
+        if next == Some(SidebarPanel::Plugins) && self.catalog.is_none() {
+            self.fetch_catalog(cx);
+        }
         self.setmenus(cx);
         cx.notify();
     }
