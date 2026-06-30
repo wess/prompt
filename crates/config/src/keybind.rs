@@ -351,6 +351,25 @@ pub fn default_keybinds() -> Vec<Keybind> {
         "right",
         Action::AdjustSelection(SelectAdjust::WordRight),
     ));
+    // Shift+Alt+Left/Right also selects by word: alt+arrow jumps a word
+    // (the macOS readline default below), so shift+alt+arrow is the natural
+    // "select that word" — the macOS option+shift convention. Without this
+    // the combo falls through to a modified arrow escape the shell echoes.
+    let alt_shift = Mods {
+        alt: true,
+        shift: true,
+        ..Mods::default()
+    };
+    binds.push(kb(
+        alt_shift,
+        "left",
+        Action::AdjustSelection(SelectAdjust::WordLeft),
+    ));
+    binds.push(kb(
+        alt_shift,
+        "right",
+        Action::AdjustSelection(SelectAdjust::WordRight),
+    ));
     #[cfg(target_os = "macos")]
     {
         let alt = Mods {
