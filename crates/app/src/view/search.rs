@@ -7,7 +7,7 @@ impl TerminalView {
         self.search = match self.search {
             Some(_) => None,
             None => Some(Search {
-                edit: crate::textedit::TextEdit::new(""),
+                edit: guise::TextEdit::new(""),
                 current: 0,
                 cached_query: None,
                 results: Vec::new(),

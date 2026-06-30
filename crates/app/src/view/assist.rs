@@ -53,7 +53,7 @@ impl TerminalView {
         self.assist = match self.assist {
             Some(Assist::Semantic { .. }) => None,
             _ => Some(Assist::Semantic {
-                edit: crate::textedit::TextEdit::new(""),
+                edit: guise::TextEdit::new(""),
                 current: 0,
                 cached_query: None,
                 hits: Vec::new(),
@@ -80,7 +80,7 @@ impl TerminalView {
     pub fn compose_command(&mut self, cx: &mut Context<Self>) {
         self.search = None;
         self.assist = Some(Assist::Compose {
-            edit: crate::textedit::TextEdit::new(""),
+            edit: guise::TextEdit::new(""),
         });
         cx.notify();
     }
@@ -208,7 +208,7 @@ impl TerminalView {
         cx.notify();
     }
 
-    fn input_line(&self, label: &str, edit: &crate::textedit::TextEdit) -> impl IntoElement {
+    fn input_line(&self, label: &str, edit: &guise::TextEdit) -> impl IntoElement {
         let (before, after) = edit.split();
         let mut caret = colors::hsla(self.colors.cursor);
         caret.a = 0.9;

@@ -64,19 +64,27 @@ impl Terminal {
     /// Returns `false` (a no-op) when there is no selection, which is the
     /// host's cue to fall through to the key's normal escape sequence,
     /// the same "performable" semantics Ghostty uses for shift+navigation.
+    ///
+    /// The selection collapses to exact cells here (a fixed anchor and a
+    /// moving caret): word/line expansion only shapes the initial mouse
+    /// gesture, so keyboard motion stays symmetric — every extend has an
+    /// equal-and-opposite retract.
     pub fn adjust_selection(&mut self, dir: SelectionAdjust) -> bool {
-        let Some(caret) = self.inner.selection.as_ref().map(|s| s.extent_caret()) else {
+        let Some(sel) = self.inner.selection else {
             return false;
         };
+        let (anchor, caret) = sel.caret_ends_for(dir);
         let page = self.rows();
-        let point = selection::adjust_point(
+        let point = selection::adjust_caret(
             &self.inner.screen().grid,
+            anchor,
             caret,
             dir,
             page,
             &self.inner.word_chars,
         );
-        self.update_selection(point);
+        self.inner.selection = Some(Selection::cell_pair(anchor, point));
+        self.inner.full_damage = true;
         self.reveal_line(point.line);
         true
     }

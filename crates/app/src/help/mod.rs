@@ -9,7 +9,7 @@ use gpui::{
 };
 
 use crate::colors;
-use crate::textedit::TextEdit;
+use guise::TextEdit;
 
 mod content;
 mod render;

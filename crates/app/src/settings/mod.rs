@@ -12,7 +12,7 @@ use gpui::{
     WindowBounds, WindowOptions,
 };
 
-use crate::textedit::TextEdit;
+use guise::TextEdit;
 use model::{Bool, Choice, Field, ListKind, Num, Section};
 
 const WIDTH: f32 = 725.0;
@@ -365,17 +365,17 @@ impl SettingsView {
             let Some((_, edit)) = self.editing.as_mut() else {
                 return;
             };
-            crate::textkeys::apply(edit, ks)
+            guise::apply_key(edit, ks)
         };
         match outcome {
-            crate::textkeys::Outcome::Submit => self.commit_edit(cx),
-            crate::textkeys::Outcome::Cancel => {
+            guise::KeyOutcome::Submit => self.commit_edit(cx),
+            guise::KeyOutcome::Cancel => {
                 self.editing = None;
                 self.capturing = false;
                 cx.notify();
             }
-            crate::textkeys::Outcome::Edited => cx.notify(),
-            crate::textkeys::Outcome::Pass => return,
+            guise::KeyOutcome::Edited => cx.notify(),
+            guise::KeyOutcome::Pass => return,
         }
         cx.stop_propagation();
     }

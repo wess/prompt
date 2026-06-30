@@ -1,23 +1,18 @@
-//! Tiny modal window for "Change Tab Title" / "Change Terminal Title". One
-//! text field; Enter applies the new title back to the workspace, Escape
-//! cancels. Mirrors the Settings window chrome.
+//! In-window "rename" dialog: a guise `Modal` with a single text field. Enter
+//! applies the new title back to the workspace, Escape (or clicking the
+//! backdrop / close button) cancels. Hosted by `WorkspaceView` as an overlay
+//! (see `root/render.rs`); opened via `WorkspaceView::open_rename`.
 
 use gpui::prelude::*;
-use gpui::{
-    bounds, div, point, px, size, App, Context, FocusHandle, KeyDownEvent, SharedString,
-    TitlebarOptions, WeakEntity, Window, WindowBounds, WindowOptions,
-};
+use gpui::{div, App, Context, Entity, KeyDownEvent, Subscription, WeakEntity, Window};
 use workspace::PaneId;
 
-use crate::colors;
+use guise::{Modal, Size, Text, TextInput, TextInputEvent};
+
 use crate::root::WorkspaceView;
-use crate::textedit::TextEdit;
 
-const WIDTH: f32 = 380.0;
-const HEIGHT: f32 = 150.0;
-
-/// What a rename targets: a tab label, a single pane's title, or naming a
-/// freshly recorded macro (carrying its captured commands).
+/// What a rename targets: a tab label, a single pane's title, naming a freshly
+/// recorded macro (carrying its commands), or saving a layout.
 #[derive(Clone)]
 pub enum Target {
     Tab(usize),
@@ -26,159 +21,101 @@ pub enum Target {
     Layout(crate::tiles::Layout),
 }
 
-/// Open the modal to name and save a just-recorded macro.
-pub fn open_macro(
-    parent: &Window,
-    root: WeakEntity<WorkspaceView>,
-    commands: Vec<String>,
-    cx: &mut App,
-) {
-    open(parent, root, Target::Macro(commands), String::new(), cx);
+impl Target {
+    fn title(&self) -> &'static str {
+        match self {
+            Target::Tab(_) => "Change Tab Title",
+            Target::Pane(_) => "Change Terminal Title",
+            Target::Macro(_) => "Name Macro",
+            Target::Layout(_) => "Save Layout",
+        }
+    }
 }
 
-/// Open the rename window centered over `parent`, editing `initial`.
-pub fn open(
-    parent: &Window,
-    root: WeakEntity<WorkspaceView>,
-    target: Target,
-    initial: String,
-    cx: &mut App,
+/// Apply the entered `text` to `target`, then close the dialog. Runs with a
+/// live `Window` so focus returns to the active pane.
+fn commit(
+    root: &WeakEntity<WorkspaceView>,
+    target: &Target,
+    text: &str,
+    window: &mut Window,
+    app: &mut App,
 ) {
-    let title = match target {
-        Target::Tab(_) => "Change Tab Title",
-        Target::Pane(_) => "Change Terminal Title",
-        Target::Macro(_) => "Name Macro",
-        Target::Layout(_) => "Save Layout",
-    };
-    let center = parent.bounds().center();
-    let window_bounds = bounds(
-        center - point(px(WIDTH / 2.0), px(HEIGHT / 2.0)),
-        size(px(WIDTH), px(HEIGHT)),
-    );
-    let _ = cx.open_window(
-        WindowOptions {
-            window_bounds: Some(WindowBounds::Windowed(window_bounds)),
-            is_resizable: false,
-            titlebar: Some(TitlebarOptions {
-                title: Some(title.into()),
-                appears_transparent: true,
-                traffic_light_position: Some(point(px(12.0), px(12.0))),
-            }),
-            ..Default::default()
-        },
-        move |window, cx| {
-            window.set_window_title(title);
-            cx.new(|cx| RenameView::new(root, target, &initial, title, cx))
-        },
-    );
+    root.update(app, |ws, cx| {
+        match target {
+            Target::Tab(index) => ws.rename_tab(*index, text, cx),
+            Target::Pane(id) => ws.rename_pane(*id, text, cx),
+            Target::Macro(commands) => ws.save_macro(text, commands.clone(), cx),
+            Target::Layout(layout) => ws.save_layout(text, layout.clone(), cx),
+        }
+        ws.close_modal(window, cx);
+    })
+    .ok();
 }
 
-pub struct RenameView {
+pub struct RenameDialog {
     root: WeakEntity<WorkspaceView>,
-    target: Target,
     title: &'static str,
-    edit: TextEdit,
-    focus: FocusHandle,
+    input: Entity<TextInput>,
+    _submit: Subscription,
 }
 
-impl RenameView {
-    fn new(
+impl RenameDialog {
+    pub fn new(
         root: WeakEntity<WorkspaceView>,
         target: Target,
         initial: &str,
-        title: &'static str,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
+        let title = target.title();
+        let input = cx.new(|cx| TextInput::new(cx).value(initial).placeholder("Title"));
+        window.focus(&input.read(cx).focus_handle(), cx);
+        let submit = {
+            let root = root.clone();
+            window.subscribe(&input, cx, move |_input, event, window, app| {
+                if let TextInputEvent::Submit(text) = event {
+                    commit(&root, &target, text, window, app);
+                }
+            })
+        };
         Self {
             root,
-            target,
             title,
-            edit: TextEdit::new(initial),
-            focus: cx.focus_handle(),
+            input,
+            _submit: submit,
         }
     }
 
-    fn commit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let text = self.edit.text();
-        let target = self.target.clone();
-        self.root
-            .update(cx, |workspace, cx| match target {
-                Target::Tab(index) => workspace.rename_tab(index, &text, cx),
-                Target::Pane(id) => workspace.rename_pane(id, &text, cx),
-                Target::Macro(commands) => workspace.save_macro(&text, commands, cx),
-                Target::Layout(layout) => workspace.save_layout(&text, layout, cx),
-            })
-            .ok();
-        window.remove_window();
-    }
-
-    fn key_down(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
-        let ks = &event.keystroke;
-        if ks.modifiers.platform && ks.key == "w" {
-            window.remove_window();
-            cx.stop_propagation();
-            return;
-        }
-        match crate::textkeys::apply(&mut self.edit, ks) {
-            crate::textkeys::Outcome::Submit => self.commit(window, cx),
-            crate::textkeys::Outcome::Cancel => window.remove_window(),
-            crate::textkeys::Outcome::Edited => {
-                cx.notify();
-                cx.stop_propagation();
-            }
-            crate::textkeys::Outcome::Pass => {}
-        }
+    fn cancel(&self, window: &mut Window, cx: &mut Context<Self>) {
+        self.root.update(cx, |ws, cx| ws.close_modal(window, cx)).ok();
     }
 }
 
-impl Render for RenameView {
+impl Render for RenameDialog {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let (before, after) = self.edit.split();
+        let root = self.root.clone();
         div()
-            .size_full()
-            .flex()
-            .flex_col()
-            .gap_3()
-            .px_4()
-            .pt(px(40.0))
-            .pb_4()
-            .track_focus(&self.focus)
-            .on_key_down(cx.listener(Self::key_down))
-            .bg(hsla(CONTENT_BG))
-            .text_color(hsla(TEXT))
+            .on_key_down(cx.listener(|this, ev: &KeyDownEvent, window, cx| {
+                let ks = &ev.keystroke;
+                if ks.key == "escape" || (ks.modifiers.platform && ks.key == "w") {
+                    this.cancel(window, cx);
+                    cx.stop_propagation();
+                }
+            }))
             .child(
-                div()
-                    .text_color(hsla(MUTED))
-                    .child(SharedString::from(self.title)),
-            )
-            .child(
-                div()
-                    .h(px(30.0))
-                    .px_2()
-                    .rounded(px(7.0))
-                    .border_1()
-                    .border_color(hsla(BLUE))
-                    .bg(hsla(FIELD_BG))
-                    .flex()
-                    .items_center()
-                    .child(SharedString::from(before))
-                    .child(div().w(px(1.0)).h(px(16.0)).bg(hsla(TEXT)))
-                    .child(SharedString::from(after)),
-            )
-            .child(
-                div()
-                    .text_color(hsla(MUTED))
-                    .child(SharedString::from("Return to apply \u{2022} Esc to cancel")),
+                Modal::new()
+                    .title(self.title)
+                    .width(380.0)
+                    .on_close(move |_ev, window, app| {
+                        root.update(app, |ws, cx| ws.close_modal(window, cx)).ok();
+                    })
+                    .child(self.input.clone())
+                    .child(
+                        Text::new("Return to apply \u{2022} Esc to cancel")
+                            .dimmed()
+                            .size(Size::Sm),
+                    ),
             )
     }
 }
-
-fn hsla(rgb: theme::Rgb) -> gpui::Hsla {
-    colors::hsla(rgb)
-}
-
-const CONTENT_BG: theme::Rgb = theme::Rgb::new(35, 42, 44);
-const FIELD_BG: theme::Rgb = theme::Rgb::new(49, 56, 58);
-const TEXT: theme::Rgb = theme::Rgb::new(242, 244, 246);
-const MUTED: theme::Rgb = theme::Rgb::new(170, 177, 181);
-const BLUE: theme::Rgb = theme::Rgb::new(10, 102, 220);

@@ -5,18 +5,63 @@
 use super::*;
 
 impl WorkspaceView {
-    /// Build and open the Spotlight quick-open overlay.
-    pub(crate) fn open_quickopen(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    /// Open a Spotlight overlay over the given launchable entries —
+    /// `(label, optional shortcut hint, action)`. Shared by the command
+    /// palette and quick-open.
+    fn open_spotlight(
+        &mut self,
+        items: Vec<(String, Option<String>, Action)>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let view = cx.entity();
+        let spotlight = cx.new(|scx| {
+            let mut spot = guise::Spotlight::new(scx);
+            for (label, hint, action) in items {
+                let view = view.clone();
+                let run = move |window: &mut Window, app: &mut App| {
+                    let action = action.clone();
+                    view.update(app, |this, cx| this.run_action(action, window, cx));
+                };
+                spot = match hint {
+                    Some(hint) => spot.item_hint(label, hint, run),
+                    None => spot.item(label, run),
+                };
+            }
+            spot
+        });
+        spotlight.update(cx, |spot, scx| spot.open(window, scx));
+        self.spotlight = Some(spotlight);
+        cx.notify();
+    }
 
-        // (label, optional shortcut hint, action) for everything launchable.
+    /// The keybind hint for an action, if one is bound.
+    fn shortcut_hint(&self, action: &Action) -> Option<String> {
+        self.keybinds
+            .iter()
+            .find(|k| &k.action == action)
+            .and_then(keys::shortcut_glyphs_seq)
+    }
+
+    /// Open the command palette: a Spotlight over the curated action catalog,
+    /// each entry tagged with its current keybind.
+    pub(crate) fn open_palette(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let items = palette_catalog()
+            .into_iter()
+            .map(|(label, action)| {
+                let hint = self.shortcut_hint(&action);
+                (label.to_string(), hint, action)
+            })
+            .collect();
+        self.open_spotlight(items, window, cx);
+    }
+
+    /// Build and open the Spotlight quick-open overlay: the action catalog
+    /// plus every plugin command and panel.
+    pub(crate) fn open_quickopen(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let mut items: Vec<(String, Option<String>, Action)> = Vec::new();
         for (label, action) in palette_catalog() {
-            let hint = self
-                .keybinds
-                .iter()
-                .find(|k| k.action == action)
-                .and_then(keys::shortcut_glyphs_seq);
+            let hint = self.shortcut_hint(&action);
             items.push((label.to_string(), hint, action));
         }
         for plugin in &self.plugins {
@@ -40,24 +85,6 @@ impl WorkspaceView {
             None,
             Action::Sidebar("right:plugins".to_string()),
         ));
-
-        let spotlight = cx.new(|scx| {
-            let mut spot = guise::Spotlight::new(scx);
-            for (label, hint, action) in items {
-                let view = view.clone();
-                let run = move |window: &mut Window, app: &mut App| {
-                    let action = action.clone();
-                    view.update(app, |this, cx| this.run_action(action, window, cx));
-                };
-                spot = match hint {
-                    Some(hint) => spot.item_hint(label, hint, run),
-                    None => spot.item(label, run),
-                };
-            }
-            spot
-        });
-        spotlight.update(cx, |spot, scx| spot.open(window, scx));
-        self.spotlight = Some(spotlight);
-        cx.notify();
+        self.open_spotlight(items, window, cx);
     }
 }

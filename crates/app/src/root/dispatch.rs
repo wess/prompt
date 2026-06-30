@@ -43,30 +43,6 @@ impl WorkspaceView {
         self.dispatch(action, window, cx);
     }
 
-    /// Open the command palette over the curated action catalog, each entry
-    /// labeled and tagged with its current keybind.
-    fn open_palette(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(handle) = window.window_handle().downcast::<WorkspaceView>() else {
-            return;
-        };
-        let items = palette_catalog()
-            .into_iter()
-            .map(|(label, action)| {
-                let shortcut = self
-                    .keybinds
-                    .iter()
-                    .find(|k| k.action == action)
-                    .and_then(keys::shortcut_glyphs_seq);
-                crate::palette::Item {
-                    label: label.to_string(),
-                    shortcut,
-                    action,
-                }
-            })
-            .collect();
-        crate::palette::open(window, handle, items, cx);
-    }
-
     /// Carry out one config action.
     pub(crate) fn dispatch(&mut self, action: Action, window: &mut Window, cx: &mut Context<Self>) {
         match action {
@@ -179,9 +155,7 @@ impl WorkspaceView {
             Action::RelayLaunch => {
                 let providers = crate::relay::enabled_agents(&self.opts);
                 let roles = crate::relay::role_list();
-                if let Some(handle) = window.window_handle().downcast::<WorkspaceView>() {
-                    crate::newagent::open(window, handle, self.opts.clone(), providers, roles, cx);
-                }
+                self.open_new_agent(providers, roles, window, cx);
             }
             Action::RelayLog => {
                 self.splitcommand(&crate::relay::log_command(), Axis::Vertical, false, window, cx)
@@ -260,8 +234,7 @@ impl WorkspaceView {
             eprintln!("prompt: macro recording stopped: nothing captured");
             return;
         }
-        let root = cx.weak_entity();
-        crate::rename::open_macro(window, root, commands, cx);
+        self.open_rename(crate::rename::Target::Macro(commands), String::new(), window, cx);
     }
 
     /// Persist a recorded macro under `name` (coerced to a safe id), then make

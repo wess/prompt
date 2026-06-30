@@ -119,6 +119,11 @@ impl Render for WorkspaceView {
             base = base.child(spot.clone());
         }
 
+        // The active in-window dialog (rename / new agent), if any.
+        if let Some(modal) = self.modal.as_ref() {
+            base = base.child(modal.clone());
+        }
+
         #[cfg(target_os = "linux")]
         if matches!(window.window_decorations(), gpui::Decorations::Client { .. }) {
             base = base.child(crate::titlebar::resize_handles());

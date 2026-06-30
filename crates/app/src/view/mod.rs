@@ -61,7 +61,7 @@ pub fn label<'a>(title: Option<&'a str>, fallback: &'a str) -> &'a str {
 
 /// Scrollback search overlay state.
 struct Search {
-    edit: crate::textedit::TextEdit,
+    edit: guise::TextEdit,
     /// Index of the focused match among current results.
     current: usize,
     /// The query `results` were computed for; `None` until first search.
@@ -75,7 +75,7 @@ struct Search {
 
 enum Assist {
     Semantic {
-        edit: crate::textedit::TextEdit,
+        edit: guise::TextEdit,
         current: usize,
         /// The query `hits` were computed for; `None` until the first scan.
         cached_query: Option<String>,
@@ -87,7 +87,7 @@ enum Assist {
         dirty: bool,
     },
     Compose {
-        edit: crate::textedit::TextEdit,
+        edit: guise::TextEdit,
     },
     Message {
         title: String,

@@ -378,11 +378,10 @@ impl WorkspaceView {
 
     /// Open the rename window for the active tab or the focused pane.
     pub(crate) fn changetitle(&mut self, tab: bool, window: &mut Window, cx: &mut Context<Self>) {
-        let root = cx.weak_entity();
         if tab {
             let index = self.tabs.active_index();
             let initial = self.tabs.active().title.clone().unwrap_or_default();
-            crate::rename::open(window, root, crate::rename::Target::Tab(index), initial, cx);
+            self.open_rename(crate::rename::Target::Tab(index), initial, window, cx);
         } else {
             let pane = self.tabs.focused();
             let initial = self
@@ -390,7 +389,7 @@ impl WorkspaceView {
                 .get(&pane)
                 .map(|p| p.view.read(cx).title().to_string())
                 .unwrap_or_default();
-            crate::rename::open(window, root, crate::rename::Target::Pane(pane), initial, cx);
+            self.open_rename(crate::rename::Target::Pane(pane), initial, window, cx);
         }
     }
 

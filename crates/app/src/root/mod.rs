@@ -5,6 +5,7 @@
 //! themselves only know their own session.
 
 mod boot;
+mod dialogs;
 mod dispatch;
 mod layout;
 mod mcp;
@@ -266,6 +267,9 @@ pub struct WorkspaceView {
     catalog_loading: bool,
     /// The guise Spotlight quick-open overlay (cmd+P), rebuilt each open.
     spotlight: Option<Entity<guise::Spotlight>>,
+    /// The active in-window dialog (rename, new agent), as a guise Modal
+    /// overlay. `None` when no dialog is open.
+    modal: Option<gpui::AnyView>,
     /// Configured font size, restored by `reset_font_size`.
     base_font_size: gpui::Pixels,
     /// Config-file watcher; kept alive so live reload keeps working.
@@ -321,6 +325,7 @@ impl WorkspaceView {
             catalog_status: None,
             catalog_loading: false,
             spotlight: None,
+            modal: None,
             _watch: None,
         };
         this.applykeybinds(cx);

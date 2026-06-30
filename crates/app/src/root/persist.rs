@@ -245,14 +245,7 @@ impl WorkspaceView {
     /// Prompt for a name and save the current tab's arrangement as a custom tile.
     pub(crate) fn open_save_layout(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let layout = crate::tiles::from_tree(self.tabs.active().tree.root());
-        let root = cx.weak_entity();
-        crate::rename::open(
-            window,
-            root,
-            crate::rename::Target::Layout(layout),
-            String::new(),
-            cx,
-        );
+        self.open_rename(crate::rename::Target::Layout(layout), String::new(), window, cx);
     }
 
     /// Persist a captured layout under `name` and refresh the Tiles menu.

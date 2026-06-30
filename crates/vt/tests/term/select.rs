@@ -304,3 +304,86 @@ fn word_motion_crosses_rows() {
     assert_eq!(sel.start(), p(0, 0));
     assert_eq!(sel.end(), p(1, 0));
 }
+
+#[test]
+fn word_extend_then_retract_is_symmetric() {
+    let mut t = Terminal::new(20, 3, 0);
+    t.feed(b"foo bar baz");
+    t.start_selection(SelectionMode::Cell, p(0, 0));
+    // Extend right two words, then retract one: the whole second word comes
+    // back, not just a character of it (the bug this redesign fixes).
+    assert!(t.adjust_selection(SelectionAdjust::WordRight));
+    assert_eq!(t.selection_text().as_deref(), Some("foo"));
+    assert!(t.adjust_selection(SelectionAdjust::WordRight));
+    assert_eq!(t.selection_text().as_deref(), Some("foo bar"));
+    assert!(t.adjust_selection(SelectionAdjust::WordLeft));
+    assert_eq!(t.selection_text().as_deref(), Some("foo"));
+}
+
+#[test]
+fn word_extend_left_then_retract_is_symmetric() {
+    let mut t = Terminal::new(20, 3, 0);
+    t.feed(b"foo bar baz");
+    t.start_selection(SelectionMode::Cell, p(0, 10));
+    assert!(t.adjust_selection(SelectionAdjust::WordLeft));
+    assert_eq!(t.selection_text().as_deref(), Some("baz"));
+    assert!(t.adjust_selection(SelectionAdjust::WordLeft));
+    assert_eq!(t.selection_text().as_deref(), Some("bar baz"));
+    // Retract back rightward: "bar" is released as a whole.
+    assert!(t.adjust_selection(SelectionAdjust::WordRight));
+    assert_eq!(t.selection_text().as_deref(), Some("baz"));
+}
+
+#[test]
+fn char_extend_then_retract_is_symmetric() {
+    let mut t = Terminal::new(20, 3, 0);
+    t.feed(b"hello");
+    t.start_selection(SelectionMode::Cell, p(0, 0));
+    for _ in 0..3 {
+        assert!(t.adjust_selection(SelectionAdjust::Right));
+    }
+    assert_eq!(t.selection_text().as_deref(), Some("hell"));
+    for _ in 0..3 {
+        assert!(t.adjust_selection(SelectionAdjust::Left));
+    }
+    // Back to the single anchor cell.
+    let sel = t.selection().unwrap();
+    assert_eq!(sel.start(), p(0, 0));
+    assert_eq!(sel.end(), p(0, 0));
+}
+
+#[test]
+fn word_adjust_extends_mouse_word_selection_rightward() {
+    let mut t = Terminal::new(20, 3, 0);
+    t.feed(b"foo bar baz");
+    // A double-click word selection of "bar", then keyboard word motions.
+    t.start_selection(SelectionMode::Word, p(0, 5));
+    assert_eq!(t.selection_text().as_deref(), Some("bar"));
+    // Extend rightward by word adds "baz"; retract gives it back whole.
+    assert!(t.adjust_selection(SelectionAdjust::WordRight));
+    assert_eq!(t.selection_text().as_deref(), Some("bar baz"));
+    assert!(t.adjust_selection(SelectionAdjust::WordLeft));
+    assert_eq!(t.selection_text().as_deref(), Some("bar"));
+}
+
+#[test]
+fn word_adjust_extends_mouse_word_selection_leftward() {
+    let mut t = Terminal::new(20, 3, 0);
+    t.feed(b"foo bar baz");
+    // From a fresh double-click of "bar", the first word motion's direction
+    // picks which edge grows: leftward adds "foo".
+    t.start_selection(SelectionMode::Word, p(0, 5));
+    assert!(t.adjust_selection(SelectionAdjust::WordLeft));
+    assert_eq!(t.selection_text().as_deref(), Some("foo bar"));
+}
+
+#[test]
+fn word_extend_from_mid_word_reaches_word_end() {
+    let mut t = Terminal::new(20, 3, 0);
+    t.feed(b"foo bar baz");
+    // Anchored on 'a' inside "bar"; a rightward word motion rides to the end
+    // of the current word.
+    t.start_selection(SelectionMode::Cell, p(0, 5));
+    assert!(t.adjust_selection(SelectionAdjust::WordRight));
+    assert_eq!(t.selection_text().as_deref(), Some("ar"));
+}

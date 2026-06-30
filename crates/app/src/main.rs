@@ -18,7 +18,6 @@ mod mcpbridge;
 mod metrics;
 mod mouse;
 mod newagent;
-mod palette;
 mod pluginhost;
 mod pointer;
 mod quick;
@@ -33,8 +32,6 @@ mod settings;
 mod shellinteg;
 mod splits;
 mod tabbar;
-mod textedit;
-mod textkeys;
 mod tiles;
 mod titlebar;
 mod view;
@@ -156,6 +153,7 @@ pub fn open_window(
     #[cfg_attr(not(target_os = "linux"), allow(unused_mut))]
     let mut options = WindowOptions {
         window_bounds: Some(WindowBounds::Windowed(bounds)),
+        window_min_size: Some(size(px(200.0), px(200.0))),
         titlebar: Some(TitlebarOptions {
             title: Some("prompt".into()),
             appears_transparent: true,

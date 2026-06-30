@@ -70,6 +70,21 @@ pub enum SelectionAdjust {
     WordRight,
 }
 
+impl SelectionAdjust {
+    /// Whether this motion travels toward the end of content (down/right).
+    /// Decides which edge of a just-started selection is the fixed anchor.
+    pub fn is_forward(self) -> bool {
+        matches!(
+            self,
+            SelectionAdjust::Right
+                | SelectionAdjust::Down
+                | SelectionAdjust::End
+                | SelectionAdjust::PageDown
+                | SelectionAdjust::WordRight
+        )
+    }
+}
+
 /// An active selection: mode plus the expanded anchor and extent spans.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Selection {
@@ -85,6 +100,18 @@ impl Selection {
             mode,
             anchor: span,
             extent: span,
+        }
+    }
+
+    /// A precise, cell-mode selection between a fixed `anchor` cell and a
+    /// moving `caret` cell. Keyboard adjustment produces these: it collapses
+    /// any word/line expansion to exact cells so motion is symmetric (extend
+    /// and retract are inverses), then moves only the caret.
+    pub fn cell_pair(anchor: Point, caret: Point) -> Selection {
+        Selection {
+            mode: SelectionMode::Cell,
+            anchor: (anchor, anchor),
+            extent: (caret, caret),
         }
     }
 
@@ -107,12 +134,28 @@ impl Selection {
         self.anchor.1.max(self.extent.1)
     }
 
-    /// The moving end of the selection: the point keyboard adjustment
-    /// nudges, leaving the anchor fixed. For cell mode the extent is a
-    /// single point; for word/line modes this is the far edge of the
-    /// expanded extent span.
-    pub fn extent_caret(&self) -> Point {
-        self.extent.1
+    /// Resolve the selection into a fixed anchor cell and the moving caret
+    /// cell for a keyboard adjustment in `dir`.
+    ///
+    /// While an adjustment is in flight (anchor and extent differ) the extent
+    /// side is the one moving, so its outer edge is the caret. For a
+    /// selection at rest — a fresh caret, or a word/line span just made with
+    /// the mouse — there is no moving side yet, so the motion's direction
+    /// picks which edge stays fixed: moving forward pins the near (left/top)
+    /// edge and carries the far edge onward, and vice versa.
+    pub fn caret_ends_for(&self, dir: SelectionAdjust) -> (Point, Point) {
+        if self.anchor == self.extent {
+            let (lo, hi) = self.anchor;
+            if dir.is_forward() {
+                (lo, hi)
+            } else {
+                (hi, lo)
+            }
+        } else if self.extent.1 >= self.anchor.1 {
+            (self.anchor.0, self.extent.1)
+        } else {
+            (self.anchor.1, self.extent.0)
+        }
     }
 
     /// Whether `p` falls inside the selection, treating it as a stream
@@ -183,41 +226,111 @@ pub fn adjust_point(
     clamp_point(grid, moved)
 }
 
+/// Move the keyboard caret one step in `dir`, holding the `anchor` fixed.
+///
+/// Plain motions (char/line/page) defer to [`adjust_point`]. Word motions are
+/// **role-aware** so extend and retract are inverses: when the caret is the
+/// growing edge a word motion rides to the far edge of the next word
+/// ([`word_step`]); when it is the shrinking edge the motion jumps the whole
+/// word the caret sits on ([`word_skip`]), so one keypress gives the word
+/// back instead of leaving a stray character. The caret's side relative to
+/// the anchor decides which it is; at rest the motion's own direction does.
+pub fn adjust_caret(
+    grid: &Grid,
+    anchor: Point,
+    caret: Point,
+    dir: SelectionAdjust,
+    page: usize,
+    extra: &[char],
+) -> Point {
+    match dir {
+        SelectionAdjust::WordLeft | SelectionAdjust::WordRight => {
+            let forward = if caret == anchor {
+                dir.is_forward()
+            } else {
+                caret > anchor
+            };
+            let right = matches!(dir, SelectionAdjust::WordRight);
+            // The caret grows its own side when the motion points away from
+            // the anchor (forward caret moving right, backward caret moving
+            // left); otherwise it is shrinking back toward the anchor.
+            if forward == right {
+                word_step(grid, caret, right, extra)
+            } else {
+                // Retract by a whole word, but never overshoot the anchor —
+                // a word jump that would cross it collapses to the anchor
+                // instead of flipping to a stray partial selection.
+                let q = word_skip(grid, caret, right, extra);
+                if (caret > anchor && q < anchor) || (caret < anchor && q > anchor) {
+                    anchor
+                } else {
+                    q
+                }
+            }
+        }
+        _ => adjust_point(grid, caret, dir, page, extra),
+    }
+}
+
+/// One cell step in `right`'s reading-order direction, crossing into the
+/// adjacent content row at the line edge. `None` at the content boundary.
+fn step_cell(grid: &Grid, p: Point, right: bool) -> Option<Point> {
+    let cols = grid.cols().max(1);
+    if right {
+        if p.col + 1 < cols {
+            Some(Point::new(p.line, p.col + 1))
+        } else {
+            grid.absolute_row(p.line + 1).map(|_| Point::new(p.line + 1, 0))
+        }
+    } else if p.col > 0 {
+        Some(Point::new(p.line, p.col - 1))
+    } else {
+        grid.absolute_row(p.line - 1)
+            .map(|_| Point::new(p.line - 1, cols - 1))
+    }
+}
+
 /// Move `caret` one word in `right`'s direction: skip any non-word cells,
 /// then ride to the far edge of the word (its end going right, its start
 /// going left). Crosses row boundaries within existing content, matching
 /// the per-cell Left/Right wrap, so word selection flows across lines.
 /// Returns `caret` unchanged at the content edge.
 fn word_step(grid: &Grid, caret: Point, right: bool, extra: &[char]) -> Point {
-    let cols = grid.cols().max(1);
-    let step = |p: Point| -> Option<Point> {
-        if right {
-            if p.col + 1 < cols {
-                Some(Point::new(p.line, p.col + 1))
-            } else {
-                grid.absolute_row(p.line + 1).map(|_| Point::new(p.line + 1, 0))
-            }
-        } else if p.col > 0 {
-            Some(Point::new(p.line, p.col - 1))
-        } else {
-            grid.absolute_row(p.line - 1)
-                .map(|_| Point::new(p.line - 1, cols - 1))
-        }
-    };
-    let Some(mut q) = step(caret) else {
+    let Some(mut q) = step_cell(grid, caret, right) else {
         return caret;
     };
     while !is_word(grid, q, extra) {
-        match step(q) {
+        match step_cell(grid, q, right) {
             Some(p) => q = p,
             None => return q,
         }
     }
-    while let Some(p) = step(q) {
+    while let Some(p) = step_cell(grid, q, right) {
         if is_word(grid, p, extra) {
             q = p;
         } else {
             break;
+        }
+    }
+    q
+}
+
+/// Jump the caret past the whole word it sits on, in `right`'s direction:
+/// skip the current word's cells, then the gap, landing on the near edge of
+/// the next word (its end coming from the right, its start from the left).
+/// This is what retraction uses, so shrinking gives back an entire word.
+fn word_skip(grid: &Grid, caret: Point, right: bool, extra: &[char]) -> Point {
+    let mut q = caret;
+    while is_word(grid, q, extra) {
+        match step_cell(grid, q, right) {
+            Some(p) => q = p,
+            None => return q,
+        }
+    }
+    while !is_word(grid, q, extra) {
+        match step_cell(grid, q, right) {
+            Some(p) => q = p,
+            None => return q,
         }
     }
     q
