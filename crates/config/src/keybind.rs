@@ -338,23 +338,24 @@ pub fn default_keybinds() -> Vec<Keybind> {
     ] {
         binds.push(kb(shift, key, Action::AdjustSelection(dir)));
     }
-    // Cmd+Shift+Left/Right extends the selection by a whole word (macOS), and
-    // begins one at the cursor when none exists. Cmd is a GUI-only modifier
-    // (never sent to the pty), so there's nothing to fall through to.
+    // Cmd+Shift+Left/Right extends the selection from the cursor to the start
+    // or end of the line (macOS), beginning one at the cursor when none
+    // exists. Cmd is a GUI-only modifier (never sent to the pty), so there's
+    // nothing to fall through to.
     binds.push(kb(
         cmd_shift,
         "left",
-        Action::AdjustSelection(SelectAdjust::WordLeft),
+        Action::AdjustSelection(SelectAdjust::LineStart),
     ));
     binds.push(kb(
         cmd_shift,
         "right",
-        Action::AdjustSelection(SelectAdjust::WordRight),
+        Action::AdjustSelection(SelectAdjust::LineEnd),
     ));
-    // Shift+Alt+Left/Right also selects by word: alt+arrow jumps a word
-    // (the macOS readline default below), so shift+alt+arrow is the natural
-    // "select that word" — the macOS option+shift convention. Without this
-    // the combo falls through to a modified arrow escape the shell echoes.
+    // Shift+Alt+Left/Right selects by word: alt+arrow jumps a word (the macOS
+    // readline default below), so shift+alt+arrow is the natural "select that
+    // word" — the macOS option+shift convention. Without this the combo falls
+    // through to a modified arrow escape the shell echoes.
     let alt_shift = Mods {
         alt: true,
         shift: true,

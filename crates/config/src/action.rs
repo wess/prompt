@@ -107,10 +107,14 @@ pub enum SelectAdjust {
     End,
     PageUp,
     PageDown,
-    /// Extend by a whole word toward the line start (macOS ⌘⇧←).
+    /// Extend by a whole word toward the line start (macOS ⌥⇧←).
     WordLeft,
-    /// Extend by a whole word toward the line end (macOS ⌘⇧→).
+    /// Extend by a whole word toward the line end (macOS ⌥⇧→).
     WordRight,
+    /// Extend from the cursor to the start of the line (macOS ⌘⇧←).
+    LineStart,
+    /// Extend from the cursor to the end of the line (macOS ⌘⇧→).
+    LineEnd,
 }
 
 impl SelectAdjust {
@@ -126,6 +130,8 @@ impl SelectAdjust {
             "page_down" => Some(Self::PageDown),
             "word_left" => Some(Self::WordLeft),
             "word_right" => Some(Self::WordRight),
+            "line_start" => Some(Self::LineStart),
+            "line_end" => Some(Self::LineEnd),
             _ => None,
         }
     }
@@ -142,6 +148,8 @@ impl SelectAdjust {
             Self::PageDown => "page_down",
             Self::WordLeft => "word_left",
             Self::WordRight => "word_right",
+            Self::LineStart => "line_start",
+            Self::LineEnd => "line_end",
         }
     }
 }

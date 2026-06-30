@@ -156,13 +156,22 @@ impl TerminalView {
             config::SelectAdjust::PageDown => (vt::SelectionAdjust::PageDown, "pagedown"),
             config::SelectAdjust::WordLeft => (vt::SelectionAdjust::WordLeft, ""),
             config::SelectAdjust::WordRight => (vt::SelectionAdjust::WordRight, ""),
+            // To line start/end reuses the Home/End motion but, like the word
+            // motions, begins a selection at the cursor rather than falling
+            // through (these are GUI-only ⌘⇧ bindings).
+            config::SelectAdjust::LineStart => (vt::SelectionAdjust::Home, ""),
+            config::SelectAdjust::LineEnd => (vt::SelectionAdjust::End, ""),
         };
-        // Word motions (⌘⇧←/→) begin a selection at the cursor when none
-        // exists and always act — cmd is a GUI-only modifier, never sent to
-        // the pty, so there's nothing to fall through to.
+        // These motions (⌘⇧←/→ to line edges, ⌥⇧←/→ by word) begin a
+        // selection at the cursor when none exists and always act — their
+        // modifiers are GUI-only, never sent to the pty, so there's nothing
+        // to fall through to.
         if matches!(
             dir,
-            config::SelectAdjust::WordLeft | config::SelectAdjust::WordRight
+            config::SelectAdjust::WordLeft
+                | config::SelectAdjust::WordRight
+                | config::SelectAdjust::LineStart
+                | config::SelectAdjust::LineEnd
         ) {
             self.session.with_term(|term| term.extend_selection(vtdir));
             cx.notify();
