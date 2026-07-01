@@ -1,6 +1,11 @@
+<!-- Keep in sync with AGENTS.md. Same content; this file is the Claude Code
+     copy, AGENTS.md is the tool-neutral one. Edit both when either changes. -->
+
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+This file provides guidance to Claude Code (claude.ai/code) when working with
+code in this repository. Other AI agents read `AGENTS.md`, which carries the
+same guidance.
 
 ## What this is
 

@@ -1,6 +1,11 @@
+<!-- Keep in sync with CLAUDE.md. Same content; this file is tool-neutral,
+     CLAUDE.md is the Claude Code copy. Edit both when either changes. -->
+
 # AGENTS.md
 
-This file provides guidance to Codex (Codex.ai/code) when working with code in this repository.
+This file orients any AI coding agent (Codex, Cursor, Aider, Gemini CLI, and
+others) working in this repository. Claude Code reads `CLAUDE.md`, which carries
+the same guidance. If you change one, change the other.
 
 ## What this is
 
@@ -88,7 +93,7 @@ The workspace is layered bottom-up; each crate depends only on those below it.
   `#[cfg(feature = "candle")]` and has a non-candle fallback.
 - **`relay`** — the agent mesh, shipped as a standalone sidecar binary
   (`relay`), **not** part of the terminal. Lets independent coding-agent
-  sessions (Codex, Codex, …) coordinate over a shared SQLite bus: agents
+  sessions (Claude Code, Codex, …) coordinate over a shared SQLite bus: agents
   `register`, message each other / channels, and `wait` (a single blocking SSE
   call) to park for free between tasks. Built on tokio + axum + sqlx; MCP
   transport is Streamable HTTP so many sessions share one server. Submodules:
@@ -134,12 +139,13 @@ Keep the vt/terminal layers free of gpui types — the boundary is the bridge.
 
 ## Working in this repo
 
-- In this project Codex has full authority to run git and everything else —
+- In this project the agent has full authority to run git and everything else —
   branching, committing, pushing, tagging, cutting releases, and any other
   operation needed to move the work forward. The owner's usual "I handle git"
   rule does not apply here; act directly.
-- Commit messages, PRs, and release notes must never mention Codex, Codex
-  Code, or Anthropic, and carry no AI/co-author trailer.
+- Commit messages, PRs, and release notes must never mention any AI assistant or
+  vendor (Claude, Codex, Copilot, Anthropic, OpenAI, …), and must carry no AI or
+  co-author trailer.
 - Releases ship straight from `main`: a workspace version bump committed and
   pushed to `main` is the release (see the version convention below). Run the
   full gate first — `cargo test`, `cargo clippy --all-targets`, and a release
@@ -165,5 +171,8 @@ Keep the vt/terminal layers free of gpui types — the boundary is the bridge.
 - `docs/parity.md` — terminal feature coverage and known gaps.
 - `docs/release.md` — signing, notarization, release cutting.
 - `docs/gpui.md` — the gpui/zed dependency recipe.
+- `docs/guise.md` — the guise component-library migration: how `vendor/guise` is
+  wired (the single-gpui patch), the theme bridge, and the surface-by-surface
+  port status.
 - `docs/relay.md` — the agent mesh: roles, teams/tiles, the `relay` CLI, and the
   MCP coordination tools.
