@@ -71,6 +71,7 @@ impl WorkspaceView {
             self.workspace_menu(&mut actions, cx),
             self.window_menu(&mut actions),
         ];
+        menus.push(self.plugins_menu(&mut actions));
         if self.opts.ai_enabled {
             menus.push(self.ai_menu(&mut actions));
         }
@@ -151,6 +152,42 @@ impl WorkspaceView {
                 self.pick(a, "View Logs", Action::RelayLog),
             ],
         )
+    }
+
+    /// Top-level Plugins menu: each installed plugin (click opens its primary
+    /// surface — a webview, else a panel, else its first command), then a
+    /// "Manage Plugins…" item that opens the Plugins drawer (browse + install).
+    fn plugins_menu(&self, a: &mut Vec<Action>) -> Menu {
+        let mut items: Vec<Option<MenuItem>> = Vec::new();
+        if self.plugins.is_empty() {
+            items.push(Some(Self::status_item("No plugins installed")));
+        } else {
+            for plugin in &self.plugins {
+                let primary = plugin
+                    .webview
+                    .as_ref()
+                    .map(|w| Action::OpenWebview(w.id.clone()))
+                    .or_else(|| {
+                        plugin
+                            .panel
+                            .as_ref()
+                            .map(|p| Action::Sidebar(format!("right:plugin:{}", p.id)))
+                    })
+                    .or_else(|| {
+                        plugin
+                            .commands
+                            .first()
+                            .map(|c| Action::PluginCommand(plugin::actionid(&plugin.id, &c.id)))
+                    });
+                match primary {
+                    Some(action) => items.push(self.pick(a, &plugin.name, action)),
+                    None => items.push(Some(Self::status_item(&plugin.name))),
+                }
+            }
+        }
+        items.push(Some(MenuItem::separator()));
+        items.push(self.pick(a, "Manage Plugins\u{2026}", Action::ManagePlugins));
+        Self::menu("Plugins", items)
     }
 
     /// A greyed-out, non-interactive informational menu row.

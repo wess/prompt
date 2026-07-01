@@ -88,9 +88,9 @@ impl WorkspaceView {
             }
         }
         items.push((
-            "Plugins: browse & install".to_string(),
+            "Manage Plugins".to_string(),
             None,
-            Action::Sidebar("right:plugins".to_string()),
+            Action::ManagePlugins,
         ));
         self.open_spotlight(items, window, cx);
     }

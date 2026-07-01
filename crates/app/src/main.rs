@@ -23,6 +23,7 @@ mod metrics;
 mod mouse;
 mod ospicker;
 mod pluginhost;
+mod pluginmanager;
 mod pluginwebview;
 mod pluginwindow;
 mod pointer;

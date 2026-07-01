@@ -92,6 +92,25 @@ pub fn install(name: &str) -> Result<PathBuf, String> {
     }
 }
 
+/// Remove an installed plugin (by folder name) from the managed plugin
+/// directory. Refuses names outside that directory, so a plugin referenced
+/// from config by an absolute path is never touched. A symlinked dev plugin is
+/// unlinked, not followed into.
+pub fn uninstall(name: &str) -> Result<(), String> {
+    if !valid_name(name) {
+        return Err(format!("invalid plugin name {name:?}"));
+    }
+    let dir = plugin::defaultdir().ok_or("no plugin directory")?;
+    let dest = dir.join(name);
+    let meta =
+        std::fs::symlink_metadata(&dest).map_err(|e| format!("{}: {e}", dest.display()))?;
+    if meta.file_type().is_symlink() {
+        std::fs::remove_file(&dest).map_err(|e| format!("uninstall {name}: {e}"))
+    } else {
+        std::fs::remove_dir_all(&dest).map_err(|e| format!("uninstall {name}: {e}"))
+    }
+}
+
 /// Max bytes we'll accept for any single fetch (catalog listing or plugin
 /// file), so a redirecting endpoint or runaway file can't OOM us.
 const MAX_BYTES: &str = "8388608"; // 8 MiB

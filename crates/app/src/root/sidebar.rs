@@ -395,13 +395,42 @@ impl WorkspaceView {
             body = body.child(self.sidebar_note("No plugins installed."));
         }
         for (pi, plugin) in self.plugins.iter().enumerate() {
-            body = body.child(self.sidebar_row(
-                ("sb-pl-name", pi),
-                plugin.name.clone(),
-                false,
-                false,
-                false,
-            ));
+            // Clicking the plugin name opens its primary surface: a webview,
+            // else a panel, else its first command.
+            let primary = plugin
+                .webview
+                .as_ref()
+                .map(|w| config::Action::OpenWebview(w.id.clone()))
+                .or_else(|| {
+                    plugin
+                        .panel
+                        .as_ref()
+                        .map(|p| config::Action::Sidebar(format!("right:plugin:{}", p.id)))
+                })
+                .or_else(|| {
+                    plugin.commands.first().map(|c| {
+                        config::Action::PluginCommand(plugin::actionid(&plugin.id, &c.id))
+                    })
+                });
+            let name_row = self.sidebar_row(("sb-pl-name", pi), plugin.name.clone(), false, false, false);
+            body = body.child(match primary {
+                Some(action) => name_row.on_click(cx.listener(
+                    move |this, _: &gpui::ClickEvent, window, cx| {
+                        this.run_action(action.clone(), window, cx);
+                    },
+                )),
+                None => name_row,
+            });
+            if let Some(wv) = plugin.webview.as_ref() {
+                let action = config::Action::OpenWebview(wv.id.clone());
+                body = body.child(
+                    self.sidebar_row(("sb-pl-webview", row_id), "\u{25a4} Open".to_string(), true, false, false)
+                        .on_click(cx.listener(move |this, _: &gpui::ClickEvent, window, cx| {
+                            this.run_action(action.clone(), window, cx);
+                        })),
+                );
+                row_id += 1;
+            }
             if let Some(panel) = plugin.panel.as_ref() {
                 let token = format!("right:plugin:{}", panel.id);
                 body = body.child(

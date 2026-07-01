@@ -289,6 +289,8 @@ pub enum Action {
     AgentDef(String),
     /// Open a plugin's `[webview]` surface by its webview id.
     OpenWebview(String),
+    /// Open the Plugin Manager window (search / install / uninstall).
+    ManagePlugins,
     Quit,
     /// The special `unbind` action: removes the trigger's binding.
     Unbound,
@@ -421,6 +423,7 @@ impl Action {
             "open_team" => Ok(Self::OpenTeam(req(&name, param)?.to_string())),
             "agent_def" => Ok(Self::AgentDef(req(&name, param)?.to_string())),
             "open_webview" => Ok(Self::OpenWebview(req(&name, param)?.to_string())),
+            "manage_plugins" => only(Self::ManagePlugins, &name, param),
             "quit" => only(Self::Quit, &name, param),
             "unbind" => only(Self::Unbound, &name, param),
             _ => Err(format!("unknown action `{name}`")),
@@ -477,6 +480,7 @@ impl Action {
             Self::OpenTeam(s) => format!("open_team:{s}"),
             Self::AgentDef(s) => format!("agent_def:{s}"),
             Self::OpenWebview(s) => format!("open_webview:{s}"),
+            Self::ManagePlugins => "manage_plugins".into(),
             Self::PluginCommand(s) => format!("plugin_command:{s}"),
             Self::MacroRecord => "macro_record".into(),
             Self::MacroReplay(s) => format!("macro:{s}"),

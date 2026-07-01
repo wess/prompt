@@ -292,6 +292,7 @@ impl WorkspaceView {
         self.keybinds = keybinds;
         self.applykeybinds(cx);
         self.rebuild_webview_hosts(cx);
+        self.setmenus(cx);
     }
 
     /// Plugin ids currently installed (folder/manifest ids).
