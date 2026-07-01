@@ -33,6 +33,7 @@ assets = [
 assist = { path = "../assist" }
 config = { path = "../config" }
 container = { path = "../container" }
+export = { path = "../export" }
 futures = "0.3"
 global-hotkey = "0.8"
 image = "0.25"

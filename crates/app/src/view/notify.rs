@@ -40,6 +40,49 @@ impl TerminalView {
         cx.notify();
     }
 
+    /// Export the most recent `.cast` recording to `format` (a file extension
+    /// like `gif` or `mp4`), off the UI thread.
+    ///
+    /// Spawns `prompt export --fidelity <cast> <cast>.<format>` as a background
+    /// subprocess (so a long render never blocks the UI) and posts a desktop
+    /// notification when it finishes. GIF needs no external tools; the video
+    /// formats need ffmpeg.
+    pub fn export_recording(&mut self, format: &str, cx: &mut Context<Self>) {
+        let Some(cast) = latest_recording() else {
+            self.assist = Some(Assist::Message {
+                title: "No recording to export".to_string(),
+                body: "Record a session first, then export it.".to_string(),
+            });
+            cx.notify();
+            return;
+        };
+        let out = cast.with_extension(format);
+        let exe = std::env::current_exe().unwrap_or_else(|_| std::path::PathBuf::from("prompt"));
+        let out_display = out.display().to_string();
+        let name = cast
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let label = format.to_ascii_uppercase();
+        std::thread::spawn(move || {
+            let status = std::process::Command::new(exe)
+                .arg("export")
+                .arg("--fidelity")
+                .arg(&cast)
+                .arg(&out)
+                .status();
+            match status {
+                Ok(s) if s.success() => post_os_notification("Recording exported", &out_display),
+                _ => post_os_notification("Recording export failed", &out_display),
+            }
+        });
+        self.assist = Some(Assist::Message {
+            title: "Exporting recording".to_string(),
+            body: format!("{name} \u{2192} {label}; you'll be notified when it's ready."),
+        });
+        cx.notify();
+    }
+
     /// Write raw bytes to the pty, snapping the view to the live bottom.
     /// Backs the macOS readline navigation keybinds (`text:`/`esc:`).
     pub fn send_text(&mut self, bytes: &[u8], cx: &mut Context<Self>) {
@@ -173,4 +216,23 @@ fn recording_target() -> Option<(std::path::PathBuf, u64)> {
     let dir = config::default_path()?.parent()?.join("recordings");
     std::fs::create_dir_all(&dir).ok()?;
     Some((dir.join(format!("prompt-{ts}.cast")), ts))
+}
+
+/// The newest `.cast` under the recordings directory, if any.
+fn latest_recording() -> Option<std::path::PathBuf> {
+    let dir = config::default_path()?.parent()?.join("recordings");
+    let mut newest: Option<(std::time::SystemTime, std::path::PathBuf)> = None;
+    for entry in std::fs::read_dir(&dir).ok()?.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|e| e.to_str()) != Some("cast") {
+            continue;
+        }
+        let Ok(modified) = entry.metadata().and_then(|m| m.modified()) else {
+            continue;
+        };
+        if newest.as_ref().is_none_or(|(t, _)| modified > *t) {
+            newest = Some((modified, path));
+        }
+    }
+    newest.map(|(_, path)| path)
 }

@@ -7,6 +7,9 @@ mod bridge;
 mod catalog;
 mod colors;
 mod element;
+mod exportcmd;
+#[cfg(target_os = "macos")]
+mod fidelity;
 mod font;
 mod guisetheme;
 mod help;
@@ -81,6 +84,10 @@ fn main() {
         let (title, body) = notify_args(&args[1..]);
         view::notify_command(&title, &body);
         return;
+    }
+
+    if args.first().map(String::as_str) == Some("export") {
+        std::process::exit(exportcmd::run(&args[1..]));
     }
 
     let (opts, diagnostics) = config::load();

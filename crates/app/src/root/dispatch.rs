@@ -149,6 +149,9 @@ impl WorkspaceView {
                 self.onfocused(cx, |v, cx| v.toggle_recording(cx));
                 self.setmenus(cx);
             }
+            Action::ExportRecording(fmt) => {
+                self.onfocused(cx, |v, cx| v.export_recording(&fmt, cx))
+            }
             Action::ToggleQuickTerminal => crate::quick::toggle(cx),
             Action::RelayFeed => {
                 self.splitcommand(&crate::relay::feed_command(), Axis::Vertical, false, window, cx)

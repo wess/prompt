@@ -255,6 +255,9 @@ pub enum Action {
     ToggleBroadcast,
     /// Start/stop recording the focused pane as an asciinema cast.
     ToggleRecording,
+    /// Render the most recent `.cast` recording to a shareable file. The
+    /// payload is the output extension: `gif` (default), `mp4`, `mov`, or `webm`.
+    ExportRecording(String),
     /// Toggle the Quake-style dropdown quick terminal.
     ToggleQuickTerminal,
     /// Open the Relay agent-mesh feed in a split.
@@ -394,6 +397,9 @@ impl Action {
             "toggle_read_only" => only(Self::ToggleReadOnly, &name, param),
             "toggle_broadcast" | "broadcast_input" => only(Self::ToggleBroadcast, &name, param),
             "toggle_recording" | "record_session" => only(Self::ToggleRecording, &name, param),
+            "export_recording" => {
+                Ok(Self::ExportRecording(param.unwrap_or("gif").to_string()))
+            }
             "toggle_quick_terminal" | "quick_terminal" => {
                 only(Self::ToggleQuickTerminal, &name, param)
             }
@@ -482,6 +488,7 @@ impl Action {
             Self::ToggleReadOnly => "toggle_read_only".into(),
             Self::ToggleBroadcast => "toggle_broadcast".into(),
             Self::ToggleRecording => "toggle_recording".into(),
+            Self::ExportRecording(fmt) => format!("export_recording:{fmt}"),
             Self::ToggleQuickTerminal => "toggle_quick_terminal".into(),
             Self::Quit => "quit".into(),
             Self::Unbound => "unbind".into(),

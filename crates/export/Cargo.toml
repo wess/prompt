@@ -1,0 +1,16 @@
+[package]
+autotests = false
+name = "export"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+cast = { path = "../cast" }
+vt = { path = "../vt" }
+theme = { path = "../theme" }
+fontdue = "0.9"
+gif = "0.13"
+
+[dev-dependencies]
+serde_json = "1"

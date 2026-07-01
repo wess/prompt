@@ -86,6 +86,8 @@ pub(crate) fn palette_catalog() -> Vec<(&'static str, Action)> {
         ("Quick Terminal", Action::ToggleQuickTerminal),
         ("Record Macro", Action::MacroRecord),
         ("Record Session (cast)", Action::ToggleRecording),
+        ("Export Recording (GIF)", Action::ExportRecording("gif".into())),
+        ("Export Recording (MP4)", Action::ExportRecording("mp4".into())),
         ("Settings", Action::ToggleSettings),
         ("Documentation", Action::ShowHelp),
         ("Relay: Launch Agent", Action::RelayLaunch),

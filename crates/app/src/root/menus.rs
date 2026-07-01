@@ -199,6 +199,8 @@ impl WorkspaceView {
                 self.pick(a, "New OS Tab\u{2026}", Action::NewContainerTab),
                 Some(MenuItem::separator()),
                 Some(self.pick_checked(a, "Record Session", Action::ToggleRecording, recording)),
+                self.pick(a, "Export Recording as GIF", Action::ExportRecording("gif".into())),
+                self.pick(a, "Export Recording as MP4", Action::ExportRecording("mp4".into())),
                 Some(MenuItem::separator()),
                 self.pick(a, "Close", Action::CloseSurface),
                 self.pick(a, "Close Tab", Action::CloseTab),

@@ -15,16 +15,10 @@ use gpui::{
 
 use guise::{TextInput, TextInputEvent};
 
-use crate::colors::hsla;
 use crate::root::WorkspaceView;
 
 const WIDTH: f32 = 380.0;
 const HEIGHT: f32 = 440.0;
-const BG: theme::Rgb = theme::Rgb::new(35, 42, 44);
-const ROW_BG: theme::Rgb = theme::Rgb::new(49, 56, 58);
-const BORDER: theme::Rgb = theme::Rgb::new(76, 84, 88);
-const TEXT: theme::Rgb = theme::Rgb::new(242, 244, 246);
-const DIM: theme::Rgb = theme::Rgb::new(150, 158, 162);
 
 /// Open the picker window, centered over `parent`.
 pub fn open(parent: &Window, cx: &mut App) {
@@ -68,7 +62,9 @@ fn launch(app: &mut App, profile: container::Profile, picker: &mut Window) {
         .find_map(|w| w.downcast::<WorkspaceView>())
     {
         handle
-            .update(app, |ws, window, cx| ws.launch_container(&profile, window, cx))
+            .update(app, |ws, window, cx| {
+                ws.launch_container(&profile, window, cx)
+            })
             .ok();
     }
     picker.remove_window();
@@ -108,10 +104,15 @@ impl OsPickerView {
         let available = container::Engine::resolve(opts.container_engine.as_deref()).is_some();
         let (profiles, _) = container::profiles(&opts.container);
 
-        let input = cx
-            .new(|cx| TextInput::new(cx).placeholder("or type an image, e.g. debian:bookworm"));
+        let input =
+            cx.new(|cx| TextInput::new(cx).placeholder("or type an image, e.g. debian:bookworm"));
         let focus = cx.focus_handle();
-        window.focus(&input.read(cx).focus_handle(), cx);
+
+        // Focus the field after the first paint. Focusing here during
+        // construction is dropped - the input element does not exist yet - which
+        // is why the field opened looking inert and swallowing keystrokes.
+        let input_focus = input.read(cx).focus_handle();
+        window.on_next_frame(move |window, cx| window.focus(&input_focus, cx));
 
         let submit = {
             let profiles = profiles.clone();
@@ -142,14 +143,23 @@ impl OsPickerView {
 
 impl Render for OsPickerView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // Pull colors from the same guise theme the embedded TextInput uses, so
+        // the field and the rest of the dialog track one palette.
+        let t = guise::theme(cx);
+        let bg = t.body().hsla();
+        let surface = t.surface().hsla();
+        let border = t.border().hsla();
+        let text = t.text().hsla();
+        let dim = t.dimmed().hsla();
+
         let root = div()
             .size_full()
             .flex()
             .flex_col()
             .track_focus(&self.focus)
             .on_key_down(cx.listener(Self::key_down))
-            .bg(hsla(BG))
-            .text_color(hsla(TEXT))
+            .bg(bg)
+            .text_color(text)
             .pt(px(34.0)) // clear the transparent titlebar
             .px(px(16.0))
             .pb(px(16.0))
@@ -190,10 +200,10 @@ impl Render for OsPickerView {
                     .px(px(12.0))
                     .py(px(9.0))
                     .rounded(px(7.0))
-                    .bg(hsla(ROW_BG))
+                    .bg(surface)
                     .border_1()
-                    .border_color(hsla(BORDER))
-                    .hover(|s| s.border_color(hsla(TEXT)))
+                    .border_color(border)
+                    .hover(move |s| s.border_color(text))
                     .text_size(px(13.0))
                     .on_click(move |_ev: &ClickEvent, window, app| {
                         launch(app, profile.clone(), window);
@@ -202,21 +212,16 @@ impl Render for OsPickerView {
             );
         }
 
-        root.child(
-            div()
-                .text_size(px(11.0))
-                .text_color(hsla(DIM))
-                .child("RUN FRESH"),
-        )
-        .child(list)
-        .child(self.input.clone())
-        .child(
-            div()
-                .text_size(px(11.0))
-                .text_color(hsla(DIM))
-                .child("Click an image or press Return \u{2022} Esc to cancel"),
-        )
-        .into_any_element()
+        root.child(div().text_size(px(11.0)).text_color(dim).child("RUN FRESH"))
+            .child(list)
+            .child(self.input.clone())
+            .child(
+                div()
+                    .text_size(px(11.0))
+                    .text_color(dim)
+                    .child("Click an image or press Return \u{2022} Esc to cancel"),
+            )
+            .into_any_element()
     }
 }
 

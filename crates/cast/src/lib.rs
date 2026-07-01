@@ -5,6 +5,10 @@
 //! event: `[time_seconds, "o", "utf8 output"]`. We record output only (what you
 //! see); the user's keystrokes show up as the shell echoes them.
 
+pub mod reader;
+
+pub use reader::{parse, Cast, Event, EventKind, Header};
+
 use std::fs::File;
 use std::io::{self, BufWriter, Write};
 use std::path::{Path, PathBuf};
