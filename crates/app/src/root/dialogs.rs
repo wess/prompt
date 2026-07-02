@@ -20,6 +20,22 @@ impl WorkspaceView {
         cx.notify();
     }
 
+    /// Open the annotate dialog for the focused pane.
+    pub(crate) fn open_annotate(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let id = self.tabs.focused();
+        if self.panes.get(&id).is_some_and(|p| p.content.as_terminal().is_some()) {
+            self.open_rename(crate::rename::Target::Annotate(id), String::new(), window, cx);
+        }
+    }
+
+    /// Attach `note` to the current line of pane `id`.
+    pub(crate) fn annotate_pane(&mut self, id: PaneId, note: &str, cx: &mut Context<Self>) {
+        if let Some(v) = self.panes.get(&id).and_then(|p| p.content.as_terminal()) {
+            let note = note.to_string();
+            v.update(cx, |view, cx| view.annotate(note, cx));
+        }
+    }
+
     /// Dismiss the active in-window dialog and refocus the active pane.
     pub(crate) fn close_modal(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.modal.take().is_some() {

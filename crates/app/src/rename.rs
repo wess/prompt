@@ -19,6 +19,8 @@ pub enum Target {
     Pane(PaneId),
     Macro(Vec<String>),
     Layout(crate::tiles::Layout),
+    /// Annotate the current line of a pane with the entered note.
+    Annotate(PaneId),
 }
 
 impl Target {
@@ -28,6 +30,7 @@ impl Target {
             Target::Pane(_) => "Change Terminal Title",
             Target::Macro(_) => "Name Macro",
             Target::Layout(_) => "Save Layout",
+            Target::Annotate(_) => "Annotate Line",
         }
     }
 }
@@ -47,6 +50,7 @@ fn commit(
             Target::Pane(id) => ws.rename_pane(*id, text, cx),
             Target::Macro(commands) => ws.save_macro(text, commands.clone(), cx),
             Target::Layout(layout) => ws.save_layout(text, layout.clone(), cx),
+            Target::Annotate(id) => ws.annotate_pane(*id, text, cx),
         }
         ws.close_modal(window, cx);
     })

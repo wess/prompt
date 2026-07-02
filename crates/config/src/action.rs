@@ -202,6 +202,8 @@ pub enum Action {
     SearchAll,
     /// Open the profile (named launch) picker.
     Profiles,
+    /// Annotate the current line with a note.
+    Annotate,
     Paste,
     /// Select the entire terminal buffer (scrollback + screen).
     SelectAll,
@@ -370,6 +372,7 @@ impl Action {
             "snippets" | "workflows" => only(Self::Snippets, &name, param),
             "search_all" | "global_search" => only(Self::SearchAll, &name, param),
             "profiles" | "profile_picker" => only(Self::Profiles, &name, param),
+            "annotate" => only(Self::Annotate, &name, param),
             "paste_from_clipboard" | "paste" => only(Self::Paste, &name, param),
             "select_all" => only(Self::SelectAll, &name, param),
             "adjust_selection" => {
@@ -487,6 +490,7 @@ impl Action {
             Self::Snippets => "snippets".into(),
             Self::SearchAll => "search_all".into(),
             Self::Profiles => "profiles".into(),
+            Self::Annotate => "annotate".into(),
             Self::Paste => "paste_from_clipboard".into(),
             Self::SelectAll => "select_all".into(),
             Self::AdjustSelection(d) => format!("adjust_selection:{}", d.as_str()),

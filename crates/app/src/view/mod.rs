@@ -19,6 +19,7 @@ use crate::element::TerminalElement;
 use crate::metrics::{CellSize, Padding};
 use crate::mouse::MouseState;
 
+mod annotate;
 mod assist;
 mod copymode;
 mod hints;
@@ -256,6 +257,8 @@ pub struct TerminalView {
     line_times: std::collections::VecDeque<u64>,
     /// vt committed-lines mark; `u64::MAX` until the first timestamp scan.
     committed_last: u64,
+    /// Line annotations, keyed by stable line sequence.
+    annotations: std::collections::HashMap<u64, String>,
     /// Active local-assist overlay, if any.
     assist: Option<Assist>,
     /// Focus in/out listeners that drive focus reporting (?1004).
@@ -331,6 +334,7 @@ impl TerminalView {
             trigger_hwm: usize::MAX,
             line_times: std::collections::VecDeque::new(),
             committed_last: u64::MAX,
+            annotations: std::collections::HashMap::new(),
             assist: None,
             _focus_subs: [sub_in, sub_out],
         }
@@ -577,6 +581,7 @@ impl Render for TerminalView {
             ))
             .children(self.badge_overlay(cx))
             .children(self.timestamps_overlay(cx))
+            .children(self.annotations_overlay())
             .children(self.hints_overlay())
             .children(self.copy_cursor_overlay())
             .children(bar)

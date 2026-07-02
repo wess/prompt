@@ -301,6 +301,7 @@ pub fn default_keybinds() -> Vec<Keybind> {
         kb(cmd_alt, "e", Action::UnicodePicker),
         kb(cmd_alt, "s", Action::Snippets),
         kb(cmd_alt, "p", Action::Profiles),
+        kb(cmd_alt, "a", Action::Annotate),
         kb(cmd, "v", Action::Paste),
         kb(cmd, "+", Action::IncreaseFontSize(1.0)),
         kb(cmd, "=", Action::IncreaseFontSize(1.0)),
