@@ -273,3 +273,20 @@ Conventions (non-negotiable):
   system for ligatures, exact fonts, and box-drawing geometry. Also fixed the New
   OS Tab picker: focus the image field on open (deferred to first paint) and
   match its colors to the guise theme so it no longer looks disabled.
+- 2026-07-02: terminal power-feature pass (1.10.0–1.11.0). A broad sweep toward
+  parity with iTerm2/kitty/wezterm/Warp/ghostty, every feature configurable and
+  wired into Settings. Selection & navigation: smart selection (`vt::semantic`),
+  hint mode (`hints`, cmd+shift+u), vi/copy mode (`copy_mode`, cmd+shift+space),
+  middle-click paste, focus-follows-mouse. Command blocks: `copy_command_output`
+  (cmd+shift+o) over OSC 133 marks. Fuzzy pickers on the guise Spotlight:
+  clipboard history (cmd+shift+y), global search across tabs (cmd+alt+f),
+  emoji/symbol (cmd+alt+e), snippets/workflows (cmd+alt+s), launch profiles
+  (cmd+alt+p). Automation & privacy: regex output triggers (desktop notify),
+  secret redaction on every copy path (both regex-backed, unit-tested). Reading
+  aids: per-line timestamps (new monotonic `vt` `committed_lines` + a capture
+  ring) and line annotations (`annotate`, cmd+alt+a). Appearance: auto
+  light/dark theme (`observe_window_appearance`), `minimum-contrast` (WCAG,
+  previously a dead setting), `background-opacity`, `background-image`, pane
+  `badge`. Agent glance: an Activity sidebar dashboard (working/attention/idle
+  per tab). See `docs/parity.md`; the remaining large/blocked items (persistent
+  detachable sessions, kitty graphics, ssh multiplexing) are noted there.
