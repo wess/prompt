@@ -24,14 +24,16 @@ fn motion_reporting_per_mode() {
 
 #[test]
 fn click_counts_map_to_modes() {
-    assert_eq!(click_mode(0), SelectionMode::Cell); // defensive
-    assert_eq!(click_mode(1), SelectionMode::Cell);
-    assert_eq!(click_mode(2), SelectionMode::Word);
-    assert_eq!(click_mode(3), SelectionMode::Line);
+    assert_eq!(click_mode(0, false), SelectionMode::Cell); // defensive
+    assert_eq!(click_mode(1, false), SelectionMode::Cell);
+    assert_eq!(click_mode(2, false), SelectionMode::Word);
+    assert_eq!(click_mode(3, false), SelectionMode::Line);
     // Rapid clicking cycles.
-    assert_eq!(click_mode(4), SelectionMode::Cell);
-    assert_eq!(click_mode(5), SelectionMode::Word);
-    assert_eq!(click_mode(6), SelectionMode::Line);
+    assert_eq!(click_mode(4, false), SelectionMode::Cell);
+    assert_eq!(click_mode(5, false), SelectionMode::Word);
+    assert_eq!(click_mode(6, false), SelectionMode::Line);
+    // With smart selection, double-click is the semantic token.
+    assert_eq!(click_mode(2, true), SelectionMode::Smart);
 }
 
 #[test]

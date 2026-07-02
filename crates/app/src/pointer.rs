@@ -251,6 +251,7 @@ pub fn up(p: &Pointer, e: &MouseUpEvent, window: &mut Window, cx: &mut App) {
     if p.copy_on_select {
         if let Some(text) = p.session.with_term(|t| t.selection_text()) {
             if !text.is_empty() {
+                let text = crate::redact::mask(text, cx);
                 cx.write_to_clipboard(ClipboardItem::new_string(text));
             }
         }

@@ -141,7 +141,10 @@ impl SettingsView {
                 self.list_group(ListKind::FontFeature, cx).into_any_element(),
                 self.list_group(ListKind::Palette, cx).into_any_element(),
             ],
-            Section::Terminal => vec![self.list(self.terminal_rows(cx)).into_any_element()],
+            Section::Terminal => vec![
+                self.list(self.terminal_rows(cx)).into_any_element(),
+                self.list_group(ListKind::Redact, cx).into_any_element(),
+            ],
             Section::Keyboard => vec![self.keyboard_group(cx).into_any_element()],
             Section::Macros => vec![self.macros_group(cx).into_any_element()],
             Section::Plugins => vec![self.list_group(ListKind::Plugin, cx).into_any_element()],

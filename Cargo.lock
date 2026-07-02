@@ -265,6 +265,7 @@ dependencies = [
  "plugin",
  "pty",
  "raw-window-handle",
+ "regex",
  "serde",
  "serde_json",
  "smallvec",

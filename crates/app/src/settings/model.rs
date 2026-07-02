@@ -537,6 +537,7 @@ pub enum ListKind {
     Plugin,
     Keybind,
     AgentTool,
+    Redact,
 }
 
 impl ListKind {
@@ -548,6 +549,7 @@ impl ListKind {
             ListKind::Plugin => "Plugin directories",
             ListKind::Keybind => "Keybindings",
             ListKind::AgentTool => "Custom tools",
+            ListKind::Redact => "Redact secrets on copy",
         }
     }
 
@@ -559,6 +561,7 @@ impl ListKind {
             ListKind::Plugin => "Add plugin",
             ListKind::Keybind => "Add binding",
             ListKind::AgentTool => "Add tool",
+            ListKind::Redact => "Add pattern",
         }
     }
 
@@ -570,6 +573,7 @@ impl ListKind {
             ListKind::Plugin => "~/.config/prompt/plugins/name",
             ListKind::Keybind => "cmd+shift+t=new_tab",
             ListKind::AgentTool => "mytool|/path/to/bin {prompt} --mcp {mcp}",
+            ListKind::Redact => "regex, e.g. sk-[A-Za-z0-9]{20,}",
         }
     }
 
@@ -589,6 +593,7 @@ impl ListKind {
                 binds.iter().map(|kb| kb.config_line()).collect()
             }
             ListKind::AgentTool => o.agent_custom.clone(),
+            ListKind::Redact => o.redact.clone(),
         }
     }
 
@@ -601,6 +606,7 @@ impl ListKind {
             ListKind::FontFeature => ("font-feature", clean(entries)),
             ListKind::Palette => ("palette", clean(entries)),
             ListKind::Plugin => ("plugin", clean(entries)),
+            ListKind::Redact => ("redact", clean(entries)),
             ListKind::Keybind => {
                 let desired: Vec<config::Keybind> = entries
                     .iter()
