@@ -34,7 +34,23 @@ pub struct Plugin {
     /// handled by the `[runtime]` via a `tool` request. This is what makes a
     /// plugin agent-callable: the tools appear in `prompt mcp`'s tool list.
     pub tools: Vec<Tool>,
+    /// `capability = "…"`: what the plugin declares it accesses (from
+    /// [`CAPABILITIES`]). Advisory today — surfaced at install so users see a
+    /// plugin's reach — and the vocabulary the sandboxed runtime will enforce.
+    pub capabilities: Vec<String>,
 }
+
+/// The capabilities a plugin may declare (`capability = "…"`). A process
+/// `[runtime]` runs with full user privileges regardless; these describe intent
+/// for the user and are the gate list the WASM runtime enforces.
+pub const CAPABILITIES: &[&str] = &[
+    "commands",   // run shell commands / terminal directives
+    "screen",     // read terminal output (read_screen)
+    "network",    // make network requests
+    "filesystem", // read or write files
+    "clipboard",  // read or write the clipboard
+    "notify",     // post desktop notifications
+];
 
 /// `[[tool]]` — a tool a plugin exposes to AI agents over MCP. When an agent
 /// calls it, the app invokes the plugin's `[runtime]` with a `tool` request
@@ -264,6 +280,7 @@ struct RawPlugin {
     webview_boot: bool,
     triggers: Vec<RawTrigger>,
     tools: Vec<RawTool>,
+    capabilities: Vec<String>,
 }
 
 #[derive(Default)]
@@ -403,6 +420,19 @@ fn rootkey(
         "name" => raw.name = Some(val.to_string()),
         "version" => raw.version = Some(val.to_string()),
         "description" => raw.description = Some(val.to_string()),
+        "capability" => {
+            if CAPABILITIES.contains(&val) {
+                if !raw.capabilities.iter().any(|c| c == val) {
+                    raw.capabilities.push(val.to_string());
+                }
+            } else {
+                diags.push(diag(
+                    path,
+                    line,
+                    &format!("unknown capability `{val}` (one of {})", CAPABILITIES.join(", ")),
+                ));
+            }
+        }
         _ => diags.push(diag(path, line, &format!("unknown plugin key `{key}`"))),
     }
 }
@@ -572,6 +602,7 @@ fn build(raw: RawPlugin, path: &std::path::Path, diags: &mut Vec<Diagnostic>) ->
         webview,
         triggers,
         tools,
+        capabilities: raw.capabilities,
     })
 }
 

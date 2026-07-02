@@ -308,6 +308,24 @@ description = "List tables."
     }
 
     #[test]
+    fn parses_capabilities() {
+        let (plugin, diags) = parse(
+            path(),
+            "id = \"x\"\ncapability = \"network\"\ncapability = \"filesystem\"\ncapability = \"network\"\n",
+        );
+        assert!(diags.is_empty(), "{diags:?}");
+        // Deduplicated, known-only.
+        assert_eq!(plugin.unwrap().capabilities, vec!["network", "filesystem"]);
+    }
+
+    #[test]
+    fn unknown_capability_is_diagnosed() {
+        let (plugin, diags) = parse(path(), "id = \"x\"\ncapability = \"root\"\n");
+        assert!(plugin.unwrap().capabilities.is_empty());
+        assert!(diags.iter().any(|d| d.message.contains("unknown capability")));
+    }
+
+    #[test]
     fn tool_without_runtime_is_diagnosed() {
         let (plugin, diags) = parse(
             path(),

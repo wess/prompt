@@ -10,7 +10,7 @@ mod manifest;
 pub use load::{defaultdir, load};
 pub use manifest::{
     parse, Command, CommandMode, Diagnostic, Panel, Placement, Plugin, Runtime, Tool, ToolParam,
-    Trigger, TriggerAction, TriggerTarget, Webview, WebviewSource, TRIGGER_EVENTS,
+    Trigger, TriggerAction, TriggerTarget, Webview, WebviewSource, CAPABILITIES, TRIGGER_EVENTS,
 };
 
 /// The manifest filename inside a plugin directory.

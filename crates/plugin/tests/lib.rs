@@ -20,6 +20,7 @@ fn keybind_entries_use_plugin_actions() {
         webview: None,
         triggers: Vec::new(),
         tools: Vec::new(),
+        capabilities: Vec::new(),
     }];
     assert_eq!(
         keybinds(&plugins),

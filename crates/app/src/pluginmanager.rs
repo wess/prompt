@@ -240,6 +240,7 @@ impl Render for PluginManager {
                     &p.name,
                     Some(&p.version),
                     p.description.as_deref(),
+                    &p.capabilities,
                     surface,
                     border,
                     text,
@@ -270,6 +271,7 @@ impl Render for PluginManager {
                     name,
                     None,
                     None,
+                    &[],
                     surface,
                     border,
                     text,
@@ -371,6 +373,7 @@ impl PluginManager {
         name: &str,
         version: Option<&str>,
         description: Option<&str>,
+        capabilities: &[String],
         surface: gpui::Hsla,
         border: gpui::Hsla,
         text: gpui::Hsla,
@@ -428,6 +431,14 @@ impl PluginManager {
                     .text_size(px(12.0))
                     .text_color(dim)
                     .child(desc.to_string()),
+            );
+        }
+        if !capabilities.is_empty() {
+            info = info.child(
+                div()
+                    .text_size(px(11.0))
+                    .text_color(dim)
+                    .child(format!("accesses: {}", capabilities.join(", "))),
             );
         }
 

@@ -221,6 +221,15 @@ if (req.kind === "tool" &amp;&amp; req.method === "stats") {
 }</code></pre>
         <div class="callout tip"><span class="label">Tip</span><p>Tool handlers run wherever <code>prompt mcp</code> runs, so they don't need the GUI — a plugin tool is just a spawn of your runtime with the agent's arguments. The bundled <a href="https://github.com/wess/prompt/tree/main/plugins/sysinfo">sysinfo</a> plugin ships a working <code>sysinfo_stats</code> tool.</p></div>
 
+        <h2>Capabilities</h2>
+        <p>A plugin can declare what it accesses with repeated <code>capability</code> keys, from a known set: <code>commands</code>, <code>screen</code>, <code>network</code>, <code>filesystem</code>, <code>clipboard</code>, <code>notify</code>. The declarations are shown in the Plugin Manager (an <em>"accesses: network, filesystem"</em> line) so users can see a plugin's reach before trusting it.</p>
+        <pre><code>id = "backups"
+description = "Snapshot the current directory to S3."
+capability = "commands"
+capability = "network"
+capability = "filesystem"</code></pre>
+        <div class="callout note"><span class="label">Note</span><p>Today a process <code>[runtime]</code> runs with your full user privileges, so capabilities are <strong>advisory</strong> — a declaration of intent, not a sandbox. They are the vocabulary the upcoming WebAssembly plugin runtime will <em>enforce</em>: a WASM plugin will only receive the capabilities it declares. Declare them now so your plugin is ready.</p></div>
+
         <h2>Write your first plugin</h2>
         <p>Build a tiny IPC panel that shows the current directory and a refresh button.</p>
         <ol>

@@ -2,6 +2,8 @@ id = "sysinfo"
 name = "System"
 version = "0.1.0"
 description = "A live panel with host load and disk, plus a monitor shortcut"
+capability = "commands"
+capability = "filesystem"
 
 [runtime]
 command = "bun run plugin.ts"
