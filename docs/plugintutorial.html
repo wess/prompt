@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Plugin development tutorial — Prompt docs</title>
-    <meta name="description" content="A hands-on, end-to-end tutorial for building Prompt plugins: command plugins, live IPC panels, webview surfaces, event triggers, the JSON protocol, host capabilities, debugging, and publishing.">
+    <meta name="description" content="A hands-on, end-to-end tutorial for building Prompt plugins: command plugins, live IPC panels, webview surfaces, event triggers, agent tools (MCP), the JSON protocol, host capabilities, debugging, and publishing.">
     <meta name="theme-color" content="#05070c">
     <link rel="icon" href="icon.png">
     <link rel="stylesheet" href="style.css">
@@ -19,7 +19,7 @@
         <p class="lede">A hands-on walk from an empty folder to four working plugins — a command launcher, a live side panel, an interactive web view, and an event-driven automation — then the full protocol, the host capabilities your plugin can call, and how to debug and publish. Nothing here needs a build step or links against the app; a plugin is a folder with a <code>plugin.toml</code> and, optionally, a program that speaks JSON over stdio. For the terse reference, see the <a href="plugins.html">Plugins</a> page.</p>
 
         <h2>What a plugin can be</h2>
-        <p>A single plugin folder can mix any of four contribution types. Pick the smallest that does the job:</p>
+        <p>A single plugin folder can mix any of five contribution types. Pick the smallest that does the job:</p>
         <div class="tablewrap"><table>
           <thead><tr><th>Type</th><th>Section</th><th>Use it for</th></tr></thead>
           <tbody>
@@ -27,6 +27,7 @@
             <tr><td>Panel</td><td><code>[runtime]</code> + <code>[panel]</code></td><td>A live side-drawer UI painted from a JSON block tree, with buttons.</td></tr>
             <tr><td>Webview</td><td><code>[webview]</code></td><td>Your own HTML/JS surface in a panel, window, or tab, wired to the terminal.</td></tr>
             <tr><td>Trigger</td><td><code>[[trigger]]</code></td><td>React to terminal events (command finished, dir changed, bell…) with no UI.</td></tr>
+            <tr><td>Tool</td><td><code>[runtime]</code> + <code>[[tool]]</code></td><td>A capability your AI agents can call — exposed through Prompt's MCP server.</td></tr>
           </tbody>
         </table></div>
 
@@ -239,6 +240,26 @@ target = "background"        <span class="c"># detached; no terminal UI</span></
           <li><code>invoke = "method"</code> — calls your <code>[runtime]</code> with the event payload <code>{ event, … }</code>; any <code>run</code> directives it returns are executed. Use this when the reaction needs logic ("was this a test run? did it fail?").</li>
         </ul>
         <div class="callout note"><span class="label">Note</span><p><code>command_finished</code> fires after every command (including a success at shell start), so filter early — <code>when = "nonzero"</code> or an <code>invoke</code> that returns quickly. <code>dir_changed</code> only fires when the directory actually changes, not on every prompt.</p></div>
+
+        <h2>Tutorial 5 — an agent tool</h2>
+        <p>The previous tutorials extend the terminal for <em>you</em>. A <code>[[tool]]</code> extends it for your <strong>AI agents</strong>: it joins Prompt's MCP server, so any MCP client — Claude, or an agent running in a relay session — can call it alongside the built-in terminal tools. This is what makes a plugin a capability, not just a UI.</p>
+        <p>A tool needs a <code>[runtime]</code> to handle it. Declare it with a description (shown to the agent) and parameters as <code>param = "name | type | description | required"</code> — the host turns these into the MCP <code>inputSchema</code>:</p>
+        <pre><code>[runtime]
+command = "bun run plugin.ts"
+
+[[tool]]
+id = "stats"
+description = "Read host system stats: hostname, load, and disk usage."
+param = "cwd | string | Directory to report on"</code></pre>
+        <p>Your runtime receives a <code>tool</code> request — <code>kind: "tool"</code>, <code>method:</code> the tool id, <code>params:</code> the agent's arguments — and returns its answer in <code>result</code>. The tool is exposed to agents as <code>&lt;plugin-id&gt;_&lt;tool-id&gt;</code> (here, <code>sysinfo_stats</code>):</p>
+        <pre><code><span class="c">// plugin.ts</span>
+const req = JSON.parse((await Bun.stdin.text()) || "{}");
+if (req.kind === "tool" &amp;&amp; req.method === "stats") {
+  const at = (req.params &amp;&amp; req.params.cwd) || process.cwd();
+  const disk = /* …run df at `at`… */ {};
+  console.log(JSON.stringify({ result: { host: "…", load: "…", disk } }));
+}</code></pre>
+        <p>Now an agent can ask <em>"what's the disk usage here?"</em> and call <code>sysinfo_stats</code> directly — no shell round-trip, no screen-scraping. Tool handlers run wherever <code>prompt mcp</code> runs, so they don't need the GUI. See the bundled <a href="https://github.com/wess/prompt/tree/main/plugins/sysinfo">sysinfo</a> plugin for the complete example, and the <a href="mcp.html">MCP page</a> for connecting a client.</p>
 
         <h2>Host capabilities</h2>
         <p>Panels (via <code>run</code> directives), webviews (via <code>Prompt.invoke</code>), and triggers (via <code>invoke</code>) can ask the app to do things. These built-in methods are available:</p>
