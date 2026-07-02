@@ -46,11 +46,14 @@
         <h2>Command palette</h2>
         <p>
           Press <kbd>⌘⇧P</kbd> (<code>command_palette</code>) for the fuzzy command
-          palette over Prompt's full action catalog. Each row shows the action's
-          current keybinding, so the palette doubles as a way to learn shortcuts. Type
-          a subsequence of the label to filter (e.g. <code>nst</code> matches
-          “New Split”), then press <kbd>↵</kbd>.
+          palette over Prompt's full action catalog — every built-in action (Notes,
+          copy/hint mode, the pickers, splits, recording, settings…) <em>and</em> the
+          commands and surfaces contributed by every installed plugin. Each row shows
+          the action's current keybinding, so the palette doubles as a way to learn
+          shortcuts. Type a subsequence of the label to filter (e.g. <code>nst</code>
+          matches “New Split”), then press <kbd>↵</kbd>.
         </p>
+        <div class="callout tip"><span class="label">Tip</span><p>Anything in the palette can be bound to a key. Every action has a config token (shown on the <a href="keybindings.html">Keybindings</a> page), so <code>keybind = cmd+shift+n=notes</code> or <code>keybind = cmd+j=open_webview:dashboard</code> launches it directly. Notes is bound to <kbd>⌘⌥N</kbd> by default.</p></div>
 
         <h2>Which one to use</h2>
         <div class="tablewrap">

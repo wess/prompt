@@ -215,13 +215,34 @@ impl WorkspaceView {
     /// Open the command palette: a Spotlight over the curated action catalog,
     /// each entry tagged with its current keybind.
     pub(crate) fn open_palette(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let items = palette_catalog()
+        let mut items: Vec<(String, Option<String>, Action)> = palette_catalog()
             .into_iter()
             .map(|(label, action)| {
                 let hint = self.shortcut_hint(&action);
                 (label.to_string(), hint, action)
             })
             .collect();
+        // Installed plugins contribute their commands and webview surfaces to
+        // the palette too (VS Code-style), so everything is reachable from here.
+        let mut plugin_entries: Vec<(String, Action)> = Vec::new();
+        for plugin in &self.plugins {
+            for command in &plugin.commands {
+                plugin_entries.push((
+                    format!("{}: {}", plugin.name, command.title),
+                    Action::PluginCommand(plugin::actionid(&plugin.id, &command.id)),
+                ));
+            }
+            if let Some(webview) = &plugin.webview {
+                plugin_entries.push((
+                    format!("Open {}", webview.title),
+                    Action::OpenWebview(webview.id.clone()),
+                ));
+            }
+        }
+        for (label, action) in plugin_entries {
+            let hint = self.shortcut_hint(&action);
+            items.push((label, hint, action));
+        }
         self.open_spotlight(items, window, cx);
     }
 
