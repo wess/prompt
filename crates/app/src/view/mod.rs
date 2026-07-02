@@ -243,6 +243,9 @@ pub struct TerminalView {
     search: Option<Search>,
     /// Active hint mode (keyboard link-following), if open.
     hints: Option<hints::Hints>,
+    /// High-water global line index already scanned for output triggers;
+    /// `usize::MAX` until the first scan (which skips pre-existing content).
+    trigger_hwm: usize,
     /// Active local-assist overlay, if any.
     assist: Option<Assist>,
     /// Focus in/out listeners that drive focus reporting (?1004).
@@ -314,6 +317,7 @@ impl TerminalView {
             sync_pending: false,
             search: None,
             hints: None,
+            trigger_hwm: usize::MAX,
             assist: None,
             _focus_subs: [sub_in, sub_out],
         }
@@ -445,6 +449,7 @@ impl TerminalView {
     /// a short safety timer so a program that never clears ?2026 can't
     /// freeze the view.
     fn wakeup(&mut self, cx: &mut Context<Self>) {
+        self.scan_triggers(cx);
         if let Some(s) = &mut self.search {
             s.dirty = true;
         }

@@ -105,6 +105,13 @@ pub fn apply(opts: &mut Options, key: &str, val: &str) -> Result<(), String> {
                 value::parse_bool(val).ok_or_else(|| bad("boolean", val))?
             };
         }
+        "trigger" => {
+            if empty {
+                opts.trigger = d.trigger;
+            } else {
+                opts.trigger.push(val.to_string());
+            }
+        }
         "background" => {
             opts.background = if empty {
                 d.background

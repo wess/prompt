@@ -29,6 +29,7 @@ mod pluginwindow;
 mod pointer;
 mod quick;
 mod redact;
+mod trigger;
 mod relay;
 mod relaywatch;
 mod reload;
@@ -126,6 +127,7 @@ fn spawn_window(cx: &mut App) {
 /// Derive appearance from `opts` and open one default-sized window.
 fn open_default_window(opts: config::Options, cx: &mut App) {
     redact::install(&opts.redact, cx);
+    trigger::install(&opts.trigger, cx);
     let colors = Rc::new(colors::from_config(&opts, root::is_dark(cx.window_appearance())));
     guisetheme::install(&colors, cx);
     let font = font::build(&opts);

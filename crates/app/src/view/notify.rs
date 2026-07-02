@@ -11,6 +11,39 @@ const REPLAY_TIMEOUT: Duration = Duration::from_secs(20);
 const REPLAY_FALLBACK_GAP: Duration = Duration::from_millis(150);
 
 impl TerminalView {
+    /// Scan output lines newly completed since the last wakeup against the
+    /// configured regex triggers, firing a desktop notification per match.
+    /// `trigger_hwm == usize::MAX` marks the first scan, which only records the
+    /// high-water mark so pre-existing scrollback doesn't fire.
+    pub(crate) fn scan_triggers(&mut self, cx: &mut Context<Self>) {
+        let Some(triggers) = crate::trigger::current(cx) else {
+            self.trigger_hwm = usize::MAX;
+            return;
+        };
+        let start = self.trigger_hwm;
+        let (fires, total) = self.session.with_term(|t| {
+            let lines = t.text_lines();
+            let total = lines.len();
+            // Skip the final line: it may still be mid-write.
+            let end = total.saturating_sub(1);
+            let mut fires = Vec::new();
+            if start != usize::MAX {
+                for (idx, text, _) in &lines {
+                    if *idx >= start && *idx < end {
+                        if let Some(hit) = triggers.check(text) {
+                            fires.push(hit);
+                        }
+                    }
+                }
+            }
+            (fires, total)
+        });
+        self.trigger_hwm = total.saturating_sub(1);
+        for (title, body) in fires {
+            post_os_notification(&title, &body);
+        }
+    }
+
     /// Whether this pane is recording an asciinema cast.
     pub fn is_recording(&self) -> bool {
         self.session.is_recording()

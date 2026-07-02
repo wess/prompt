@@ -257,6 +257,9 @@ pub struct Options {
     pub focus_follows_mouse: bool,
     /// File key: `middle-click-paste` - paste the selection on a middle click.
     pub middle_click_paste: bool,
+    /// File key: `trigger` (repeatable) - `regex` or `regex | title`; when new
+    /// output matches the regex, a desktop notification fires with the line.
+    pub trigger: Vec<String>,
 }
 
 /// The built-in primary font when none is configured.
@@ -365,6 +368,7 @@ impl Default for Options {
             background_opacity: 1.0,
             focus_follows_mouse: false,
             middle_click_paste: false,
+            trigger: Vec::new(),
         }
     }
 }
