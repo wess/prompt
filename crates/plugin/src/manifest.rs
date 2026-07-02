@@ -65,6 +65,11 @@ pub struct Webview {
     pub placement: Placement,
     /// Where the page content comes from.
     pub source: WebviewSource,
+    /// When true (and the plugin has a `[runtime]`), the app invokes the
+    /// runtime's `boot` method before loading, and navigates to the URL it
+    /// returns (`{ port }` or `{ url }`). Lets a plugin start a local server and
+    /// hand back its address — the page then loads from a real `http` origin.
+    pub boot: bool,
 }
 
 /// Where a `[webview]` surface is shown. `tab` is parsed now but hosted in a
@@ -227,6 +232,7 @@ struct RawPlugin {
     webview_placement: Option<Placement>,
     webview_url: Option<String>,
     webview_entry: Option<String>,
+    webview_boot: bool,
     triggers: Vec<RawTrigger>,
 }
 
@@ -460,6 +466,7 @@ fn build(raw: RawPlugin, path: &std::path::Path, diags: &mut Vec<Diagnostic>) ->
             raw.webview_placement,
             raw.webview_url,
             raw.webview_entry,
+            raw.webview_boot,
             &id,
             &name,
             path,
@@ -589,6 +596,7 @@ fn webviewkey(
         },
         "url" => raw.webview_url = Some(val.to_string()),
         "entry" => raw.webview_entry = Some(val.to_string()),
+        "boot" => raw.webview_boot = matches!(val, "true" | "1" | "yes"),
         _ => diags.push(diag(path, line, &format!("unknown webview key `{key}`"))),
     }
 }
@@ -603,6 +611,7 @@ fn build_webview(
     placement: Option<Placement>,
     raw_url: Option<String>,
     raw_entry: Option<String>,
+    boot: bool,
     id_default: &str,
     name_default: &str,
     path: &std::path::Path,
@@ -647,6 +656,7 @@ fn build_webview(
             .unwrap_or_else(|| "\u{25f1}".to_string()),
         placement: placement.unwrap_or_default(),
         source,
+        boot,
     })
 }
 

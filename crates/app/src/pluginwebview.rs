@@ -55,6 +55,23 @@ const BRIDGE_JS: &str = r#"
 })();
 "#;
 
+/// Shown in a `boot` webview while its runtime starts up.
+const STARTING_HTML: &str = "<!doctype html><html><head><meta charset=\"utf-8\">\
+<style>body{background:#1c1c1e;color:#8a8a90;font:13px -apple-system,system-ui,sans-serif;\
+display:flex;align-items:center;justify-content:center;height:100vh;margin:0}</style></head>\
+<body>Starting\u{2026}</body></html>";
+
+/// A simple failure page for a `boot` webview whose runtime didn't come up.
+fn failure_html(err: &str) -> String {
+    let safe = err.replace('<', "&lt;").replace('>', "&gt;");
+    format!(
+        "<!doctype html><html><head><meta charset=\"utf-8\">\
+<style>body{{background:#1c1c1e;color:#e0a0a0;font:13px -apple-system,system-ui,sans-serif;\
+display:flex;align-items:center;justify-content:center;height:100vh;margin:0;padding:20px;\
+text-align:center}}</style></head><body>Couldn't start: {safe}</body></html>"
+    )
+}
+
 pub struct PluginWebView {
     plugin: plugin::Plugin,
     /// The `[webview]` surface id, used as the runtime message target.
@@ -71,16 +88,23 @@ impl PluginWebView {
             .as_ref()
             .map(|w| w.id.clone())
             .unwrap_or_else(|| plugin.id.clone());
+        let boot = decl.as_ref().map(|w| w.boot).unwrap_or(false);
         let url = decl
             .as_ref()
             .map(|w| resolve_source(&plugin, &w.source))
             .unwrap_or_default();
 
+        // A `boot` webview shows a placeholder, then navigates once its runtime
+        // reports its address (see `boot_runtime`). This avoids loading a page
+        // over `file://`, from which the JS bridge can't reach native. Others
+        // load their source directly.
         let webview = cx.new(|cx| {
-            WebView::new(cx)
-                .init_script(BRIDGE_JS)
-                .bordered(false)
-                .url(url)
+            let wv = WebView::new(cx).init_script(BRIDGE_JS).bordered(false);
+            if boot {
+                wv.html(STARTING_HTML)
+            } else {
+                wv.url(url.clone())
+            }
         });
 
         let sub = cx.subscribe(&webview, |this, _wv, event: &WebViewEvent, cx| {
@@ -89,13 +113,65 @@ impl PluginWebView {
             }
         });
 
-        Self {
+        let mut this = Self {
             plugin,
             webview_id,
             webview,
             focus: cx.focus_handle(),
             _sub: sub,
+        };
+        if boot {
+            this.boot_runtime(url, cx);
         }
+        this
+    }
+
+    /// Invoke the plugin runtime's `boot` method (Rust -> process, so it works
+    /// even though the JS bridge can't from `file://`), then navigate the view
+    /// to the address it returns: `{ url }`, or `{ port }` substituted into the
+    /// manifest url's `{port}` placeholder. `{ error }` shows a failure page.
+    fn boot_runtime(&mut self, url: String, cx: &mut Context<Self>) {
+        let plugin = self.plugin.clone();
+        let webview_id = self.webview_id.clone();
+        let webview = self.webview.clone();
+        let executor = cx.background_executor().clone();
+        cx.spawn(async move |_this, cx| {
+            let resp = executor
+                .spawn(async move {
+                    let req = pluginhost::Request {
+                        kind: "message",
+                        panel: &webview_id,
+                        action: None,
+                        cwd: None,
+                        method: Some("boot"),
+                        params: None,
+                    };
+                    pluginhost::invoke(&plugin, &req)
+                })
+                .await;
+            let target: Result<String, String> = match resp {
+                Ok(r) => match r.result {
+                    Some(res) => {
+                        if let Some(e) = res.get("error").and_then(Value::as_str) {
+                            Err(e.to_string())
+                        } else if let Some(u) = res.get("url").and_then(Value::as_str) {
+                            Ok(u.to_string())
+                        } else if let Some(p) = res.get("port").and_then(Value::as_u64) {
+                            Ok(url.replace("{port}", &p.to_string()))
+                        } else {
+                            Ok(url.clone())
+                        }
+                    }
+                    None => Ok(url.clone()),
+                },
+                Err(e) => Err(e),
+            };
+            let _ = webview.update(cx, |wv, cx| match target {
+                Ok(u) => wv.load_url(u, cx),
+                Err(e) => wv.load_html(failure_html(&e), cx),
+            });
+        })
+        .detach();
     }
 
     /// Handle one `window.ipc.postMessage` payload from the page.
