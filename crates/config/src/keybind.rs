@@ -308,6 +308,7 @@ pub fn default_keybinds() -> Vec<Keybind> {
         kb(cmd, "k", Action::ClearScreen),
         kb(cmd, "f", Action::ToggleSearch),
         kb(cmd_shift, "f", Action::ToggleSemanticSearch),
+        kb(cmd_alt, "f", Action::SearchAll),
         kb(cmd_shift, "e", Action::ExplainOutput),
         kb(cmd_shift, "g", Action::ComposeCommand),
         kb(cmd_shift, "b", Action::ToggleBroadcast),

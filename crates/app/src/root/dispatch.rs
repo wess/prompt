@@ -107,6 +107,7 @@ impl WorkspaceView {
             Action::ClipboardHistory => self.open_clipboard_history(window, cx),
             Action::UnicodePicker => self.open_unicode_picker(window, cx),
             Action::Snippets => self.open_snippets(window, cx),
+            Action::SearchAll => self.open_global_search(window, cx),
             Action::Paste => self.onfocused(cx, |v, cx| v.paste_clipboard(cx)),
             Action::SelectAll => self.onfocused(cx, |v, cx| v.select_all(cx)),
             Action::AdjustSelection(dir) => self.onfocused(cx, |v, cx| v.adjust_selection(dir, cx)),

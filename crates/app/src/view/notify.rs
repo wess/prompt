@@ -65,6 +65,19 @@ impl TerminalView {
         )
     }
 
+    /// The most recent non-blank output lines (newest first), for global search.
+    pub(crate) fn recent_lines(&self, max: usize) -> Vec<String> {
+        self.session.with_term(|t| {
+            t.text_lines()
+                .into_iter()
+                .rev()
+                .filter(|(_, s, _)| !s.trim().is_empty())
+                .take(max)
+                .map(|(_, s, _)| s.trim_end().to_string())
+                .collect()
+        })
+    }
+
     /// Whether this pane is recording an asciinema cast.
     pub fn is_recording(&self) -> bool {
         self.session.is_recording()

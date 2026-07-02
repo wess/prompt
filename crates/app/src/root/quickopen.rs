@@ -63,6 +63,43 @@ impl WorkspaceView {
         cx.notify();
     }
 
+    /// Global search: a Spotlight over recent output lines from every tab.
+    /// Picking a line focuses its tab. Fuzzy-filter to find where something ran.
+    pub(crate) fn open_global_search(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        // Collect (label, tab index) across all terminal panes, newest first.
+        let mut items: Vec<(String, usize)> = Vec::new();
+        for ti in 0..self.tabs.len() {
+            let Some(tab) = self.tabs.get(ti) else {
+                continue;
+            };
+            for id in tab.tree.panes() {
+                if let Some(term) = self.panes.get(&id).and_then(|p| p.content.as_terminal()) {
+                    for line in term.read(cx).recent_lines(400) {
+                        items.push((format!("{}  \u{2502}  {line}", ti + 1), ti));
+                    }
+                }
+            }
+        }
+        if items.is_empty() {
+            return;
+        }
+        let view = cx.entity();
+        let spotlight = cx.new(|scx| {
+            let mut spot = guise::Spotlight::new(scx);
+            for (label, ti) in items {
+                let view = view.clone();
+                let run = move |window: &mut Window, app: &mut App| {
+                    view.update(app, |this, cx| this.activatetab(ti, window, cx));
+                };
+                spot = spot.item(label, run);
+            }
+            spot
+        });
+        spotlight.update(cx, |spot, scx| spot.open(window, scx));
+        self.spotlight = Some(spotlight);
+        cx.notify();
+    }
+
     /// Open a Spotlight over the configured snippets (`snippet = label | cmd`);
     /// picking one inserts the command into the focused pane (not run — the user
     /// can edit before pressing Enter). Warp-style workflows.
