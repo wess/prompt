@@ -27,8 +27,10 @@ mod mouse;
 mod notify;
 mod scroll;
 mod search;
+mod timestamps;
 
 pub use notify::{notify_command, post_os_notification};
+pub use timestamps::install as install_timestamps;
 
 /// Maximum time a frame is withheld for synchronized output before it is
 /// painted anyway, so a stuck ?2026 cannot freeze the view (xterm/contour
@@ -249,6 +251,11 @@ pub struct TerminalView {
     /// High-water global line index already scanned for output triggers;
     /// `usize::MAX` until the first scan (which skips pre-existing content).
     trigger_hwm: usize,
+    /// Capture times (epoch secs) parallel to scrollback, for the timestamp
+    /// gutter; kept aligned via vt's `committed_lines`.
+    line_times: std::collections::VecDeque<u64>,
+    /// vt committed-lines mark; `u64::MAX` until the first timestamp scan.
+    committed_last: u64,
     /// Active local-assist overlay, if any.
     assist: Option<Assist>,
     /// Focus in/out listeners that drive focus reporting (?1004).
@@ -322,6 +329,8 @@ impl TerminalView {
             hints: None,
             copy_mode: None,
             trigger_hwm: usize::MAX,
+            line_times: std::collections::VecDeque::new(),
+            committed_last: u64::MAX,
             assist: None,
             _focus_subs: [sub_in, sub_out],
         }
@@ -454,6 +463,7 @@ impl TerminalView {
     /// freeze the view.
     fn wakeup(&mut self, cx: &mut Context<Self>) {
         self.scan_triggers(cx);
+        self.update_line_times(cx);
         if let Some(s) = &mut self.search {
             s.dirty = true;
         }
@@ -566,6 +576,7 @@ impl Render for TerminalView {
                 self.image_cache.clone(),
             ))
             .children(self.badge_overlay(cx))
+            .children(self.timestamps_overlay(cx))
             .children(self.hints_overlay())
             .children(self.copy_cursor_overlay())
             .children(bar)

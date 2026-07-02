@@ -14,6 +14,9 @@ pub const DEFAULT_SCROLLBACK: usize = 10_000;
 pub struct Scrollback {
     rows: VecDeque<Row>,
     limit: usize,
+    /// Monotonic count of rows ever pushed (survives eviction). Lets the host
+    /// map a scrollback index to a stable line number for timestamps.
+    pushed: u64,
 }
 
 impl Scrollback {
@@ -21,11 +24,17 @@ impl Scrollback {
         Scrollback {
             rows: VecDeque::new(),
             limit,
+            pushed: 0,
         }
     }
 
     pub fn limit(&self) -> usize {
         self.limit
+    }
+
+    /// Total rows ever pushed into scrollback (monotonic).
+    pub fn committed(&self) -> u64 {
+        self.pushed
     }
 
     pub fn len(&self) -> usize {
@@ -45,6 +54,7 @@ impl Scrollback {
             self.rows.pop_front();
         }
         self.rows.push_back(row);
+        self.pushed += 1;
     }
 
     /// Append a copy of `row`, recycling the evicted front row's buffer when
@@ -67,6 +77,7 @@ impl Scrollback {
         } else {
             self.rows.push_back(row.clone());
         }
+        self.pushed += 1;
     }
 
     /// Row by age: index 0 is the oldest stored row.

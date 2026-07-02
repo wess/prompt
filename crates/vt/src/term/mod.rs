@@ -250,6 +250,12 @@ impl Terminal {
     }
 
     /// How far the view is scrolled back into history (0 = live bottom).
+    /// Total rows ever pushed into scrollback (monotonic; survives eviction).
+    /// Used by the host to stamp scrollback lines with a time.
+    pub fn committed_lines(&self) -> u64 {
+        self.inner.screen().grid.scrollback().committed()
+    }
+
     pub fn display_offset(&self) -> usize {
         self.inner.display_offset
     }

@@ -130,6 +130,7 @@ fn spawn_window(cx: &mut App) {
 fn open_default_window(opts: config::Options, cx: &mut App) {
     redact::install(&opts.redact, cx);
     badge::install(&opts.badge, cx);
+    view::install_timestamps(opts.timestamps, cx);
     trigger::install(&opts.trigger, cx);
     let colors = Rc::new(colors::from_config(&opts, root::is_dark(cx.window_appearance())));
     guisetheme::install(&colors, cx);

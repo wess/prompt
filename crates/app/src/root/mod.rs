@@ -523,6 +523,7 @@ impl WorkspaceView {
         }
         crate::redact::install(&opts.redact, cx);
         crate::badge::install(&opts.badge, cx);
+        crate::view::install_timestamps(opts.timestamps, cx);
         crate::trigger::install(&opts.trigger, cx);
         self.colors = Rc::new(colors::from_config(&opts, self.dark));
         crate::guisetheme::install(&self.colors, cx);

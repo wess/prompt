@@ -88,6 +88,7 @@ impl SettingsView {
             self.toggle_row(Bool::SmartSelect, "\u{2318}", theme::Rgb::new(52, 199, 89), cx),
             self.toggle_row(Bool::MiddleClickPaste, "\u{2504}", theme::Rgb::new(90, 200, 250), cx),
             self.toggle_row(Bool::FocusFollowsMouse, "\u{2192}", theme::Rgb::new(255, 159, 10), cx),
+            self.toggle_row(Bool::Timestamps, "\u{25f4}", theme::Rgb::new(191, 90, 242), cx),
             self.stepper_row(Num::SplitOpacity, "\u{25d0}", theme::Rgb::new(94, 92, 230), cx),
             self.stepper_row(Num::BgOpacity, "\u{25d1}", theme::Rgb::new(94, 92, 230), cx),
             self.field_row(Field::BgImage, "\u{1f5bc}", theme::Rgb::new(94, 92, 230), cx),
