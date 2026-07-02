@@ -44,6 +44,27 @@ impl TerminalView {
         }
     }
 
+    /// A faint watermark badge in the pane corner, when configured.
+    pub(crate) fn badge_overlay(&self, cx: &gpui::App) -> Option<gpui::AnyElement> {
+        let template = crate::badge::template(cx)?;
+        let text = crate::badge::render(&template, self.cwd().as_deref(), &crate::badge::hostname());
+        if text.trim().is_empty() {
+            return None;
+        }
+        let mut color = crate::colors::hsla(self.colors.fg);
+        color.a = 0.14;
+        Some(
+            gpui::div()
+                .absolute()
+                .top(gpui::px(self.pad.y + 4.0))
+                .right(gpui::px(self.pad.x + 8.0))
+                .text_color(color)
+                .text_size(gpui::px(11.0))
+                .child(gpui::SharedString::from(text))
+                .into_any_element(),
+        )
+    }
+
     /// Whether this pane is recording an asciinema cast.
     pub fn is_recording(&self) -> bool {
         self.session.is_recording()

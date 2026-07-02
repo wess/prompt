@@ -266,6 +266,9 @@ pub struct Options {
     /// File key: `background-image` - path to an image drawn behind the terminal
     /// (best with background-opacity < 1 so it shows through).
     pub background_image: Option<String>,
+    /// File key: `badge` - faint watermark text drawn in each pane; supports
+    /// {cwd} and {host} placeholders.
+    pub badge: Option<String>,
 }
 
 /// The built-in primary font when none is configured.
@@ -377,6 +380,7 @@ impl Default for Options {
             trigger: Vec::new(),
             snippet: Vec::new(),
             background_image: None,
+            badge: None,
         }
     }
 }

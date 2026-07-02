@@ -26,6 +26,7 @@ mod pluginhost;
 mod pluginmanager;
 mod pluginwebview;
 mod pluginwindow;
+mod badge;
 mod clipboard;
 mod pointer;
 mod quick;
@@ -128,6 +129,7 @@ fn spawn_window(cx: &mut App) {
 /// Derive appearance from `opts` and open one default-sized window.
 fn open_default_window(opts: config::Options, cx: &mut App) {
     redact::install(&opts.redact, cx);
+    badge::install(&opts.badge, cx);
     trigger::install(&opts.trigger, cx);
     let colors = Rc::new(colors::from_config(&opts, root::is_dark(cx.window_appearance())));
     guisetheme::install(&colors, cx);

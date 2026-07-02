@@ -122,6 +122,9 @@ pub fn apply(opts: &mut Options, key: &str, val: &str) -> Result<(), String> {
         "background-image" => {
             opts.background_image = if empty { d.background_image } else { Some(val.to_string()) };
         }
+        "badge" => {
+            opts.badge = if empty { d.badge } else { Some(val.to_string()) };
+        }
         "background" => {
             opts.background = if empty {
                 d.background

@@ -565,6 +565,7 @@ impl Render for TerminalView {
                 query,
                 self.image_cache.clone(),
             ))
+            .children(self.badge_overlay(cx))
             .children(self.hints_overlay())
             .children(self.copy_cursor_overlay())
             .children(bar)

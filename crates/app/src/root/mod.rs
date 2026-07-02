@@ -522,6 +522,7 @@ impl WorkspaceView {
             eprintln!("prompt: config line {}: {} ({})", d.line, d.message, d.key);
         }
         crate::redact::install(&opts.redact, cx);
+        crate::badge::install(&opts.badge, cx);
         crate::trigger::install(&opts.trigger, cx);
         self.colors = Rc::new(colors::from_config(&opts, self.dark));
         crate::guisetheme::install(&self.colors, cx);
