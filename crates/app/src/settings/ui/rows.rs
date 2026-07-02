@@ -90,6 +90,7 @@ impl SettingsView {
             self.toggle_row(Bool::FocusFollowsMouse, "\u{2192}", theme::Rgb::new(255, 159, 10), cx),
             self.stepper_row(Num::SplitOpacity, "\u{25d0}", theme::Rgb::new(94, 92, 230), cx),
             self.stepper_row(Num::BgOpacity, "\u{25d1}", theme::Rgb::new(94, 92, 230), cx),
+            self.field_row(Field::BgImage, "\u{1f5bc}", theme::Rgb::new(94, 92, 230), cx),
             self.field_row(Field::SplitDivider, "\u{2503}", theme::Rgb::new(99, 99, 102), cx),
         ]
     }

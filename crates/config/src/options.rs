@@ -263,6 +263,9 @@ pub struct Options {
     /// File key: `snippet` (repeatable) - `label | command`; inserted into the
     /// focused pane from the snippet picker.
     pub snippet: Vec<String>,
+    /// File key: `background-image` - path to an image drawn behind the terminal
+    /// (best with background-opacity < 1 so it shows through).
+    pub background_image: Option<String>,
 }
 
 /// The built-in primary font when none is configured.
@@ -373,6 +376,7 @@ impl Default for Options {
             middle_click_paste: false,
             trigger: Vec::new(),
             snippet: Vec::new(),
+            background_image: None,
         }
     }
 }

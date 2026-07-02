@@ -434,6 +434,7 @@ pub enum Field {
     GeminiPath,
     ThemeLight,
     ThemeDark,
+    BgImage,
 }
 
 impl Field {
@@ -453,6 +454,7 @@ impl Field {
             Field::RelayDefaultAgent => "relay-default-agent",
             Field::ThemeLight => "theme-light",
             Field::ThemeDark => "theme-dark",
+            Field::BgImage => "background-image",
             Field::ClaudePath => "agent-claude-path",
             Field::CodexPath => "agent-codex-path",
             Field::GeminiPath => "agent-gemini-path",
@@ -475,6 +477,7 @@ impl Field {
             Field::RelayDefaultAgent => "Default agent",
             Field::ThemeLight => "Light-mode theme",
             Field::ThemeDark => "Dark-mode theme",
+            Field::BgImage => "Background image",
             Field::ClaudePath => "Claude path",
             Field::CodexPath => "Codex path",
             Field::GeminiPath => "Gemini path",
@@ -489,6 +492,7 @@ impl Field {
             Field::RelayAddress => "127.0.0.1:7777",
             Field::RelayDefaultAgent => "claude",
             Field::ThemeLight | Field::ThemeDark => "scheme name (blank = off)",
+            Field::BgImage => "/path/to/image.png",
             Field::ClaudePath => "Search PATH (e.g. /usr/local/bin/claude)",
             Field::CodexPath => "Search PATH",
             Field::GeminiPath => "Search PATH",
@@ -524,6 +528,7 @@ impl Field {
             Field::ClaudePath => &o.agent_claude_path,
             Field::CodexPath => &o.agent_codex_path,
             Field::GeminiPath => &o.agent_gemini_path,
+            Field::BgImage => &o.background_image,
             Field::RelayAddress => return o.relay_address.clone(),
             Field::RelayDefaultAgent => return o.relay_default_agent.clone(),
             Field::ThemeLight => return o.theme_light.clone(),

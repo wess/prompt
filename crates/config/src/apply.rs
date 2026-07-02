@@ -119,6 +119,9 @@ pub fn apply(opts: &mut Options, key: &str, val: &str) -> Result<(), String> {
                 opts.snippet.push(val.to_string());
             }
         }
+        "background-image" => {
+            opts.background_image = if empty { d.background_image } else { Some(val.to_string()) };
+        }
         "background" => {
             opts.background = if empty {
                 d.background

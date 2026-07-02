@@ -34,19 +34,43 @@ impl Render for WorkspaceView {
         // Root fill; its alpha is the window background opacity. Default-bg cells
         // aren't painted by the element, so they show this (and the desktop when
         // the window is transparent); colored cells stay opaque.
+        let has_image = self.opts.background_image.is_some();
         let mut winbg = colors::hsla(self.colors.bg);
         winbg.a = self.opts.background_opacity.clamp(0.0, 1.0);
+        // A background image needs the tint translucent to show through.
+        if has_image {
+            winbg.a = winbg.a.min(0.85);
+        }
         let mut base = div()
             .relative()
             .size_full()
             .flex()
             .flex_col()
-            .bg(winbg)
             .key_context("Workspace")
             .on_action(cx.listener(Self::runbind))
             .on_action(cx.listener(Self::showdocs))
             .on_action(cx.listener(Self::showabout))
             .on_action(cx.listener(Self::menupick));
+        // Background layers (painted first, behind the chrome): the image, then a
+        // translucent tint. Without an image the tint is just the window fill.
+        if let Some(path) = self.opts.background_image.clone() {
+            base = base.child(
+                gpui::img(std::path::PathBuf::from(path))
+                    .absolute()
+                    .top_0()
+                    .left_0()
+                    .size_full()
+                    .object_fit(gpui::ObjectFit::Cover),
+            );
+        }
+        base = base.child(
+            div()
+                .absolute()
+                .top_0()
+                .left_0()
+                .size_full()
+                .bg(winbg),
+        );
 
         let tab_infos = self.tab_infos(cx);
         let max_visible = self.tab_max_visible(window);
