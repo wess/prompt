@@ -269,6 +269,9 @@ pub struct Options {
     /// File key: `badge` - faint watermark text drawn in each pane; supports
     /// {cwd} and {host} placeholders.
     pub badge: Option<String>,
+    /// File key: `profile` (repeatable) - `label | command`; opens a new tab
+    /// running the command from the profile picker.
+    pub profile: Vec<String>,
 }
 
 /// The built-in primary font when none is configured.
@@ -381,6 +384,7 @@ impl Default for Options {
             snippet: Vec::new(),
             background_image: None,
             badge: None,
+            profile: Vec::new(),
         }
     }
 }

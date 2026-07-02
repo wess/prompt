@@ -125,6 +125,13 @@ pub fn apply(opts: &mut Options, key: &str, val: &str) -> Result<(), String> {
         "badge" => {
             opts.badge = if empty { d.badge } else { Some(val.to_string()) };
         }
+        "profile" => {
+            if empty {
+                opts.profile = d.profile;
+            } else {
+                opts.profile.push(val.to_string());
+            }
+        }
         "background" => {
             opts.background = if empty {
                 d.background

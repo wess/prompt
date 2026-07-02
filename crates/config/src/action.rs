@@ -200,6 +200,8 @@ pub enum Action {
     Snippets,
     /// Global search: recent output across all tabs.
     SearchAll,
+    /// Open the profile (named launch) picker.
+    Profiles,
     Paste,
     /// Select the entire terminal buffer (scrollback + screen).
     SelectAll,
@@ -367,6 +369,7 @@ impl Action {
             "unicode_picker" | "insert_emoji" => only(Self::UnicodePicker, &name, param),
             "snippets" | "workflows" => only(Self::Snippets, &name, param),
             "search_all" | "global_search" => only(Self::SearchAll, &name, param),
+            "profiles" | "profile_picker" => only(Self::Profiles, &name, param),
             "paste_from_clipboard" | "paste" => only(Self::Paste, &name, param),
             "select_all" => only(Self::SelectAll, &name, param),
             "adjust_selection" => {
@@ -483,6 +486,7 @@ impl Action {
             Self::UnicodePicker => "unicode_picker".into(),
             Self::Snippets => "snippets".into(),
             Self::SearchAll => "search_all".into(),
+            Self::Profiles => "profiles".into(),
             Self::Paste => "paste_from_clipboard".into(),
             Self::SelectAll => "select_all".into(),
             Self::AdjustSelection(d) => format!("adjust_selection:{}", d.as_str()),

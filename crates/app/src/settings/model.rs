@@ -555,6 +555,7 @@ pub enum ListKind {
     Redact,
     Trigger,
     Snippet,
+    Profile,
 }
 
 impl ListKind {
@@ -569,6 +570,7 @@ impl ListKind {
             ListKind::Redact => "Redact secrets on copy",
             ListKind::Trigger => "Output triggers (regex | title)",
             ListKind::Snippet => "Snippets (label | command)",
+            ListKind::Profile => "Profiles (label | command)",
         }
     }
 
@@ -583,6 +585,7 @@ impl ListKind {
             ListKind::Redact => "Add pattern",
             ListKind::Trigger => "Add trigger",
             ListKind::Snippet => "Add snippet",
+            ListKind::Profile => "Add profile",
         }
     }
 
@@ -597,6 +600,7 @@ impl ListKind {
             ListKind::Redact => "regex, e.g. sk-[A-Za-z0-9]{20,}",
             ListKind::Trigger => "error|Build failed",
             ListKind::Snippet => "deploy | git push origin main",
+            ListKind::Profile => "prod | ssh prod.example.com",
         }
     }
 
@@ -619,6 +623,7 @@ impl ListKind {
             ListKind::Redact => o.redact.clone(),
             ListKind::Trigger => o.trigger.clone(),
             ListKind::Snippet => o.snippet.clone(),
+            ListKind::Profile => o.profile.clone(),
         }
     }
 
@@ -634,6 +639,7 @@ impl ListKind {
             ListKind::Redact => ("redact", clean(entries)),
             ListKind::Trigger => ("trigger", clean(entries)),
             ListKind::Snippet => ("snippet", clean(entries)),
+            ListKind::Profile => ("profile", clean(entries)),
             ListKind::Keybind => {
                 let desired: Vec<config::Keybind> = entries
                     .iter()

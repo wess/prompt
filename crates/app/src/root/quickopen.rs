@@ -63,6 +63,48 @@ impl WorkspaceView {
         cx.notify();
     }
 
+    /// Open a Spotlight over the configured profiles (`profile = label | cmd`);
+    /// picking one opens a new tab running that command — a named launch setup
+    /// (ssh host, REPL, project env, …).
+    pub(crate) fn open_profiles(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let profiles: Vec<(String, String)> = self
+            .opts
+            .profile
+            .iter()
+            .filter(|s| !s.trim().is_empty())
+            .map(|s| match s.split_once('|') {
+                Some((label, cmd)) => (label.trim().to_string(), cmd.trim().to_string()),
+                None => (s.trim().to_string(), s.trim().to_string()),
+            })
+            .collect();
+        if profiles.is_empty() {
+            return;
+        }
+        let view = cx.entity();
+        let spotlight = cx.new(|scx| {
+            let mut spot = guise::Spotlight::new(scx);
+            for (label, cmd) in profiles {
+                let view = view.clone();
+                let cmd = cmd.clone();
+                let run = move |window: &mut Window, app: &mut App| {
+                    let cmd = cmd.clone();
+                    view.update(app, |this, cx| {
+                        if let Some(id) = this.spawncommand(&cmd, window, cx) {
+                            this.tabs.new_tab(id);
+                            this.focusactive(window, cx);
+                            cx.notify();
+                        }
+                    });
+                };
+                spot = spot.item(label, run);
+            }
+            spot
+        });
+        spotlight.update(cx, |spot, scx| spot.open(window, scx));
+        self.spotlight = Some(spotlight);
+        cx.notify();
+    }
+
     /// Global search: a Spotlight over recent output lines from every tab.
     /// Picking a line focuses its tab. Fuzzy-filter to find where something ran.
     pub(crate) fn open_global_search(&mut self, window: &mut Window, cx: &mut Context<Self>) {
