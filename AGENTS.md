@@ -81,11 +81,17 @@ The workspace is layered bottom-up; each crate depends only on those below it.
   diagnostics and never abort the load. Default path
   `$XDG_CONFIG_HOME/prompt/config` or `~/.config/prompt/config`.
 - **`theme`** — 22 built-in color schemes (`builtin/`) plus per-color overrides.
-- **`plugin`** — parses `plugin.toml` manifests contributing four kinds of
-  extension: `[[command]]` actions (+ default keybindings), `[runtime]`/`[panel]`
-  IPC block-tree panels, `[webview]` HTML/JS surfaces (panel/window/tab), and
-  `[[trigger]]` event hooks. Pure parsing/validation; the host (`app`) drives the
-  runtime, renders panels/webviews, and dispatches triggers.
+- **`plugin`** — parses `plugin.toml` manifests contributing: `[[command]]`
+  actions (+ default keybindings), `[runtime]`/`[panel]` IPC block-tree panels,
+  `[webview]` HTML/JS surfaces (panel/window/tab), `[[trigger]]` event hooks,
+  and `[[tool]]` MCP tools exposed to agents (`mcpbridge` merges them into
+  `prompt mcp`'s tool list, routing calls to the runtime). Plugins declare
+  `capability = "…"` (advisory under the process runtime; the vocabulary the
+  WASM runtime enforces) and a `[runtime] type` of `process` (default) or `wasm`
+  (declaration + design only so far — see `docs/plugins-wasm.md`). Pure
+  parsing/validation; the host (`app`) drives the runtime, renders
+  panels/webviews (via the `WebviewSurface`-based `PluginWebView`, shared with
+  built-ins like Notes), and dispatches triggers.
 - **`macros`** — record/replay of typed command sequences, stored as plain text.
 - **`mcp`** — a minimal Model Context Protocol server (JSON-RPC over stdio).
   Transport/framing only; the caller supplies the tool list and handler. Knows
