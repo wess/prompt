@@ -185,6 +185,11 @@ impl WorkspaceView {
             Action::SaveLayout => self.open_save_layout(window, cx),
             Action::Sidebar(payload) => self.toggle_sidebar(&payload, cx),
             Action::OpenTeam(name) => self.open_team(&name, window, cx),
+            Action::BuildTeam => {
+                crate::relay::ensure_running(&self.opts);
+                let cwd = self.focused_cwd_path(cx);
+                crate::teambuilder::open(window, cwd, cx);
+            }
             Action::AgentDef(name) => {
                 crate::relay::ensure_running(&self.opts);
                 if let Some(cmd) = crate::relay::launch_saved_command(&self.opts, &name) {

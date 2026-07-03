@@ -106,14 +106,15 @@ impl WorkspaceView {
         items.push(Some(MenuItem::submenu(self.relay_submenu(a))));
         items.push(self.pick(a, "Open Feed", Action::RelayFeed));
         let teams = crate::relay::team_list();
+        let mut t: Vec<Option<MenuItem>> = vec![self.pick(a, "Build Team\u{2026}", Action::BuildTeam)];
         if !teams.is_empty() {
-            let mut t: Vec<Option<MenuItem>> = Vec::new();
+            t.push(Some(MenuItem::separator()));
             for name in teams {
                 t.push(self.pick(a, &name, Action::OpenTeam(name.clone())));
             }
-            items.push(Some(MenuItem::separator()));
-            items.push(Some(MenuItem::submenu(Self::menu("Teams", t))));
         }
+        items.push(Some(MenuItem::separator()));
+        items.push(Some(MenuItem::submenu(Self::menu("Teams", t))));
         Self::menu("AI", items)
     }
 

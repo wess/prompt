@@ -42,6 +42,7 @@ mod root;
 mod session;
 mod sessionstate;
 mod settings;
+mod teambuilder;
 mod shellinteg;
 mod tabbar;
 mod tiles;

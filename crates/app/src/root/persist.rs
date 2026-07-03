@@ -248,6 +248,12 @@ impl WorkspaceView {
         self.apply_layout(&layout, &commands, Some(name), window, cx);
     }
 
+    /// Rebuild menus after the Team Builder saves, so the new team shows under
+    /// AI → Teams without a restart.
+    pub(crate) fn after_team_saved(&mut self, cx: &mut Context<Self>) {
+        self.setmenus(cx);
+    }
+
     /// Add an agent (a `relay launch` command from the New Agent modal) to the
     /// current workspace as a split.
     pub fn create_agent(&mut self, cmd: &str, window: &mut Window, cx: &mut Context<Self>) {

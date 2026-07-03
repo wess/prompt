@@ -55,3 +55,19 @@ fn split_args_keeps_quoted_values_together() {
     );
     assert_eq!(split_args("   "), Vec::<String>::new());
 }
+
+#[test]
+fn extract_json_pulls_the_object_from_a_wrapped_reply() {
+    let reply = "Sure! Here's the team:\n```json\n{\"name\":\"web\",\"members\":[{\"name\":\"lead\"}]}\n```\nHope that helps.";
+    let json = extract_json(reply).unwrap();
+    let spec: TeamSpec = serde_json::from_str(json).unwrap();
+    assert_eq!(spec.name, "web");
+    assert_eq!(spec.members.len(), 1);
+}
+
+#[test]
+fn extract_json_balances_nested_braces() {
+    let reply = "{\"a\":{\"b\":1},\"c\":2} trailing junk }";
+    assert_eq!(extract_json(reply).unwrap(), "{\"a\":{\"b\":1},\"c\":2}");
+    assert!(extract_json("no json here").is_none());
+}

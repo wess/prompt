@@ -135,7 +135,76 @@ pub fn run(action: TeamCmd) -> Result<()> {
         TeamCmd::Create { name, user } => create(&name, user),
         TeamCmd::Edit { name, user } => edit(&name, user),
         TeamCmd::Delete { name, user } => delete(&name, user),
+        TeamCmd::Save { user } => save(user),
     }
+}
+
+/// The JSON a host (Prompt's team builder) pipes in on stdin to persist a team
+/// without an editor.
+#[derive(Deserialize)]
+struct SaveSpec {
+    name: String,
+    #[serde(default)]
+    layout: String,
+    #[serde(default)]
+    members: Vec<SaveMember>,
+}
+
+#[derive(Deserialize)]
+struct SaveMember {
+    name: String,
+    #[serde(default)]
+    role: Option<String>,
+    #[serde(default)]
+    agent: Option<String>,
+}
+
+/// Render a team spec into a `.toml` file, non-interactively. Reads the spec as
+/// JSON on stdin so an arbitrary roster fits without shell-quoting gymnastics.
+fn save(user: bool) -> Result<()> {
+    let mut raw = String::new();
+    std::io::Read::read_to_string(&mut std::io::stdin(), &mut raw)?;
+    let spec: SaveSpec = serde_json::from_str(&raw).map_err(|e| anyhow!("bad team JSON: {e}"))?;
+    let name = spec.name.trim();
+    if !valid(name) {
+        bail!("team name must be lowercase letters, digits, `.` or `-`");
+    }
+    let members: Vec<SaveMember> = spec
+        .members
+        .into_iter()
+        .filter(|m| !m.name.trim().is_empty())
+        .collect();
+    if members.is_empty() {
+        bail!("team `{name}` needs at least one member");
+    }
+    let layout = spec.layout.trim();
+    let layout = if SHAPES.contains(&layout) { layout } else { "columns" };
+    let toml = render_toml(name, layout, &members);
+    // Validate what we're about to write with the same parser `resolve` uses.
+    parse(name, &toml, Source::User)?;
+    let path = file_in(&dir(user), name);
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::write(&path, toml)?;
+    println!("saved {}", path.display());
+    Ok(())
+}
+
+/// Build the team TOML, quoting values and omitting empty role/agent.
+fn render_toml(name: &str, layout: &str, members: &[SaveMember]) -> String {
+    let q = |s: &str| s.replace('\\', "\\\\").replace('"', "\\\"");
+    let mut out = format!("name = \"{}\"\nlayout = \"{}\"\n", q(name), q(layout));
+    for m in members {
+        out.push_str(&format!("\n[[member]]\nname = \"{}\"\n", q(m.name.trim())));
+        if let Some(role) = m.role.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+            out.push_str(&format!("role = \"{}\"\n", q(role)));
+        }
+        if let Some(agent) = m.agent.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+            out.push_str(&format!("agent = \"{}\"\n", q(agent)));
+        }
+    }
+    out
 }
 
 fn all_names() -> std::collections::BTreeMap<String, Source> {

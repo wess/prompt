@@ -119,12 +119,14 @@ blockers to the supervisor.
 
         <h2 id="teams-and-tiles">Teams &amp; tiles</h2>
         <p>A <strong>team</strong> is a layout plus a roster: open one and Prompt arranges a set of panes and launches the right agent in each. Teams are Relay files (<code>relay team …</code>, layered project → user → built-in, like roles); <strong>tiles</strong> (the layouts) are a Prompt feature, so they are useful on their own too.</p>
-        <p>From Prompt, with AI + Relay on, the <strong>AI</strong> menu lists teams under <strong>Teams ▸</strong> — click one to open it in a fresh tab. The agent panes live under that one tab, which is titled after the team (e.g. <code>web</code>). Standalone, manage teams with the CLI:</p>
+        <p>From Prompt, with AI on, the <strong>AI</strong> menu lists teams under <strong>Teams ▸</strong> — click one to open it in a fresh tab. The agent panes live under that one tab, which is titled after the team (e.g. <code>web</code>).</p>
+        <p><strong>Build Team…</strong> (also under <strong>Teams ▸</strong>) opens a builder window to assemble a team without hand-writing TOML. Pick <strong>Manual</strong> to choose a layout and add member rows (name + role + agent), or <strong>Guided</strong> to describe the team in plain English and have Claude draft it — the draft drops into the Manual form for review before you save. Saved teams land in your user (or project) teams dir and appear under <strong>Teams ▸</strong> immediately. Standalone, manage teams with the CLI:</p>
         <pre><code>relay team list                 <span class="c"># all teams + source</span>
 relay team info &lt;name&gt;          <span class="c"># roster + layout (add --json for tooling)</span>
 relay team create &lt;name&gt;        <span class="c"># new team in $EDITOR (--user for the user dir)</span>
 relay team edit &lt;name&gt;          <span class="c"># edit; copies a built-in/lower layer first</span>
-relay team delete &lt;name&gt;</code></pre>
+relay team delete &lt;name&gt;
+relay team save [--user]        <span class="c"># write a team from JSON on stdin (used by Build Team…)</span></code></pre>
         <p>A team is TOML — a <code>layout</code> shape and ordered members (first = the main pane):</p>
         <pre><code>name = "web"
 layout = "main-bottom"   <span class="c"># columns | rows | grid | main-bottom | main-right</span>

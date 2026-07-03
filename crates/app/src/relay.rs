@@ -18,6 +18,29 @@ pub struct AgentDef {
     pub task: Option<String>,
 }
 
+/// A team the builder edits or the guided flow generates: a name, a layout
+/// shape, and an ordered roster. Serializes to the JSON `relay team save` reads.
+#[derive(Clone, Default, Serialize, Deserialize)]
+pub struct TeamSpec {
+    pub name: String,
+    #[serde(default)]
+    pub layout: String,
+    #[serde(default)]
+    pub members: Vec<TeamMemberSpec>,
+}
+
+#[derive(Clone, Default, Serialize, Deserialize)]
+pub struct TeamMemberSpec {
+    pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub role: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent: Option<String>,
+}
+
+/// The layout shapes the tile engine understands, in builder display order.
+pub const TEAM_SHAPES: &[&str] = &["columns", "rows", "grid", "main-bottom", "main-right"];
+
 fn defs_path() -> PathBuf {
     home().join("agents.json")
 }
@@ -545,6 +568,124 @@ pub fn team_info(name: &str) -> Option<(String, Vec<(String, String)>)> {
         })
         .collect();
     Some((layout, members))
+}
+
+/// Persist a team through `relay team save` (JSON on stdin), so relay stays the
+/// owner of team storage. `--user` writes to the user dir; otherwise it's the
+/// project dir resolved against `cwd` (the focused pane's directory). Returns
+/// the saved team name on success, or an error message.
+pub fn save_team(spec: &TeamSpec, user: bool, cwd: Option<&std::path::Path>) -> Result<String, String> {
+    use std::io::Write;
+    let json = serde_json::to_string(spec).map_err(|e| e.to_string())?;
+    let mut cmd = std::process::Command::new(binary());
+    cmd.arg("team").arg("save");
+    if user {
+        cmd.arg("--user");
+    } else if let Some(dir) = cwd {
+        cmd.current_dir(dir);
+    }
+    cmd.stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+    let mut child = cmd.spawn().map_err(|e| format!("could not run relay: {e}"))?;
+    child
+        .stdin
+        .take()
+        .ok_or("no stdin")?
+        .write_all(json.as_bytes())
+        .map_err(|e| e.to_string())?;
+    let out = child.wait_with_output().map_err(|e| e.to_string())?;
+    if out.status.success() {
+        Ok(spec.name.clone())
+    } else {
+        let err = String::from_utf8_lossy(&out.stderr).trim().to_string();
+        Err(if err.is_empty() { "team save failed".into() } else { err })
+    }
+}
+
+/// The configured Claude binary (explicit path, else `claude` on PATH).
+fn claude_binary(opts: &config::Options) -> String {
+    opts.agent_claude_path
+        .clone()
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or_else(|| "claude".to_string())
+}
+
+/// Ask Claude (one-shot `-p`) to design a team from a plain-English description,
+/// returning a parsed [`TeamSpec`] for review. Blocking — run it off the UI
+/// thread. `roles` seeds the prompt with the roles available on this machine.
+pub fn generate_team(
+    opts: &config::Options,
+    roles: &[String],
+    description: &str,
+) -> Result<TeamSpec, String> {
+    let bin = claude_binary(opts);
+    let prompt = team_prompt(roles, description);
+    let out = std::process::Command::new(&bin)
+        .arg("-p")
+        .arg(&prompt)
+        .output()
+        .map_err(|e| format!("could not run `{bin}`: {e}"))?;
+    if !out.status.success() {
+        let err = String::from_utf8_lossy(&out.stderr);
+        let err = err.trim();
+        return Err(if err.is_empty() {
+            format!("`{bin} -p` failed")
+        } else {
+            err.to_string()
+        });
+    }
+    let text = String::from_utf8_lossy(&out.stdout);
+    let json = extract_json(&text).ok_or("the model didn't return JSON")?;
+    let mut spec: TeamSpec =
+        serde_json::from_str(json).map_err(|e| format!("couldn't parse the team: {e}"))?;
+    if !TEAM_SHAPES.contains(&spec.layout.as_str()) {
+        spec.layout = "columns".to_string();
+    }
+    spec.members.retain(|m| !m.name.trim().is_empty());
+    if spec.members.is_empty() {
+        return Err("the model returned no members".into());
+    }
+    Ok(spec)
+}
+
+/// The generation prompt: constrain Claude to emit only the team JSON.
+fn team_prompt(roles: &[String], description: &str) -> String {
+    let roles = if roles.is_empty() {
+        "supervisor, worker, frontend, backend, reviewer, devops, qa".to_string()
+    } else {
+        roles.join(", ")
+    };
+    format!(
+        "You design small teams of coding agents for the Relay mesh. \
+         Available roles: {roles}. Available layouts: {}. \
+         Design a team for this request:\n\n{description}\n\n\
+         Reply with ONLY a JSON object, no prose, no code fences, of the form: \
+         {{\"name\":\"kebab-case-name\",\"layout\":\"one-of-the-layouts\",\
+         \"members\":[{{\"name\":\"short-name\",\"role\":\"one-of-the-roles\"}}]}}. \
+         Make the first member a supervisor that drives the team. Keep it to 2-5 members.",
+        TEAM_SHAPES.join(", ")
+    )
+}
+
+/// Pull the first balanced `{...}` block out of a model reply (it may wrap the
+/// JSON in prose or code fences).
+fn extract_json(text: &str) -> Option<&str> {
+    let start = text.find('{')?;
+    let mut depth = 0usize;
+    for (i, c) in text[start..].char_indices() {
+        match c {
+            '{' => depth += 1,
+            '}' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(&text[start..start + i + 1]);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
 }
 
 /// Shell command that launches one team member in a pane. The team's first

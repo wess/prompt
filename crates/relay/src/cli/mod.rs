@@ -124,6 +124,13 @@ pub enum TeamCmd {
         #[arg(long)]
         user: bool,
     },
+    /// Save a team from a JSON spec on stdin (non-interactive; used by Prompt's
+    /// team builder). JSON: {name, layout, members:[{name, role, agent}]}.
+    Save {
+        /// Write to the user dir instead of the project (./.relay/teams).
+        #[arg(long)]
+        user: bool,
+    },
 }
 
 #[derive(Subcommand)]
