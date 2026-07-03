@@ -3,6 +3,9 @@ use gpui::prelude::*;
 
 impl Render for WorkspaceView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // `window` is only read on Linux (resize handles); keep it "used".
+        #[cfg(not(target_os = "linux"))]
+        let _ = &window;
         // Root fill; its alpha is the window background opacity. Default-bg cells
         // aren't painted by the element, so they show this (and the desktop when
         // the window is transparent); colored cells stay opaque.
@@ -44,7 +47,13 @@ impl Render for WorkspaceView {
                 .bg(winbg),
         );
 
-        base = base.child(crate::titlebar::bar(&self.colors, window));
+        // No separate titlebar: the pane group's top-row tab bar *is* the
+        // titlebar (it reserves the traffic-light inset and drags the window).
+        // Platforms without native controls overlay their own at the top-right.
+        #[cfg(not(target_os = "macos"))]
+        {
+            base = base.child(crate::titlebar::window_controls_overlay(&self.colors));
+        }
 
         // The group renders the whole tree of tabbed splits (per-pane tab bars,
         // dividers, drag/drop) itself.

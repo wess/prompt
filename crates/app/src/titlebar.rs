@@ -1,75 +1,21 @@
-//! Custom window titlebar. The window opens with a transparent native title
-//! bar (see `open_window`), so this themed strip is the whole chrome: it folds
-//! the tab strip in, is the window's drag handle, double-click zooms, and on
-//! Linux it draws its own minimize / maximize / close controls and resize
-//! edges. On macOS the native traffic lights stay, so the strip is inset to
-//! clear them. Zed-style.
+//! Window chrome. The `guise::PaneGroup`'s top-row tab bar doubles as the
+//! titlebar (it reserves the traffic-light inset and is the window drag
+//! handle), so this module is now just the macOS traffic-light clearance
+//! constant, the Linux window controls (min/max/close), and the Linux resize
+//! edges. Zed-style.
 
+// Linux-only drawing below; macOS/Windows have native controls and only read
+// the inset constant.
+#[cfg(target_os = "linux")]
 use gpui::prelude::*;
-use gpui::{div, px, MouseButton, Window, WindowControlArea};
-
+#[cfg(target_os = "linux")]
+use gpui::{div, px, MouseButton, WindowControlArea};
+#[cfg(target_os = "linux")]
 use crate::colors::{self, Colors};
-use crate::tabbar;
 
-/// macOS traffic-light clearance. Per-pane tab bars live below the strip, so
-/// the strip itself is just the window drag handle.
+/// macOS traffic-light clearance reserved at the left of the group's top-row
+/// tab bar (see `WorkspaceView::build_group`).
 pub const TRAFFIC_LIGHT_INSET: f32 = 88.0;
-
-/// Title bar height, matching Zed: 1.75rem, floored at 34px.
-pub fn height(window: &Window) -> gpui::Pixels {
-    (window.rem_size() * 1.75).max(px(34.0))
-}
-
-/// The titlebar strip rendered as the first child of the workspace root: the
-/// window drag handle (double-click zooms), plus Linux window controls. Tabs
-/// now live per-pane inside the group, so the strip carries no tab UI.
-pub fn bar(colors: &Colors, window: &mut Window) -> impl IntoElement {
-    let barbg = colors::rgba(tabbar::blend(colors.bg, colors.fg, 0.12));
-    let on_mac = cfg!(target_os = "macos");
-    let lead = if on_mac && !window.is_fullscreen() {
-        px(TRAFFIC_LIGHT_INSET)
-    } else {
-        px(8.0)
-    };
-
-    let mut drag = div()
-        .id("titlebar-drag")
-        .flex_1()
-        .h_full()
-        .window_control_area(WindowControlArea::Drag)
-        .on_mouse_down(MouseButton::Left, |_, window, _| window.start_window_move());
-    #[cfg(target_os = "macos")]
-    {
-        drag = drag.on_click(|ev, window, _| {
-            if ev.click_count() == 2 {
-                window.titlebar_double_click();
-            }
-        });
-    }
-    #[cfg(target_os = "linux")]
-    {
-        drag = drag.on_click(|ev, window, _| {
-            if ev.click_count() == 2 {
-                window.zoom_window();
-            }
-        });
-    }
-
-    let bar = div()
-        .w_full()
-        .h(height(window))
-        .flex()
-        .flex_row()
-        .items_center()
-        .bg(barbg)
-        .pl(lead)
-        .child(drag);
-
-    #[cfg(target_os = "linux")]
-    let bar = bar.child(window_controls(colors));
-
-    bar
-}
 
 /// Minimize / maximize / close buttons for platforms without native controls.
 #[cfg(target_os = "linux")]
@@ -113,6 +59,21 @@ fn window_controls(colors: &Colors) -> impl IntoElement {
                 .window_control_area(WindowControlArea::Close)
                 .on_click(|_, window, _| window.remove_window()),
         )
+}
+
+/// The custom window controls as a top-right overlay, for when the pane group
+/// doubles as the titlebar (the group reserves trailing space for them).
+#[cfg(target_os = "linux")]
+pub fn window_controls_overlay(colors: &Colors) -> impl IntoElement {
+    div()
+        .absolute()
+        .top_0()
+        .right_0()
+        .h(px(28.0))
+        .flex()
+        .items_center()
+        .pr(px(4.0))
+        .child(window_controls(colors))
 }
 
 /// A transparent overlay of edge/corner hit-zones that start a window resize.

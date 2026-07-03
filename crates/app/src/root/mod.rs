@@ -516,8 +516,17 @@ impl WorkspaceView {
         items: Rc<RefCell<Items>>,
         cx: &mut Context<Self>,
     ) -> Entity<PaneGroup> {
+        // The group doubles as the window titlebar: reserve the top-left inset
+        // for the macOS traffic lights (Linux draws its own controls on the
+        // right, so reserve there instead).
+        let (leading, trailing) = if cfg!(target_os = "macos") {
+            (crate::titlebar::TRAFFIC_LIGHT_INSET, 0.0)
+        } else {
+            (8.0, 120.0)
+        };
         cx.new(|cx| {
             PaneGroup::new(first, cx)
+                .titlebar(leading, trailing)
                 .on_render_item({
                     let items = items.clone();
                     move |id, _w, _cx| {
