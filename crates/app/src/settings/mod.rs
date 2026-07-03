@@ -72,7 +72,7 @@ pub fn open(parent: &Window, cx: &mut App) {
         },
         |window, cx| {
             window.set_window_title("Settings");
-            cx.new(|cx| SettingsView::new(cx))
+            cx.new(SettingsView::new)
         },
     );
 }

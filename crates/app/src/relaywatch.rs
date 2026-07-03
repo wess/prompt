@@ -21,7 +21,7 @@ impl gpui::Global for Started {}
 /// Spawn the `relay watch` subprocess (once) and pipe its snapshots into the
 /// [`RelayStatus`] global. No-op when Relay is disabled or already running.
 pub fn start(opts: &config::Options, cx: &mut App) {
-    if !crate::relay::enabled(opts) || cx.try_global::<Started>().is_some() {
+    if !crate::relay::available(opts) || cx.try_global::<Started>().is_some() {
         return;
     }
     let mut child = match Command::new(crate::relay::binary())

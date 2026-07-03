@@ -98,29 +98,69 @@ impl WorkspaceView {
             .detach();
     }
 
+    // Only built when AI is enabled (see `setmenus`), so the server is available
+    // on demand — no need to gate the contents on the persistent-mesh setting.
     fn ai_menu(&self, a: &mut Vec<Action>) -> Menu {
         let mut items: Vec<Option<MenuItem>> = Vec::new();
-        if crate::relay::enabled(&self.opts) {
-            items.push(Some(MenuItem::submenu(self.agents_submenu(a))));
-            items.push(Some(MenuItem::submenu(self.relay_submenu(a))));
-            items.push(self.pick(a, "Open Feed", Action::RelayFeed));
-            let teams = crate::relay::team_list();
-            if !teams.is_empty() {
-                let mut t: Vec<Option<MenuItem>> = Vec::new();
-                for name in teams {
-                    t.push(self.pick(a, &name, Action::OpenTeam(name.clone())));
-                }
-                items.push(Some(MenuItem::separator()));
-                items.push(Some(MenuItem::submenu(Self::menu("Teams", t))));
+        items.push(Some(MenuItem::submenu(self.agents_submenu(a))));
+        items.push(Some(MenuItem::submenu(self.relay_submenu(a))));
+        items.push(self.pick(a, "Open Feed", Action::RelayFeed));
+        let teams = crate::relay::team_list();
+        if !teams.is_empty() {
+            let mut t: Vec<Option<MenuItem>> = Vec::new();
+            for name in teams {
+                t.push(self.pick(a, &name, Action::OpenTeam(name.clone())));
             }
-        } else {
-            items.push(self.pick(a, "Enable Relay in Settings\u{2026}", Action::ToggleSettings));
+            items.push(Some(MenuItem::separator()));
+            items.push(Some(MenuItem::submenu(Self::menu("Teams", t))));
         }
         Self::menu("AI", items)
     }
 
+    /// Probe each enabled provider off the UI thread and cache the set that
+    /// verifies, then rebuild the menus so quick-launch lists only tools that
+    /// actually resolve here. Until it finishes, every enabled provider shows.
+    pub(crate) fn refresh_agent_verification(&self, cx: &mut Context<Self>) {
+        if !crate::relay::available(&self.opts) {
+            return;
+        }
+        let executor = cx.background_executor().clone();
+        let opts = self.opts.clone();
+        cx.spawn(async move |this, cx| {
+            let set = executor
+                .spawn(async move {
+                    crate::relay::enabled_agents(&opts)
+                        .into_iter()
+                        .filter(|p| crate::relay::agent_verifies(&opts, p))
+                        .collect::<HashSet<String>>()
+                })
+                .await;
+            let _ = this.update(cx, |view, cx| {
+                if view.verified_agents.as_ref() != Some(&set) {
+                    view.verified_agents = Some(set);
+                    view.setmenus(cx);
+                }
+            });
+        })
+        .detach();
+    }
+
     fn agents_submenu(&self, a: &mut Vec<Action>) -> Menu {
         let mut items: Vec<Option<MenuItem>> = vec![self.pick(a, "Define Agent\u{2026}", Action::RelayLaunch)];
+        // Quick-launch: one item per configured provider that verified, launched
+        // straight into a split (default role, no task) via the shared path.
+        let providers = crate::relay::enabled_agents(&self.opts);
+        let providers = match &self.verified_agents {
+            Some(ok) => providers.into_iter().filter(|p| ok.contains(p)).collect::<Vec<_>>(),
+            None => providers,
+        };
+        if !providers.is_empty() {
+            items.push(Some(MenuItem::separator()));
+            for provider in providers {
+                let label = format!("Launch {}", crate::relay::provider_label(&provider));
+                items.push(self.pick(a, &label, Action::LaunchAgent(provider)));
+            }
+        }
         let defs = crate::relay::list_agent_defs();
         if !defs.is_empty() {
             items.push(Some(MenuItem::separator()));

@@ -241,7 +241,9 @@ impl WorkspaceView {
         let commands: Vec<Option<String>> = members
             .iter()
             .enumerate()
-            .map(|(i, (m, role))| Some(crate::relay::launch_member(m, role, i == 0)))
+            .map(|(i, (m, role))| {
+                Some(crate::relay::launch_member(m, role, i == 0, self.opts.ai_optimize_tokens))
+            })
             .collect();
         self.apply_layout(&layout, &commands, Some(name), window, cx);
     }

@@ -43,32 +43,49 @@ impl WorkspaceView {
 
         let weak = view.downgrade();
         let mut events = bridge::forward(events);
-        window
-            .spawn(cx, async move |cx| {
-                while let Some(event) = events.next().await {
-                    if weak.update(cx, |view, cx| view.apply(event, cx)).is_err() {
-                        break;
-                    }
+        // App-scoped (not window-scoped) so the pty event pump survives the item
+        // being torn off into another window.
+        cx.spawn(async move |_, cx| {
+            while let Some(event) = events.next().await {
+                if weak.update(cx, |view, cx| view.apply(event, cx)).is_err() {
+                    break;
                 }
-            })
-            .detach();
+            }
+        })
+        .detach();
 
+        Some(self.register_item(PaneContent::Terminal(view), window, cx))
+    }
+
+    /// Register existing content as an item: allocate an id, wire the terminal
+    /// `ViewEvent` bridge to this workspace (webviews emit none), insert it into
+    /// `items`. Used by `spawn` and by tear-off adoption (re-homing a live
+    /// terminal into a new window).
+    pub(crate) fn register_item(
+        &mut self,
+        content: PaneContent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> ItemId {
         let id = self.item_ids.next();
-        let subscription = cx.subscribe_in(
-            &view,
-            window,
-            move |this: &mut Self, _view, event: &ViewEvent, window, cx| {
-                this.itemevent(id, event, window, cx);
-            },
-        );
+        let subscription = match &content {
+            PaneContent::Terminal(view) => Some(cx.subscribe_in(
+                view,
+                window,
+                move |this: &mut Self, _view, event: &ViewEvent, window, cx| {
+                    this.itemevent(id, event, window, cx);
+                },
+            )),
+            PaneContent::Webview(_) => None,
+        };
         self.items.borrow_mut().insert(
             id,
             Item {
-                content: PaneContent::Terminal(view),
-                _subscription: Some(subscription),
+                content,
+                _subscription: subscription,
             },
         );
-        Some(id)
+        id
     }
 
     /// Create an item hosting a plugin web view (no terminal, no event bridge),
@@ -186,6 +203,7 @@ impl WorkspaceView {
             self.cell,
             self.pad,
             cwd,
+            None,
             cx,
         );
     }

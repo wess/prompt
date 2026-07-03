@@ -100,7 +100,16 @@ fn start_args(opts: &config::Options) -> Vec<String> {
     ]
 }
 
-/// Whether the Relay menu and commands should be available.
+/// Whether agent features (quick-launch, teams, the AI menu, the Relay sidebar)
+/// are available. Enabling AI is enough — the server is started on demand by
+/// [`ensure_running`] when the user actually launches something.
+pub fn available(opts: &config::Options) -> bool {
+    opts.ai_enabled
+}
+
+/// Whether the Relay server should run *persistently* — started at launch and
+/// kept alive/reconciled across config reloads. This is the explicit "run the
+/// mesh" opt-in; agent launching does not require it (see [`available`]).
 pub fn enabled(opts: &config::Options) -> bool {
     opts.ai_enabled && opts.relay_enabled
 }
@@ -117,7 +126,7 @@ pub fn on_launch(opts: &config::Options) {
 /// (the `start` command polls for health) if enabled but not running. Returns
 /// whether it's running afterward.
 pub fn ensure_running(opts: &config::Options) -> bool {
-    if !enabled(opts) {
+    if !available(opts) {
         return false;
     }
     if running() {
@@ -166,15 +175,19 @@ fn bound_addr() -> Option<String> {
 /// address has changed under a live daemon we restart to rebind.
 pub fn on_reload(opts: &config::Options) {
     let _ = std::fs::create_dir_all(home());
-    if enabled(opts) {
+    if !available(opts) {
+        // AI turned off entirely — tear the server down.
+        run_bg(vec!["--home".into(), home_str(), "stop".into()]);
+    } else if enabled(opts) {
+        // Persistent mesh — keep it up and rebind if the address changed.
         if running() && bound_addr().as_deref() != Some(opts.relay_address.as_str()) {
             restart(opts);
         } else {
             run_bg(start_args(opts));
         }
-    } else {
-        run_bg(vec!["--home".into(), home_str(), "stop".into()]);
     }
+    // Otherwise AI is on but the mesh is on-demand: leave any server a launch
+    // already started alone (don't force-start, don't stop it).
 }
 
 /// Shell command to stream the bus in a split.
@@ -217,6 +230,21 @@ pub fn custom_tools(opts: &config::Options) -> Vec<(String, String)> {
                 .then(|| (label.to_string(), tmpl.to_string()))
         })
         .collect()
+}
+
+/// Whether a provider actually resolves on this machine. Built-ins are probed
+/// with [`test_tool`] (honoring any configured explicit path); custom tools are
+/// trusted, since their template is the user's own command. Blocking (spawns a
+/// `--version` probe / TCP connect) — call it off the UI thread.
+pub(crate) fn agent_verifies(opts: &config::Options, provider: &str) -> bool {
+    let probe = |tool: &str, path: &Option<String>| test_tool(tool, path.as_deref()).is_ok();
+    match provider {
+        "claude" => probe("claude", &opts.agent_claude_path),
+        "codex" => probe("codex", &opts.agent_codex_path),
+        "gemini" => probe("gemini", &opts.agent_gemini_path),
+        "ollama" => test_tool("ollama", None).is_ok(),
+        _ => true,
+    }
 }
 
 /// How to launch a provider: a built-in `--agent` (with an optional explicit
@@ -318,9 +346,105 @@ pub fn launch_agent_command(
         s.push_str(&format!(" --role {}", sh_quote(r)));
     }
     if let Some(t) = task.filter(|t| !t.is_empty()) {
-        s.push_str(&format!(" --task {}", sh_quote(t)));
+        let t = if opts.ai_optimize_tokens { minimize_prompt(t) } else { t.to_string() };
+        if !t.is_empty() {
+            s.push_str(&format!(" --task {}", sh_quote(&t)));
+        }
+    }
+    if opts.ai_optimize_tokens {
+        s.push_str(" --optimize");
     }
     keep_open(s)
+}
+
+/// Immediately launch a configured provider (Claude Code, Codex, …) as a one-off
+/// agent — the quick-launch menu entries. Reuses [`launch_agent_command`] (so the
+/// token-optimization threading applies) with a generated unique name, the
+/// default `worker` role, and no standing task.
+pub fn quick_launch_command(opts: &config::Options, provider: &str) -> String {
+    let name = unique_agent_name(provider);
+    launch_agent_command(opts, provider, &name, None, None)
+}
+
+/// A friendly display name for a provider, for menus. Built-ins get their brand
+/// name; custom tools already carry a user-chosen label, so pass it through.
+pub fn provider_label(provider: &str) -> String {
+    match provider {
+        "claude" => "Claude Code".to_string(),
+        "codex" => "Codex".to_string(),
+        "gemini" => "Gemini".to_string(),
+        "ollama" => "Ollama".to_string(),
+        other => other.to_string(),
+    }
+}
+
+/// A mesh name unlikely to collide across quick launches: the provider plus a
+/// short suffix derived from the wall clock (seconds since the epoch, base-36).
+fn unique_agent_name(provider: &str) -> String {
+    let base: String = provider
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() { c.to_ascii_lowercase() } else { '-' })
+        .collect();
+    let secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    format!("{base}-{}", radix36(secs))
+}
+
+/// Lower-case base-36 encoding of `n` (0-9a-z), for compact, readable suffixes.
+fn radix36(mut n: u64) -> String {
+    if n == 0 {
+        return "0".to_string();
+    }
+    const DIGITS: &[u8; 36] = b"0123456789abcdefghijklmnopqrstuvwxyz";
+    let mut out = Vec::new();
+    while n > 0 {
+        out.push(DIGITS[(n % 36) as usize]);
+        n /= 36;
+    }
+    out.reverse();
+    String::from_utf8(out).unwrap()
+}
+
+/// Compact a prompt to spend fewer tokens without dropping content: strip
+/// trailing whitespace from every line, collapse runs of spaces/tabs that
+/// follow the leading indent into a single space (indentation is preserved so
+/// pasted code keeps its shape), and squeeze runs of blank lines down to one.
+/// Outer blank lines are trimmed off entirely.
+pub(crate) fn minimize_prompt(text: &str) -> String {
+    let mut out: Vec<String> = Vec::new();
+    let mut blank_run = false;
+    for line in text.lines() {
+        let indent: String = line.chars().take_while(|c| *c == ' ' || *c == '\t').collect();
+        let body = &line[indent.len()..];
+        let mut compact = String::with_capacity(body.len());
+        let mut prev_space = false;
+        for c in body.chars() {
+            let is_space = c == ' ' || c == '\t';
+            if is_space {
+                if !prev_space {
+                    compact.push(' ');
+                }
+            } else {
+                compact.push(c);
+            }
+            prev_space = is_space;
+        }
+        let joined = format!("{indent}{}", compact.trim_end());
+        if joined.trim().is_empty() {
+            if !out.is_empty() {
+                blank_run = true;
+            }
+        } else {
+            if blank_run {
+                out.push(String::new());
+            }
+            blank_run = false;
+            out.push(joined);
+        }
+    }
+    out.join("\n")
 }
 
 /// Single-quote a value for safe interpolation into a `/bin/sh -c` string:
@@ -381,10 +505,11 @@ pub fn team_info(name: &str) -> Option<(String, Vec<(String, String)>)> {
 /// Shell command that launches one team member in a pane. The team's first
 /// member is the human-driven `lead`, it stays interactive instead of parking
 /// on the `wait`-loop, so the human can steer it.
-pub fn launch_member(member: &str, role: &str, lead: bool) -> String {
+pub fn launch_member(member: &str, role: &str, lead: bool, optimize: bool) -> String {
     let flag = if lead { " --lead" } else { "" };
+    let opt = if optimize { " --optimize" } else { "" };
     keep_open(format!(
-        "\"{}\" --home \"{}\" launch {member} --role {role}{flag}",
+        "\"{}\" --home \"{}\" launch {member} --role {role}{flag}{opt}",
         binary(),
         home_str()
     ))

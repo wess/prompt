@@ -209,6 +209,10 @@ pub struct Options {
     pub keybind: Vec<String>,
     /// File key: `ai-enabled` - master switch for all AI features.
     pub ai_enabled: bool,
+    /// File key: `ai-optimize-tokens` - when true, prompts sent to AI agents are
+    /// compacted (trailing whitespace, repeated spaces, and blank-line runs
+    /// collapsed) to spend fewer tokens without dropping content.
+    pub ai_optimize_tokens: bool,
     /// File key: `mcp-server-enabled` - expose this terminal to agents over MCP.
     pub mcp_server_enabled: bool,
     /// File key: `relay-enabled` - run the Relay agent mesh.
@@ -359,6 +363,7 @@ impl Default for Options {
             container_persist: false,
             keybind: Vec::new(),
             ai_enabled: false,
+            ai_optimize_tokens: false,
             mcp_server_enabled: false,
             relay_enabled: false,
             relay_start_on_launch: false,

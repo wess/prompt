@@ -36,7 +36,8 @@ pub async fn launch(a: LaunchArgs) -> Result<()> {
     });
     let interactive = !a.background && (a.lead || role.as_ref().is_some_and(|r| r.driver));
     let mcp = paths::write_mcp_config(&endpoint, &name, &info.token)?;
-    let prompt = agent::harness_prompt(&name, &a.role, &brief, &channels, a.task.as_deref(), interactive);
+    let prompt =
+        agent::harness_prompt(&name, &a.role, &brief, &channels, a.task.as_deref(), interactive, a.optimize);
 
     let mut built = agent::build(&agent::Spec {
         agent: &agent_name,

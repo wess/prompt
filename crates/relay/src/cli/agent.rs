@@ -30,6 +30,11 @@ pub struct Spec<'a> {
 /// stays interactive: it registers, then hands control back to the human in its
 /// terminal and only calls `wait` to gather replies *after* it has delegated, 
 /// never parking the human out of their own session.
+///
+/// `optimize` trades the verbose, spelled-out protocol for a terse one-line
+/// variant (and a shorter framing) so a launch that carries no task still costs
+/// noticeably fewer tokens. It changes wording only — every instruction the
+/// agent needs to drive the mesh survives.
 pub fn harness_prompt(
     name: &str,
     role: &str,
@@ -37,9 +42,12 @@ pub fn harness_prompt(
     channels: &[String],
     task: Option<&str>,
     interactive: bool,
+    optimize: bool,
 ) -> String {
     let join = if channels.is_empty() {
         String::new()
+    } else if optimize {
+        format!(" `join` {};", channels.join(", "))
     } else {
         format!("- After registering, `join` these channels: {}.\n", channels.join(", "))
     };
@@ -52,32 +60,40 @@ pub fn harness_prompt(
         .filter(|t| !t.trim().is_empty())
         .map(|t| format!("\nYour standing focus: {}\n", t.trim()))
         .unwrap_or_default();
-    let protocol = if interactive {
-        "Protocol — follow exactly:\n\
-         - Call `register` with name=\"{name}\" and role=\"{role}\" first.\n\
-         {join}\
-         - Then stop and let the human in this terminal give you a goal — do NOT \
-         call `wait` yet. Stay interactive so they can type.\n\
-         - When you have a goal, break it into tasks and delegate with `send` (to one \
-         agent) or `post` (to a channel).\n\
-         - After delegating, call `wait` to collect replies, integrate them, and \
-         report progress back to the human here. Return control to the human \
-         whenever you need their input.\n"
-    } else {
-        "Protocol — follow exactly:\n\
-         - Call `register` with name=\"{name}\" and role=\"{role}\" first.\n\
-         {join}\
-         - Call `wait` to receive work; it blocks until a message arrives.\n\
-         - Do the requested work in this session, then report back with `send` to the \
-         message's sender (or `post` to the relevant channel).\n\
-         - ALWAYS end your turn by calling `wait` again so you stay reachable. \
-         Never stop the wait-loop.\n"
+    let protocol = match (optimize, interactive) {
+        (true, true) => "Protocol: `register` name=\"{name}\" role=\"{role}\".{join} Stay \
+             interactive for the human's goal, split it into tasks, delegate with `send`/`post`, \
+             then `wait` for replies and report back.\n",
+        (true, false) => "Protocol: `register` name=\"{name}\" role=\"{role}\".{join} Then loop: \
+             `wait` for work, do it, report with `send`/`post`, `wait` again. Never stop the loop.\n",
+        (false, true) => "Protocol — follow exactly:\n\
+             - Call `register` with name=\"{name}\" and role=\"{role}\" first.\n\
+             {join}\
+             - Then stop and let the human in this terminal give you a goal — do NOT \
+             call `wait` yet. Stay interactive so they can type.\n\
+             - When you have a goal, break it into tasks and delegate with `send` (to one \
+             agent) or `post` (to a channel).\n\
+             - After delegating, call `wait` to collect replies, integrate them, and \
+             report progress back to the human here. Return control to the human \
+             whenever you need their input.\n",
+        (false, false) => "Protocol — follow exactly:\n\
+             - Call `register` with name=\"{name}\" and role=\"{role}\" first.\n\
+             {join}\
+             - Call `wait` to receive work; it blocks until a message arrives.\n\
+             - Do the requested work in this session, then report back with `send` to the \
+             message's sender (or `post` to the relevant channel).\n\
+             - ALWAYS end your turn by calling `wait` again so you stay reachable. \
+             Never stop the wait-loop.\n",
     };
     let protocol = protocol.replace("{name}", name).replace("{role}", role).replace("{join}", &join);
-    format!(
-        "You are \"{name}\", a {role} connected to the Relay mesh via the `relay` MCP tools.\n\
-         {protocol}{brief}{task}"
-    )
+    let intro = if optimize {
+        format!("You are \"{name}\" ({role}) on the Relay mesh (`relay` MCP tools).\n")
+    } else {
+        format!(
+            "You are \"{name}\", a {role} connected to the Relay mesh via the `relay` MCP tools.\n"
+        )
+    };
+    format!("{intro}{protocol}{brief}{task}")
 }
 
 /// Build the command to launch `agent`, wiring in the relay MCP server.
@@ -209,7 +225,7 @@ mod tests {
 
     #[test]
     fn worker_harness_parks_on_wait() {
-        let p = harness_prompt("backend", "backend", "", &[], None, false);
+        let p = harness_prompt("backend", "backend", "", &[], None, false, false);
         assert!(p.contains("Call `wait` to receive work"));
         assert!(p.contains("Never stop the wait-loop"));
         assert!(!p.contains("human in this terminal"));
@@ -217,7 +233,7 @@ mod tests {
 
     #[test]
     fn driver_harness_stays_interactive() {
-        let p = harness_prompt("lead", "supervisor", "", &[], None, true);
+        let p = harness_prompt("lead", "supervisor", "", &[], None, true, false);
         assert!(p.contains("do NOT call `wait` yet"));
         assert!(p.contains("human in this terminal"));
         assert!(!p.contains("Never stop the wait-loop"));
@@ -227,7 +243,25 @@ mod tests {
     #[test]
     fn channels_join_line_threads_into_protocol() {
         let chans = vec!["frontend".to_string(), "ui".to_string()];
-        let p = harness_prompt("fe", "frontend", "", &chans, None, false);
+        let p = harness_prompt("fe", "frontend", "", &chans, None, false, false);
         assert!(p.contains("`join` these channels: frontend, ui"));
+    }
+
+    #[test]
+    fn optimized_harness_is_shorter_but_keeps_the_essentials() {
+        let full = harness_prompt("w", "worker", "", &[], None, false, false);
+        let lean = harness_prompt("w", "worker", "", &[], None, false, true);
+        assert!(lean.len() < full.len());
+        // Still names the agent, registers, and keeps the wait-loop alive.
+        assert!(lean.contains("register"));
+        assert!(lean.contains("`wait`"));
+        assert!(lean.contains("Never stop the loop"));
+    }
+
+    #[test]
+    fn optimized_channels_still_join() {
+        let chans = vec!["frontend".to_string(), "ui".to_string()];
+        let p = harness_prompt("fe", "frontend", "", &chans, None, false, true);
+        assert!(p.contains("`join` frontend, ui"));
     }
 }

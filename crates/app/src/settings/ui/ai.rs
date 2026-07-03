@@ -6,8 +6,16 @@ use gpui::{div, px, AnyElement, Context, MouseButton, SharedString};
 impl SettingsView {
     pub(crate) fn ai_rows(&self, cx: &mut Context<Self>) -> Vec<AnyElement> {
         let a = Section::Ai.accent();
-        let mut rows = vec![
-            self.toggle_row(Bool::AiEnabled, "\u{2728}", a, cx),
+        let mut rows = vec![self.toggle_row(Bool::AiEnabled, "\u{2728}", a, cx)];
+        if self.opts.ai_enabled {
+            rows.push(self.toggle_row(
+                Bool::OptimizeTokens,
+                "\u{26a1}",
+                theme::Rgb::new(255, 214, 10),
+                cx,
+            ));
+        }
+        rows.extend([
             self.toggle_row(Bool::McpServer, "M", theme::Rgb::new(10, 132, 255), cx),
             self.toggle_row(Bool::RelayEnabled, "R", theme::Rgb::new(52, 199, 89), cx),
             self.toggle_row(
@@ -23,7 +31,7 @@ impl SettingsView {
                 theme::Rgb::new(94, 92, 230),
                 cx,
             ),
-        ];
+        ]);
         if self.opts.relay_enabled {
             rows.push(self.relay_status_row());
             rows.push(self.relay_log_row());

@@ -352,9 +352,9 @@ impl WorkspaceView {
         dim.a = 0.6;
         let mut body = self.sidebar_body("sb-relay");
 
-        if !crate::relay::enabled(&self.opts) {
+        if !crate::relay::available(&self.opts) {
             return body
-                .child(self.sidebar_note("Relay is disabled. Enable it in Settings."))
+                .child(self.sidebar_note("Enable AI in Settings to use Relay."))
                 .into_any_element();
         }
         let server = if status.connected {

@@ -307,6 +307,9 @@ pub enum Action {
     OpenTeam(String),
     /// Launch a previously-saved agent by name.
     AgentDef(String),
+    /// Quick-launch a configured provider (e.g. `claude`, `codex`) as a one-off
+    /// agent in a split, with default role and no task.
+    LaunchAgent(String),
     /// Open a plugin's `[webview]` surface by its webview id.
     OpenWebview(String),
     /// Open the Plugin Manager window (search / install / uninstall).
@@ -456,6 +459,7 @@ impl Action {
             "sidebar" => Ok(Self::Sidebar(req(&name, param)?.to_string())),
             "open_team" => Ok(Self::OpenTeam(req(&name, param)?.to_string())),
             "agent_def" => Ok(Self::AgentDef(req(&name, param)?.to_string())),
+            "launch_agent" => Ok(Self::LaunchAgent(req(&name, param)?.to_string())),
             "open_webview" => Ok(Self::OpenWebview(req(&name, param)?.to_string())),
             "manage_plugins" => only(Self::ManagePlugins, &name, param),
             "quit" => only(Self::Quit, &name, param),
@@ -522,6 +526,7 @@ impl Action {
             Self::Sidebar(s) => format!("sidebar:{s}"),
             Self::OpenTeam(s) => format!("open_team:{s}"),
             Self::AgentDef(s) => format!("agent_def:{s}"),
+            Self::LaunchAgent(s) => format!("launch_agent:{s}"),
             Self::OpenWebview(s) => format!("open_webview:{s}"),
             Self::ManagePlugins => "manage_plugins".into(),
             Self::PluginCommand(s) => format!("plugin_command:{s}"),

@@ -191,6 +191,11 @@ impl WorkspaceView {
                     self.splitcommand(&cmd, SplitAxis::Horizontal, false, window, cx);
                 }
             }
+            Action::LaunchAgent(provider) => {
+                crate::relay::ensure_running(&self.opts);
+                let cmd = crate::relay::quick_launch_command(&self.opts, &provider);
+                self.splitcommand(&cmd, SplitAxis::Horizontal, false, window, cx);
+            }
             Action::OpenWebview(id) => self.open_webview(&id, window, cx),
             Action::ManagePlugins => crate::pluginmanager::open(window, cx),
             Action::Quit => self.request_quit(window, cx),

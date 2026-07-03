@@ -146,13 +146,14 @@ fn open_default_window(opts: config::Options, cx: &mut App) {
         x: opts.window_padding_x as f32,
         y: opts.window_padding_y as f32,
     };
-    open_window(opts, colors, font, font_size, cell, pad, None, cx);
+    open_window(opts, colors, font, font_size, cell, pad, None, None, cx);
 }
 
 /// Open a fresh top-level window hosting its own `WorkspaceView`. Shared by
 /// startup and the `new_window` action so both produce identically sized,
 /// identically styled windows from the same appearance values.
-pub fn open_window(
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn open_window(
     opts: config::Options,
     colors: Rc<colors::Colors>,
     font: gpui::Font,
@@ -160,6 +161,8 @@ pub fn open_window(
     cell: metrics::CellSize,
     pad: metrics::Padding,
     cwd: Option<std::path::PathBuf>,
+    // A torn-off tab re-homed here as the first item (else spawn a fresh shell).
+    adopt: Option<root::PaneContent>,
     cx: &mut App,
 ) {
     let cols = if opts.window_width > 0 {
@@ -193,15 +196,20 @@ pub fn open_window(
     {
         options.window_decorations = Some(gpui::WindowDecorations::Client);
     }
-    cx.open_window(
-        options,
-        move |window, cx| {
-            cx.new(move |cx| {
-                root::WorkspaceView::new(
-                    opts, colors, font, font_size, cell, pad, cols, rows, cwd, window, cx,
-                )
-            })
-        },
-    )
-    .expect("open window");
+    let handle = cx
+        .open_window(
+            options,
+            move |window, cx| {
+                cx.new(move |cx| {
+                    root::WorkspaceView::new(
+                        opts, colors, font, font_size, cell, pad, cols, rows, cwd, adopt, window, cx,
+                    )
+                })
+            },
+        )
+        .expect("open window");
+    // Bring the new window to the front (a torn-off tab must not open behind).
+    handle
+        .update(cx, |_view, window, _cx| window.activate_window())
+        .ok();
 }

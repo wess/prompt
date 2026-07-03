@@ -24,7 +24,7 @@ mod triggers;
 mod tabs;
 
 use std::cell::RefCell;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Duration;
@@ -156,7 +156,7 @@ pub(crate) fn split_dir(dir: SplitDirection) -> (SplitAxis, bool) {
 /// read surface below lets the workspace treat panes uniformly; terminal-only
 /// operations match on the variant (or go through `WorkspaceView::onfocused`,
 /// which only acts on `Terminal`).
-enum PaneContent {
+pub(crate) enum PaneContent {
     Terminal(Entity<TerminalView>),
     Webview(Entity<crate::pluginwebview::PluginWebView>),
 }
@@ -396,6 +396,10 @@ pub struct WorkspaceView {
     base_font_size: gpui::Pixels,
     /// Config-file watcher; kept alive so live reload keeps working.
     _watch: Option<config::WatchHandle>,
+    /// Enabled agent providers that passed their reachability probe, gating the
+    /// AI menu's quick-launch items. `None` until the first off-thread probe
+    /// finishes — treated as "unknown", so every enabled provider shows meanwhile.
+    verified_agents: Option<HashSet<String>>,
     /// Whether the OS appearance is currently dark (drives `theme-light`/`-dark`).
     dark: bool,
     /// Keeps the OS-appearance observer alive.
@@ -422,6 +426,8 @@ impl WorkspaceView {
         cols: usize,
         rows: usize,
         cwd: Option<std::path::PathBuf>,
+        // A torn-off tab re-homed here as the first item (else spawn a shell).
+        adopt: Option<PaneContent>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -472,6 +478,7 @@ impl WorkspaceView {
             container_tabs: HashMap::new(),
             kill_on_close: HashMap::new(),
             _watch: None,
+            verified_agents: None,
             dark: is_dark(window.appearance()),
             _appearance: None,
         };
@@ -488,9 +495,16 @@ impl WorkspaceView {
         this.applykeybinds(cx);
         this.setmenus(cx);
         this.rebuild_webview_hosts(cx);
-        let options = session::options(&this.opts, cols, rows, cwd);
-        let Some(first) = this.spawn(options, window, cx) else {
-            std::process::exit(1);
+        let first = match adopt {
+            // A torn-off tab: re-home its live terminal/webview as the first item.
+            Some(content) => this.register_item(content, window, cx),
+            None => {
+                let options = session::options(&this.opts, cols, rows, cwd);
+                match this.spawn(options, window, cx) {
+                    Some(id) => id,
+                    None => std::process::exit(1),
+                }
+            }
         };
         // Rebuild the group around the real first item (the placeholder held none).
         this.group = Self::build_group(first, this.items.clone(), cx);
@@ -501,6 +515,7 @@ impl WorkspaceView {
         this.startwatch(window, cx);
         crate::relay::on_launch(&this.opts);
         crate::relaywatch::start(&this.opts, cx);
+        this.refresh_agent_verification(cx);
         if this.opts.session_restore {
             this.try_restore(window, cx);
         }
@@ -527,6 +542,7 @@ impl WorkspaceView {
         cx.new(|cx| {
             PaneGroup::new(first, cx)
                 .titlebar(leading, trailing)
+                .tab_height(34.0)
                 .on_render_item({
                     let items = items.clone();
                     move |id, _w, _cx| {
@@ -648,12 +664,26 @@ impl WorkspaceView {
 
     /// Tear an item off into its own window. For this checkpoint the item's
     /// content is not migrated: the item is dropped and a fresh window opens.
+    /// Re-home a torn-off item into a new window. The group already detached it
+    /// (guise `tear_off`); take its live content out of `items` — dropping the
+    /// old event subscription, but keeping the `TerminalView` entity and its pty
+    /// alive (the event pump is app-scoped) — and open a new window adopting it.
     fn tear_off_to_window(&mut self, item: ItemId, _window: &mut Window, cx: &mut Context<Self>) {
-        // TODO(panegroup): migrate the torn-off item's live TerminalView into
-        // the new window instead of dropping it and spawning a fresh shell.
-        self.on_item_closed(item);
-        self.items.borrow_mut().remove(&item);
-        self.newwindow(cx);
+        let Some(Item { content, .. }) = self.items.borrow_mut().remove(&item) else {
+            return;
+        };
+        crate::open_window(
+            self.opts.clone(),
+            self.colors.clone(),
+            self.font.clone(),
+            self.font_size,
+            self.cell,
+            self.pad,
+            None,
+            Some(content),
+            cx,
+        );
+        cx.notify();
     }
 
     /// Watch the config file and reload appearance on every edit.
@@ -706,9 +736,13 @@ impl WorkspaceView {
         }
         self.keybinds = keybinds;
         self.applykeybinds(cx);
+        // Re-probe providers: paths or toggles may have changed. Clear the cache
+        // first so a newly enabled tool shows immediately, then prune once done.
+        self.verified_agents = None;
         self.setmenus(cx);
         self.pushappearance(cx);
         crate::relay::on_reload(&self.opts);
+        self.refresh_agent_verification(cx);
         cx.notify();
     }
 

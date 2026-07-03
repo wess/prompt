@@ -422,6 +422,13 @@ pub fn apply(opts: &mut Options, key: &str, val: &str) -> Result<(), String> {
                 value::parse_bool(val).ok_or_else(|| bad("boolean", val))?
             };
         }
+        "ai-optimize-tokens" => {
+            opts.ai_optimize_tokens = if empty {
+                d.ai_optimize_tokens
+            } else {
+                value::parse_bool(val).ok_or_else(|| bad("boolean", val))?
+            };
+        }
         "mcp-server-enabled" => {
             opts.mcp_server_enabled = if empty {
                 d.mcp_server_enabled

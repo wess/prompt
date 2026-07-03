@@ -204,6 +204,9 @@ pub struct LaunchArgs {
     /// the `wait`-loop. Implied for any `driver` role (e.g. supervisor).
     #[arg(long)]
     pub lead: bool,
+    /// Compact the harness prompt to spend fewer tokens (terse protocol).
+    #[arg(long)]
+    pub optimize: bool,
 }
 
 pub async fn run(cli: Cli) -> Result<()> {
