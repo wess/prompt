@@ -251,6 +251,7 @@ pub async fn call(app: &App, session: &str, name: &str, args: &Value) -> Value {
                 model,
                 channels: &channels,
                 skip_perms: true,
+                extra_args: &[],
             }) {
                 Ok(b) => b,
                 Err(e) => return fail(format!("spawn failed: {e}")),

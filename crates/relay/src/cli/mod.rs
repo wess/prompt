@@ -207,6 +207,10 @@ pub struct LaunchArgs {
     /// Compact the harness prompt to spend fewer tokens (terse protocol).
     #[arg(long)]
     pub optimize: bool,
+    /// Extra flag appended to the agent's own CLI (repeatable), e.g.
+    /// `--agent-arg --dangerously-skip-permissions`.
+    #[arg(long = "agent-arg")]
+    pub agent_args: Vec<String>,
 }
 
 pub async fn run(cli: Cli) -> Result<()> {

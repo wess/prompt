@@ -19,6 +19,9 @@ pub struct Spec<'a> {
     pub model: Option<&'a str>,
     pub channels: &'a [String],
     pub skip_perms: bool,
+    /// Extra CLI flags appended verbatim to the agent's own argv (e.g.
+    /// `--dangerously-skip-permissions`). Configured per provider by the host.
+    pub extra_args: &'a [String],
 }
 
 /// The harness an agent receives as its opening instruction. `brief` is the
@@ -99,17 +102,28 @@ pub fn harness_prompt(
 /// Build the command to launch `agent`, wiring in the relay MCP server.
 pub fn build(spec: &Spec) -> Result<Launch> {
     if let Some(tmpl) = spec.custom {
-        return Ok(from_template(tmpl, spec));
+        return Ok(with_extra(from_template(tmpl, spec), spec));
     }
-    match spec.agent {
-        "claude" => Ok(claude(spec)),
-        "codex" => Ok(codex(spec)),
-        "ollama" => ollama(spec),
-        "gemini" => Ok(from_template(gemini_template(), spec)),
-        other => Err(anyhow!(
-            "unknown agent '{other}'. Use --agent claude|codex|ollama|gemini, or pass --cmd with a template."
-        )),
-    }
+    let launch = match spec.agent {
+        "claude" => claude(spec),
+        "codex" => codex(spec),
+        // Ollama is driven by relay's own bridge, not an agent CLI, so host
+        // flags meant for `claude`/`codex` don't apply — return as-is.
+        "ollama" => return ollama(spec),
+        "gemini" => from_template(gemini_template(), spec),
+        other => {
+            return Err(anyhow!(
+                "unknown agent '{other}'. Use --agent claude|codex|ollama|gemini, or pass --cmd with a template."
+            ))
+        }
+    };
+    Ok(with_extra(launch, spec))
+}
+
+/// Append the host-configured extra flags to an agent's argv.
+fn with_extra(mut launch: Launch, spec: &Spec) -> Launch {
+    launch.args.extend(spec.extra_args.iter().cloned());
+    launch
 }
 
 fn claude(spec: &Spec) -> Launch {
@@ -222,6 +236,46 @@ fn subst(token: &str, spec: &Spec) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn spec<'a>(agent: &'a str, extra: &'a [String]) -> Spec<'a> {
+        Spec {
+            agent,
+            custom: None,
+            name: "a",
+            role: "worker",
+            prompt: "hi",
+            mcp_file: "/tmp/mcp.json",
+            url: "http://127.0.0.1:7777",
+            headless: false,
+            model: None,
+            channels: &[],
+            skip_perms: false,
+            extra_args: extra,
+        }
+    }
+
+    #[test]
+    fn extra_flags_append_to_claude_argv() {
+        let extra = vec!["--dangerously-skip-permissions".to_string()];
+        let launch = build(&spec("claude", &extra)).unwrap();
+        assert_eq!(launch.program, "claude");
+        assert_eq!(launch.args.last().unwrap(), "--dangerously-skip-permissions");
+    }
+
+    #[test]
+    fn extra_flags_append_to_gemini_template() {
+        let extra = vec!["--yolo".to_string()];
+        let launch = build(&spec("gemini", &extra)).unwrap();
+        assert!(launch.args.contains(&"--yolo".to_string()));
+    }
+
+    #[test]
+    fn ollama_ignores_agent_flags() {
+        // Ollama is a bridge, not an agent CLI — host flags must not leak in.
+        let extra = vec!["--dangerously-skip-permissions".to_string()];
+        let launch = build(&spec("ollama", &extra)).unwrap();
+        assert!(!launch.args.iter().any(|a| a == "--dangerously-skip-permissions"));
+    }
 
     #[test]
     fn worker_harness_parks_on_wait() {

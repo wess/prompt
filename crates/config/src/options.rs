@@ -238,6 +238,13 @@ pub struct Options {
     pub agent_codex_path: Option<String>,
     /// File key: `agent-gemini-path` - explicit path to the `gemini` binary.
     pub agent_gemini_path: Option<String>,
+    /// File key: `agent-claude-args` - extra CLI flags appended when launching
+    /// Claude Code (e.g. `--dangerously-skip-permissions`). Blank = none.
+    pub agent_claude_args: Option<String>,
+    /// File key: `agent-codex-args` - extra CLI flags appended when launching Codex.
+    pub agent_codex_args: Option<String>,
+    /// File key: `agent-gemini-args` - extra CLI flags appended when launching Gemini.
+    pub agent_gemini_args: Option<String>,
     /// File key: `agent-custom` (repeatable) - user-defined agent tools, each
     /// `label|command template`, where the template may use `{prompt}`, `{mcp}`,
     /// `{url}`, and `{name}` placeholders.
@@ -376,6 +383,9 @@ impl Default for Options {
             agent_claude_path: None,
             agent_codex_path: None,
             agent_gemini_path: None,
+            agent_claude_args: None,
+            agent_codex_args: None,
+            agent_gemini_args: None,
             agent_custom: Vec::new(),
             theme_light: String::new(),
             theme_dark: String::new(),

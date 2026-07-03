@@ -169,6 +169,7 @@ scrollback-limit = 50000</code></pre>
           <thead><tr><th>Key</th><th>Type</th><th>Default</th><th>Description</th></tr></thead>
           <tbody>
             <tr><td><code>ai-enabled</code></td><td>bool</td><td><code>false</code></td><td>Master switch for AI features.</td></tr>
+            <tr><td><code>ai-optimize-tokens</code></td><td>bool</td><td><code>false</code></td><td>Compact prompts sent to agents (whitespace collapsed, terse relay harness) to spend fewer tokens.</td></tr>
             <tr><td><code>mcp-server-enabled</code></td><td>bool</td><td><code>false</code></td><td>Expose Prompt's MCP server for tool calls.</td></tr>
             <tr><td><code>relay-enabled</code></td><td>bool</td><td><code>false</code></td><td>Enable the agent mesh relay integration.</td></tr>
             <tr><td><code>relay-start-on-launch</code></td><td>bool</td><td><code>false</code></td><td>Start the relay daemon when the app launches.</td></tr>
@@ -188,6 +189,9 @@ scrollback-limit = 50000</code></pre>
             <tr><td><code>agent-claude-path</code></td><td>string</td><td>none</td><td>Explicit path to the Claude Code executable.</td></tr>
             <tr><td><code>agent-codex-path</code></td><td>string</td><td>none</td><td>Explicit path to the Codex executable.</td></tr>
             <tr><td><code>agent-gemini-path</code></td><td>string</td><td>none</td><td>Explicit path to the Gemini executable.</td></tr>
+            <tr><td><code>agent-claude-args</code></td><td>string</td><td>none</td><td>Extra CLI flags appended when launching Claude Code, e.g. <code>--dangerously-skip-permissions</code>. Quote values with spaces.</td></tr>
+            <tr><td><code>agent-codex-args</code></td><td>string</td><td>none</td><td>Extra CLI flags appended when launching Codex.</td></tr>
+            <tr><td><code>agent-gemini-args</code></td><td>string</td><td>none</td><td>Extra CLI flags appended when launching Gemini.</td></tr>
             <tr><td><code>agent-custom</code></td><td>string (repeatable)</td><td>none</td><td>Custom agent as <code>label|command template</code>, with <code>{prompt}</code>, <code>{mcp}</code>, <code>{url}</code>, and <code>{name}</code> placeholders.</td></tr>
           </tbody>
         </table></div>

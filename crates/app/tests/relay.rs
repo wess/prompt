@@ -38,3 +38,20 @@ fn minimize_preserves_indentation_and_content() {
 fn minimize_trims_outer_blank_lines() {
     assert_eq!(minimize_prompt("\n\n  hello  \n\n"), "  hello");
 }
+
+#[test]
+fn split_args_tokenizes_on_whitespace() {
+    assert_eq!(
+        split_args("--dangerously-skip-permissions --foo"),
+        vec!["--dangerously-skip-permissions", "--foo"]
+    );
+}
+
+#[test]
+fn split_args_keeps_quoted_values_together() {
+    assert_eq!(
+        split_args("--append-system-prompt \"be terse\" --x"),
+        vec!["--append-system-prompt", "be terse", "--x"]
+    );
+    assert_eq!(split_args("   "), Vec::<String>::new());
+}

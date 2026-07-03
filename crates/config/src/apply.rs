@@ -501,6 +501,15 @@ pub fn apply(opts: &mut Options, key: &str, val: &str) -> Result<(), String> {
         "agent-gemini-path" => {
             opts.agent_gemini_path = if empty { None } else { Some(val.to_string()) };
         }
+        "agent-claude-args" => {
+            opts.agent_claude_args = if empty { None } else { Some(val.to_string()) };
+        }
+        "agent-codex-args" => {
+            opts.agent_codex_args = if empty { None } else { Some(val.to_string()) };
+        }
+        "agent-gemini-args" => {
+            opts.agent_gemini_args = if empty { None } else { Some(val.to_string()) };
+        }
         "agent-custom" => {
             if empty {
                 opts.agent_custom = d.agent_custom.clone();

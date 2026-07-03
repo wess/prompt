@@ -72,11 +72,14 @@ impl SettingsView {
             .child(self.list(vec![
                 self.tool_row(Bool::ToolClaude, "claude", cx),
                 self.field_row(Field::ClaudePath, "\u{2026}", accent, cx),
+                self.field_row(Field::ClaudeArgs, "\u{2691}", accent, cx),
                 self.tool_row(Bool::ToolCodex, "codex", cx),
                 self.field_row(Field::CodexPath, "\u{2026}", accent, cx),
+                self.field_row(Field::CodexArgs, "\u{2691}", accent, cx),
                 self.tool_row(Bool::ToolOllama, "ollama", cx),
                 self.tool_row(Bool::ToolGemini, "gemini", cx),
                 self.field_row(Field::GeminiPath, "\u{2026}", accent, cx),
+                self.field_row(Field::GeminiArgs, "\u{2691}", accent, cx),
             ]))
     }
 

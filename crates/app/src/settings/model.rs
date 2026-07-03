@@ -436,6 +436,9 @@ pub enum Field {
     ClaudePath,
     CodexPath,
     GeminiPath,
+    ClaudeArgs,
+    CodexArgs,
+    GeminiArgs,
     ThemeLight,
     ThemeDark,
     BgImage,
@@ -464,6 +467,9 @@ impl Field {
             Field::ClaudePath => "agent-claude-path",
             Field::CodexPath => "agent-codex-path",
             Field::GeminiPath => "agent-gemini-path",
+            Field::ClaudeArgs => "agent-claude-args",
+            Field::CodexArgs => "agent-codex-args",
+            Field::GeminiArgs => "agent-gemini-args",
         }
     }
 
@@ -488,6 +494,9 @@ impl Field {
             Field::ClaudePath => "Claude path",
             Field::CodexPath => "Codex path",
             Field::GeminiPath => "Gemini path",
+            Field::ClaudeArgs => "Claude flags",
+            Field::CodexArgs => "Codex flags",
+            Field::GeminiArgs => "Gemini flags",
         }
     }
 
@@ -504,6 +513,9 @@ impl Field {
             Field::ClaudePath => "Search PATH (e.g. /usr/local/bin/claude)",
             Field::CodexPath => "Search PATH",
             Field::GeminiPath => "Search PATH",
+            Field::ClaudeArgs => "--dangerously-skip-permissions",
+            Field::CodexArgs => "extra CLI flags",
+            Field::GeminiArgs => "extra CLI flags",
             Field::Foreground
             | Field::Background
             | Field::CursorColor
@@ -536,6 +548,9 @@ impl Field {
             Field::ClaudePath => &o.agent_claude_path,
             Field::CodexPath => &o.agent_codex_path,
             Field::GeminiPath => &o.agent_gemini_path,
+            Field::ClaudeArgs => &o.agent_claude_args,
+            Field::CodexArgs => &o.agent_codex_args,
+            Field::GeminiArgs => &o.agent_gemini_args,
             Field::BgImage => &o.background_image,
             Field::Badge => &o.badge,
             Field::RelayAddress => return o.relay_address.clone(),

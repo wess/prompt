@@ -51,6 +51,7 @@ pub async fn launch(a: LaunchArgs) -> Result<()> {
         model: model.as_deref(),
         channels: &channels,
         skip_perms: a.background,
+        extra_args: &a.agent_args,
     })?;
 
     if let Some(bin) = a.bin.as_deref().map(str::trim).filter(|b| !b.is_empty()) {

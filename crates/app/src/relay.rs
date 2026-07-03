@@ -248,37 +248,77 @@ pub(crate) fn agent_verifies(opts: &config::Options, provider: &str) -> bool {
 }
 
 /// How to launch a provider: a built-in `--agent` (with an optional explicit
-/// `--bin` path), or a custom `--cmd` template.
+/// `--bin` path), or a custom `--cmd` template, plus any extra CLI flags the
+/// user configured for it.
 struct Resolved {
     agent: Option<String>,
     bin: Option<String>,
     custom: Option<String>,
+    args: Vec<String>,
+}
+
+/// Split a configured flags string into individual argv tokens, honoring simple
+/// single/double quoting so a flag value with spaces stays one argument.
+pub(crate) fn split_args(s: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut cur = String::new();
+    let mut quote: Option<char> = None;
+    let mut has = false;
+    for c in s.chars() {
+        match quote {
+            Some(q) if c == q => quote = None,
+            Some(_) => cur.push(c),
+            None if c == '\'' || c == '"' => {
+                quote = Some(c);
+                has = true;
+            }
+            None if c.is_whitespace() => {
+                if has {
+                    out.push(std::mem::take(&mut cur));
+                    has = false;
+                }
+            }
+            None => {
+                cur.push(c);
+                has = true;
+            }
+        }
+    }
+    if has {
+        out.push(cur);
+    }
+    out
 }
 
 /// Resolve a provider label to its launch shape using the configured paths and
 /// custom tools. Unknown labels fall back to `--agent <label>`.
 fn resolve_provider(opts: &config::Options, provider: &str) -> Resolved {
     let bin = |p: &Option<String>| p.clone().filter(|s| !s.trim().is_empty());
+    let args = |a: &Option<String>| a.as_deref().map(split_args).unwrap_or_default();
     match provider {
         "claude" => Resolved {
             agent: Some("claude".into()),
             bin: bin(&opts.agent_claude_path),
             custom: None,
+            args: args(&opts.agent_claude_args),
         },
         "codex" => Resolved {
             agent: Some("codex".into()),
             bin: bin(&opts.agent_codex_path),
             custom: None,
+            args: args(&opts.agent_codex_args),
         },
         "gemini" => Resolved {
             agent: Some("gemini".into()),
             bin: bin(&opts.agent_gemini_path),
             custom: None,
+            args: args(&opts.agent_gemini_args),
         },
         "ollama" => Resolved {
             agent: Some("ollama".into()),
             bin: None,
             custom: None,
+            args: Vec::new(),
         },
         other => {
             if let Some((_, tmpl)) = custom_tools(opts).into_iter().find(|(l, _)| l == other) {
@@ -286,12 +326,14 @@ fn resolve_provider(opts: &config::Options, provider: &str) -> Resolved {
                     agent: None,
                     bin: None,
                     custom: Some(tmpl),
+                    args: Vec::new(),
                 }
             } else {
                 Resolved {
                     agent: Some(other.to_string()),
                     bin: None,
                     custom: None,
+                    args: Vec::new(),
                 }
             }
         }
@@ -353,6 +395,9 @@ pub fn launch_agent_command(
     }
     if opts.ai_optimize_tokens {
         s.push_str(" --optimize");
+    }
+    for arg in &r.args {
+        s.push_str(&format!(" --agent-arg {}", sh_quote(arg)));
     }
     keep_open(s)
 }
