@@ -39,6 +39,13 @@ fn socket_dir() -> PathBuf {
 
 /// Per-user socket path under [`socket_dir`].
 fn socket_path() -> PathBuf {
+    // Debug builds honor PROMPT_SOCKET so a throwaway test instance can own its
+    // own socket without colliding with the user's installed app. Release builds
+    // ignore it and always use the fixed per-user path.
+    #[cfg(debug_assertions)]
+    if let Some(p) = std::env::var_os("PROMPT_SOCKET") {
+        return PathBuf::from(p);
+    }
     socket_dir().join("prompt-quick.sock")
 }
 
@@ -103,6 +110,39 @@ pub fn send_toggle() -> bool {
         Err(_) => {
             eprintln!("prompt: no running instance to toggle the quick terminal");
             false
+        }
+    }
+}
+
+/// Dev-only CLI: `prompt ipc <op> [json-args]`. Sends one op to the running
+/// instance and prints the JSON reply (or the error). `json-args` defaults to
+/// `{}`. Returns the process exit code. Used to script UI testing — e.g.
+/// `prompt ipc send_input '{"text":"git st"}'` then
+/// `prompt ipc read_suggestion '{}'`.
+#[cfg(debug_assertions)]
+pub fn run_cli(args: &[String]) -> i32 {
+    let Some(op) = args.first() else {
+        eprintln!("usage: prompt ipc <op> [json-args]");
+        return 2;
+    };
+    let parsed = match args.get(1) {
+        Some(raw) => match serde_json::from_str::<Value>(raw) {
+            Ok(v) => v,
+            Err(e) => {
+                eprintln!("prompt ipc: bad JSON args: {e}");
+                return 2;
+            }
+        },
+        None => json!({}),
+    };
+    match request(op, &parsed) {
+        Ok(result) => {
+            println!("{}", serde_json::to_string_pretty(&result).unwrap_or_default());
+            0
+        }
+        Err(e) => {
+            eprintln!("prompt ipc: {e}");
+            1
         }
     }
 }

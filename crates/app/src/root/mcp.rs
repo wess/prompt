@@ -58,6 +58,40 @@ impl WorkspaceView {
                     .unwrap_or_default();
                 Ok(json!({ "text": text }))
             }
+            #[cfg(debug_assertions)]
+            "window_bounds" => {
+                let b = window.bounds();
+                Ok(json!({
+                    "x": f32::from(b.origin.x),
+                    "y": f32::from(b.origin.y),
+                    "width": f32::from(b.size.width),
+                    "height": f32::from(b.size.height),
+                }))
+            }
+            #[cfg(debug_assertions)]
+            "suggest_key" => {
+                let key = args
+                    .get("key")
+                    .and_then(Value::as_str)
+                    .ok_or("suggest_key requires a `key` string")?
+                    .to_string();
+                let mut consumed = false;
+                self.onfocused(cx, |v, cx| consumed = v.debug_suggest_key(&key, cx));
+                Ok(json!({ "consumed": consumed }))
+            }
+            #[cfg(debug_assertions)]
+            "read_suggestion" => {
+                let (input, ghost, candidates, popup_open) = self
+                    .focused_terminal(cx)
+                    .map(|v| v.read(cx).suggestion_debug())
+                    .unwrap_or_default();
+                Ok(json!({
+                    "input": input,
+                    "ghost": ghost,
+                    "candidates": candidates,
+                    "popup_open": popup_open,
+                }))
+            }
             "send_input" => {
                 let text = args
                     .get("text")
