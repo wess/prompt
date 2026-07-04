@@ -358,6 +358,38 @@ pub fn apply(opts: &mut Options, key: &str, val: &str) -> Result<(), String> {
                 value::parse_bool(val).ok_or_else(|| bad("boolean", val))?
             };
         }
+        "autosuggest-ghost" => {
+            opts.autosuggest_ghost =
+                if empty { d.autosuggest_ghost } else { value::parse_bool(val).ok_or_else(|| bad("boolean", val))? };
+        }
+        "autosuggest-popup" => {
+            opts.autosuggest_popup =
+                if empty { d.autosuggest_popup } else { value::parse_bool(val).ok_or_else(|| bad("boolean", val))? };
+        }
+        "autosuggest-tab" => {
+            opts.autosuggest_tab =
+                if empty { d.autosuggest_tab } else { value::parse_bool(val).ok_or_else(|| bad("boolean", val))? };
+        }
+        "autosuggest-ai" => {
+            opts.autosuggest_ai =
+                if empty { d.autosuggest_ai } else { value::parse_bool(val).ok_or_else(|| bad("boolean", val))? };
+        }
+        "autosuggest-history" => {
+            opts.autosuggest_history =
+                if empty { d.autosuggest_history } else { value::parse_bool(val).ok_or_else(|| bad("boolean", val))? };
+        }
+        "autosuggest-commands" => {
+            opts.autosuggest_commands =
+                if empty { d.autosuggest_commands } else { value::parse_bool(val).ok_or_else(|| bad("boolean", val))? };
+        }
+        "autosuggest-paths" => {
+            opts.autosuggest_paths =
+                if empty { d.autosuggest_paths } else { value::parse_bool(val).ok_or_else(|| bad("boolean", val))? };
+        }
+        "autosuggest-assist" => {
+            opts.autosuggest_assist =
+                if empty { d.autosuggest_assist } else { value::parse_bool(val).ok_or_else(|| bad("boolean", val))? };
+        }
         "tab-title-show-host" => {
             opts.tab_title_show_host = if empty {
                 d.tab_title_show_host

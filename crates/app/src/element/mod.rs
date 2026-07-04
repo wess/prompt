@@ -55,6 +55,8 @@ pub struct TerminalElement {
     smart_select: bool,
     middle_click_paste: bool,
     search: Option<SearchQuery>,
+    /// Autosuggestion ghost suffix drawn dimmed at the cursor, if any.
+    ghost: Option<String>,
     /// GPU textures for decoded sixel images, keyed by placement id and shared
     /// with the view so they survive across frames.
     image_cache: Rc<RefCell<HashMap<u64, Arc<RenderImage>>>>,
@@ -75,6 +77,7 @@ impl TerminalElement {
         smart_select: bool,
         middle_click_paste: bool,
         search: Option<SearchQuery>,
+        ghost: Option<String>,
         image_cache: Rc<RefCell<HashMap<u64, Arc<RenderImage>>>>,
     ) -> Self {
         Self {
@@ -90,6 +93,7 @@ impl TerminalElement {
             smart_select,
             middle_click_paste,
             search,
+            ghost,
             image_cache,
         }
     }
@@ -100,6 +104,8 @@ pub struct Frame {
     box_quads: Vec<(Bounds<Pixels>, Hsla)>,
     lines: Vec<(Point<Pixels>, ShapedLine)>,
     cursor: Option<CursorFrame>,
+    /// Dimmed autosuggestion ghost text at the cursor.
+    ghost: Option<(Point<Pixels>, ShapedLine)>,
     indicator: Option<Bounds<Pixels>>,
     /// Sixel images, as positioned pixel bounds plus their texture.
     images: Vec<(Bounds<Pixels>, Arc<RenderImage>)>,
@@ -257,11 +263,33 @@ impl Element for TerminalElement {
             .filter(|c| c.row < rows && c.col < cols)
             .map(|c| self.cursor_frame(c, origin, window));
 
+        // Ghost text: dimmed suggestion suffix starting at the cursor cell.
+        let ghost = self.ghost.as_ref().filter(|g| !g.is_empty()).and_then(|g| {
+            let c = snap.cursor.as_ref().filter(|c| c.row < rows && c.col < cols)?;
+            let mut color = colors::hsla(self.colors.fg);
+            color.a *= 0.4;
+            let run = gpui::TextRun {
+                len: g.len(),
+                font: self.font.clone(),
+                color,
+                background_color: None,
+                underline: None,
+                strikethrough: None,
+            };
+            let line =
+                window
+                    .text_system()
+                    .shape_line(g.clone().into(), self.font_size, &[run], None);
+            let pos = point(origin.x + cell_w * c.col as f32, origin.y + cell_h * c.row as f32);
+            Some((pos, line))
+        });
+
         Frame {
             bg_quads,
             box_quads,
             lines,
             cursor,
+            ghost,
             indicator: scroll_indicator(&bounds, rows, snap.offset, snap.scrollback),
             images,
             grid: (cols, rows),
@@ -293,6 +321,10 @@ impl Element for TerminalElement {
                     .ok();
             }
             for (pos, line) in &frame.lines {
+                line.paint(*pos, line_height, TextAlign::Left, None, window, cx)
+                    .ok();
+            }
+            if let Some((pos, line)) = &frame.ghost {
                 line.paint(*pos, line_height, TextAlign::Left, None, window, cx)
                     .ok();
             }

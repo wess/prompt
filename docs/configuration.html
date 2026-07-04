@@ -140,6 +140,14 @@ scrollback-limit = 50000</code></pre>
           <thead><tr><th>Key</th><th>Type</th><th>Default</th><th>Description</th></tr></thead>
           <tbody>
             <tr><td><code>shell-integration</code></td><td>bool</td><td><code>true</code></td><td>Inject OSC 133 prompt marks and OSC 7 cwd reporting into zsh/bash/fish via environment — no rc-file edits.</td></tr>
+            <tr><td><code>autosuggest-ghost</code></td><td>bool</td><td><code>true</code></td><td>Fish-style inline ghost text completing the current command; accept with → or End. Needs shell integration.</td></tr>
+            <tr><td><code>autosuggest-popup</code></td><td>bool</td><td><code>false</code></td><td>Show a completion dropdown under the cursor; ↑/↓ to move, Enter to accept.</td></tr>
+            <tr><td><code>autosuggest-tab</code></td><td>bool</td><td><code>false</code></td><td>Tab cycles inline completions instead of forwarding Tab to the shell.</td></tr>
+            <tr><td><code>autosuggest-ai</code></td><td>bool</td><td><code>false</code></td><td>When nothing local matches, ask Claude for a next-command suggestion (needs AI enabled).</td></tr>
+            <tr><td><code>autosuggest-history</code></td><td>bool</td><td><code>true</code></td><td>Use captured command history as a suggestion source.</td></tr>
+            <tr><td><code>autosuggest-commands</code></td><td>bool</td><td><code>true</code></td><td>Use the built-in common-command list as a suggestion source.</td></tr>
+            <tr><td><code>autosuggest-paths</code></td><td>bool</td><td><code>true</code></td><td>Complete filesystem paths from the working directory.</td></tr>
+            <tr><td><code>autosuggest-assist</code></td><td>bool</td><td><code>true</code></td><td>Rank suggestions with the local assist model rather than plain recency.</td></tr>
             <tr><td><code>session-restore</code></td><td>bool</td><td><code>false</code></td><td>Restore windows and splits from the previous run.</td></tr>
             <tr><td><code>tab-title-show-host</code></td><td>bool</td><td><code>false</code></td><td>Show the hostname in tab titles.</td></tr>
           </tbody>

@@ -4,6 +4,7 @@
 pub mod context;
 pub mod model;
 pub mod safety;
+pub mod suggest;
 pub mod task;
 
 pub use context::{blocktext, lastblock, search, Block, Line};

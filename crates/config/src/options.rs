@@ -185,6 +185,30 @@ pub struct Options {
     /// reporting into the spawned shell (zsh/bash/fish) so jump-to-prompt and
     /// cwd inheritance work without editing your shell rc. On by default.
     pub shell_integration: bool,
+    /// File key: `autosuggest-ghost` - fish-style inline ghost text completing
+    /// the current command from history/commands/paths. On by default.
+    pub autosuggest_ghost: bool,
+    /// File key: `autosuggest-popup` - a dropdown of ranked completions under
+    /// the cursor (arrow + Enter to accept). Off by default.
+    pub autosuggest_popup: bool,
+    /// File key: `autosuggest-tab` - press Tab to cycle inline completions
+    /// instead of forwarding Tab to the shell. Off by default.
+    pub autosuggest_tab: bool,
+    /// File key: `autosuggest-ai` - when nothing local matches, ask Claude for a
+    /// next-command suggestion (needs AI enabled). Off by default.
+    pub autosuggest_ai: bool,
+    /// File key: `autosuggest-history` - use captured command history as a
+    /// suggestion source. On by default.
+    pub autosuggest_history: bool,
+    /// File key: `autosuggest-commands` - use the built-in common-command list
+    /// as a suggestion source. On by default.
+    pub autosuggest_commands: bool,
+    /// File key: `autosuggest-paths` - complete filesystem paths from the cwd.
+    /// On by default.
+    pub autosuggest_paths: bool,
+    /// File key: `autosuggest-assist` - rank suggestions with the local assist
+    /// model rather than plain recency. On by default.
+    pub autosuggest_assist: bool,
     /// File key: `tab-title-show-host`. Keep the leading `user@host:` that
     /// shells set in the terminal title when showing it in a tab. Off by
     /// default, so tabs show just the path (the host wraps to two lines and
@@ -361,6 +385,14 @@ impl Default for Options {
             clipboard_paste_protection: false,
             mouse_hide_while_typing: false,
             shell_integration: true,
+            autosuggest_ghost: true,
+            autosuggest_popup: false,
+            autosuggest_tab: false,
+            autosuggest_ai: false,
+            autosuggest_history: true,
+            autosuggest_commands: true,
+            autosuggest_paths: true,
+            autosuggest_assist: true,
             session_restore: false,
             tab_title_show_host: false,
             palette: Vec::new(),

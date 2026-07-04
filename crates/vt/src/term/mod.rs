@@ -54,6 +54,13 @@ pub(crate) struct Inner {
     /// Set on a shell-integration command-finished mark (OSC 133 `D`); the
     /// inner value is the reported exit code (`None` when the mark omits it).
     pub(crate) command_finished: Option<Option<i32>>,
+    /// Cursor `(row, col)` where shell input begins on the current prompt line,
+    /// set by OSC 133 `B` (command-line start). Powers autosuggestion's read of
+    /// the line being typed; cleared when the command runs (`133;C`).
+    pub(crate) input_start: Option<(usize, usize)>,
+    /// Executed command lines captured on `133;C`, newest last, capped. Feeds
+    /// history-based autosuggestion.
+    pub(crate) history: std::collections::VecDeque<String>,
     /// Set when OSC 7 reports a working directory different from the last one.
     pub(crate) cwd_changed: bool,
     pub(crate) last_printed: Option<char>,
@@ -123,6 +130,8 @@ impl Terminal {
                 output: Vec::new(),
                 bell: false,
                 command_finished: None,
+                input_start: None,
+                history: std::collections::VecDeque::new(),
                 cwd_changed: false,
                 full_damage: true,
                 title_changed: false,
@@ -325,6 +334,31 @@ impl Terminal {
     /// the inner is the exit code (`None` when the mark carried none).
     pub fn take_command_finished(&mut self) -> Option<Option<i32>> {
         std::mem::take(&mut self.inner.command_finished)
+    }
+
+    /// The shell input line currently being typed, from the OSC 133 `B` mark to
+    /// the end of that row (right-trimmed). `None` when no input mark is active
+    /// (e.g. no shell integration, or a command is running). Backs autosuggest.
+    pub fn current_input(&self) -> Option<String> {
+        let (srow, scol) = self.inner.input_start?;
+        let grid = &self.inner.screen().grid;
+        if srow >= grid.rows() {
+            return None;
+        }
+        Some(grid.row(srow).text().chars().skip(scol).collect())
+    }
+
+    /// `(row, col)` one past the end of the current input line, where ghost text
+    /// should begin. `None` when there's no active input.
+    pub fn input_end(&self) -> Option<(usize, usize)> {
+        let (srow, scol) = self.inner.input_start?;
+        let text = self.current_input()?;
+        Some((srow, scol + text.chars().count()))
+    }
+
+    /// Captured command history, newest first. Empty without shell integration.
+    pub fn command_history(&self) -> Vec<String> {
+        self.inner.history.iter().rev().cloned().collect()
     }
 
     /// The new working directory once after OSC 7 reported a change; `None`

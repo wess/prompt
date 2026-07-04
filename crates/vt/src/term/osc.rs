@@ -61,6 +61,24 @@ pub(crate) fn dispatch(inner: &mut Inner, params: &[&[u8]], bell_terminated: boo
                 let row = inner.screen().cursor.row;
                 inner.screen_mut().grid.row_mut(row).prompt = true;
             }
+            // Command-line start: the cursor now sits where shell input begins.
+            Some(&b'B') => {
+                let c = &inner.screen().cursor;
+                inner.input_start = Some((c.row, c.col));
+            }
+            // Command start (about to run): capture the typed line into history.
+            Some(&b'C') => {
+                if let Some((row, col)) = inner.input_start.take() {
+                    let line = row_text_from(inner, row, col);
+                    let line = line.trim();
+                    if !line.is_empty() && inner.history.back().map(String::as_str) != Some(line) {
+                        inner.history.push_back(line.to_string());
+                        while inner.history.len() > 1000 {
+                            inner.history.pop_front();
+                        }
+                    }
+                }
+            }
             // Command finished: `133;D` or `133;D;<exit-code>`.
             Some(&b'D') => {
                 let code = params
@@ -68,6 +86,7 @@ pub(crate) fn dispatch(inner: &mut Inner, params: &[&[u8]], bell_terminated: boo
                     .and_then(|p| std::str::from_utf8(p).ok())
                     .and_then(|s| s.trim().parse::<i32>().ok());
                 inner.command_finished = Some(code);
+                inner.input_start = None;
             }
             _ => {}
         },
@@ -149,6 +168,16 @@ pub(crate) fn dispatch(inner: &mut Inner, params: &[&[u8]], bell_terminated: boo
 
 /// Set the pending desktop notification (last write wins). Empty requests are
 /// dropped so a bare sequence doesn't post a blank notification.
+/// Text of active-grid row `row` from column `col` onward (right-trimmed).
+/// Empty when the row is out of range.
+fn row_text_from(inner: &Inner, row: usize, col: usize) -> String {
+    let grid = &inner.screen().grid;
+    if row >= grid.rows() {
+        return String::new();
+    }
+    grid.row(row).text().chars().skip(col).collect::<String>().trim_end().to_string()
+}
+
 fn notify(inner: &mut Inner, title: Option<String>, body: String) {
     if body.is_empty() && title.is_none() {
         return;

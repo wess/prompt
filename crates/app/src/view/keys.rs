@@ -124,6 +124,10 @@ impl TerminalView {
             cx.stop_propagation();
             return;
         }
+        if self.handle_suggestion_key(keystroke, mods, cx) {
+            cx.stop_propagation();
+            return;
+        }
         if cx.try_global::<crate::root::MacroRecorder>().is_some() {
             cx.update_global::<crate::root::MacroRecorder, _>(|rec, _| {
                 rec.0.key(&keystroke.key, keystroke.key_char.as_deref());

@@ -42,6 +42,7 @@ mod root;
 mod session;
 mod sessionstate;
 mod settings;
+mod suggest;
 mod teambuilder;
 mod shellinteg;
 mod tabbar;
@@ -97,6 +98,15 @@ fn main() {
 
     if args.first().map(String::as_str) == Some("export") {
         std::process::exit(exportcmd::run(&args[1..]));
+    }
+
+    // Dev-only drive surface: `prompt ipc <op> [json-args]` sends one op over
+    // the single-instance socket and prints the JSON reply, for scripted UI
+    // testing. Compiled out of release builds so it never widens the shipped
+    // automation surface.
+    #[cfg(debug_assertions)]
+    if args.first().map(String::as_str) == Some("ipc") {
+        std::process::exit(ipc::run_cli(&args[1..]));
     }
 
     // GUI launch (Finder/Dock) inherits a bare PATH; adopt the login shell's so

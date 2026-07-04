@@ -256,3 +256,27 @@ fn number_parsing() {
     assert_eq!(parse_number(b"12a"), None);
     assert_eq!(parse_number(b"999999"), None);
 }
+
+#[test]
+fn osc133_input_marker_and_history() {
+    let mut t = Terminal::new(40, 3, 100);
+    // Prompt, then input-start mark, then the user types a command.
+    t.feed(b"\x1b]133;A\x1b\\$ \x1b]133;B\x1b\\git status");
+    assert_eq!(t.current_input().as_deref(), Some("git status"));
+    // Command starts: the line is captured into history and input clears.
+    t.feed(b"\x1b]133;C\x1b\\");
+    assert_eq!(t.current_input(), None);
+    assert_eq!(t.command_history(), vec!["git status".to_string()]);
+}
+
+#[test]
+fn osc133_history_dedups_consecutive_and_newest_first() {
+    let mut t = Terminal::new(40, 3, 100);
+    for cmd in ["ls", "ls", "cargo test"] {
+        t.feed(b"\x1b]133;B\x1b\\");
+        t.feed(cmd.as_bytes());
+        t.feed(b"\x1b]133;C\x1b\\\r\n");
+    }
+    // Consecutive duplicate "ls" collapses; newest first.
+    assert_eq!(t.command_history(), vec!["cargo test".to_string(), "ls".to_string()]);
+}

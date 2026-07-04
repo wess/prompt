@@ -35,6 +35,7 @@ impl WorkspaceView {
                 self.opts.macos_option_as_alt,
                 self.opts.clipboard_paste_protection,
                 self.opts.clipboard_write,
+                crate::suggest::SuggestConfig::from_opts(&self.opts),
                 fallback,
                 window,
                 cx,

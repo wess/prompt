@@ -45,6 +45,11 @@ _prompt_precmd() {
   printf '\\e]133;D;%d\\e\\\\' \"$ret\"
   printf '\\e]133;A\\e\\\\'
   printf '\\e]7;file://%s%s\\e\\\\' \"${HOST}\" \"${PWD}\"
+  # Mark where shell input begins (OSC 133;B) so Prompt can read the line being
+  # typed for autosuggestions. Appended to PS1 (zero-width) idempotently, so it
+  # survives prompts that rebuild PS1 each precmd.
+  local _prompt_b=$'%{\\e]133;B\\e\\\\%}'
+  [[ \"$PS1\" != *\"$_prompt_b\" ]] && PS1=\"${PS1}${_prompt_b}\"
 }
 _prompt_preexec() { printf '\\e]133;C\\e\\\\'; }
 autoload -Uz add-zsh-hook 2>/dev/null
@@ -78,6 +83,9 @@ _prompt_ret=$?
 printf '\\e]133;D;%d\\e\\\\' \"$_prompt_ret\"
 printf '\\e]133;A\\e\\\\'
 printf '\\e]7;file://%s%s\\e\\\\' \"${HOSTNAME}\" \"${PWD}\"
+# Mark where shell input begins (OSC 133;B) via a zero-width PS1 suffix, added
+# once, so Prompt can read the line being typed for autosuggestions.
+[[ \"$PS1\" != *'133;B'* ]] && PS1=\"${PS1}\"'\\[\\e]133;B\\e\\\\\\]'
 ";
 
 /// Shells we know how to wire up.

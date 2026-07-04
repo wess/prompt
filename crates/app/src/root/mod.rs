@@ -770,6 +770,7 @@ impl WorkspaceView {
             option_as_alt: self.opts.macos_option_as_alt,
             paste_protection: self.opts.clipboard_paste_protection,
             clipboard_write: self.opts.clipboard_write,
+            suggest: crate::suggest::SuggestConfig::from_opts(&self.opts),
         };
         let terminals: Vec<_> = self
             .items

@@ -649,6 +649,32 @@ pub fn generate_team(
     Ok(spec)
 }
 
+/// Ask Claude for a single next-command suggestion completing `input`, given
+/// recent history for context. Returns the full command line (which must start
+/// with `input`) or `None`. Blocking — run off the UI thread.
+pub fn suggest_command(
+    opts: &config::Options,
+    recent: &[String],
+    input: &str,
+) -> Option<String> {
+    let bin = claude_binary(opts);
+    let history = recent.join("\n");
+    let prompt = format!(
+        "You complete a shell command line. Recent commands (newest first):\n{history}\n\n\
+         The user has typed: {input}\n\n\
+         Reply with ONLY the single most likely full command line, starting with exactly \
+         what they typed, no prose, no backticks, no explanation."
+    );
+    let out = std::process::Command::new(&bin).arg("-p").arg(&prompt).output().ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let line = String::from_utf8_lossy(&out.stdout);
+    let line = line.lines().find(|l| !l.trim().is_empty())?.trim();
+    let line = line.trim_matches('`').trim();
+    (line.starts_with(input) && line.len() > input.len()).then(|| line.to_string())
+}
+
 /// The generation prompt: constrain Claude to emit only the team JSON.
 fn team_prompt(roles: &[String], description: &str) -> String {
     let roles = if roles.is_empty() {

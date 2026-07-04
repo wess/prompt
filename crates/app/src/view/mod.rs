@@ -28,6 +28,7 @@ mod mouse;
 mod notify;
 mod scroll;
 mod search;
+mod suggest;
 mod timestamps;
 
 pub use notify::{notify_command, post_os_notification};
@@ -194,6 +195,7 @@ pub struct Appearance {
     pub option_as_alt: config::OptionAsAlt,
     pub paste_protection: bool,
     pub clipboard_write: config::ClipboardAccess,
+    pub suggest: crate::suggest::SuggestConfig,
 }
 
 pub struct TerminalView {
@@ -261,6 +263,10 @@ pub struct TerminalView {
     annotations: std::collections::HashMap<u64, String>,
     /// Active local-assist overlay, if any.
     assist: Option<Assist>,
+    /// Enabled autosuggestion behaviors/sources.
+    suggest_cfg: crate::suggest::SuggestConfig,
+    /// Live autosuggestion state (candidates, ghost, popup, tab-cycle, AI).
+    suggest: crate::suggest::Suggest,
     /// Focus in/out listeners that drive focus reporting (?1004).
     _focus_subs: [Subscription; 2],
 }
@@ -281,6 +287,7 @@ impl TerminalView {
         option_as_alt: config::OptionAsAlt,
         paste_protection: bool,
         clipboard_write: config::ClipboardAccess,
+        suggest_cfg: crate::suggest::SuggestConfig,
         fallback: String,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -336,6 +343,8 @@ impl TerminalView {
             committed_last: u64::MAX,
             annotations: std::collections::HashMap::new(),
             assist: None,
+            suggest_cfg,
+            suggest: crate::suggest::Suggest::default(),
             _focus_subs: [sub_in, sub_out],
         }
     }
@@ -399,6 +408,7 @@ impl TerminalView {
         self.option_as_alt = a.option_as_alt;
         self.paste_protection = a.paste_protection;
         self.clipboard_write = a.clipboard_write;
+        self.suggest_cfg = a.suggest;
         self.session
             .with_term(|term| term.set_report_colors(colors::report_colors(&self.colors)));
         cx.notify();
@@ -492,6 +502,7 @@ impl TerminalView {
             return;
         }
         self.sync_pending = false;
+        self.recompute_suggestions(cx);
         cx.notify();
     }
 
@@ -577,9 +588,11 @@ impl Render for TerminalView {
                 self.smart_select,
                 self.middle_click_paste,
                 query,
+                self.suggestion_ghost(),
                 self.image_cache.clone(),
             ))
             .children(self.badge_overlay(cx))
+            .children(self.suggestion_popup_overlay(cx))
             .children(self.timestamps_overlay(cx))
             .children(self.annotations_overlay())
             .children(self.hints_overlay())
