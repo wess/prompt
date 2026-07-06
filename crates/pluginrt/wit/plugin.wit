@@ -1,0 +1,106 @@
+package prompt:plugin@0.1.0;
+
+// Shared value types.
+interface types {
+  enum log-level { debug, info, warn, error }
+
+  // Where a run-command directive executes.
+  enum command-target { pane, tab, split-right, split-down }
+
+  record http-request {
+    url: string,
+    method: string,
+    headers: list<tuple<string, string>>,
+    body: option<list<u8>>,
+  }
+
+  record http-response {
+    status: u16,
+    headers: list<tuple<string, string>>,
+    body: list<u8>,
+  }
+}
+
+// ── Host imports, split per capability ───────────────────────────────────────
+// The host links only the interfaces whose capability the plugin declared and
+// the user granted. A guest that imports an interface the host did not link
+// fails to instantiate — that is the capability boundary, enforced by the
+// linker rather than by convention.
+
+// Always linked (ungated): logging + a per-plugin key/value store.
+interface host-core {
+  use types.{log-level};
+  log: func(level: log-level, message: string);
+  storage-get: func(key: string) -> option<string>;
+  storage-set: func(key: string, value: string);
+}
+
+// cap: commands
+interface host-commands {
+  use types.{command-target};
+  run-command: func(text: string, target: command-target) -> result<_, string>;
+  send-input: func(bytes: list<u8>) -> result<_, string>;
+}
+
+// cap: screen
+interface host-screen {
+  read-screen: func(lines: u32) -> result<string, string>;
+  selection: func() -> option<string>;
+}
+
+// cap: network
+interface host-net {
+  use types.{http-request, http-response};
+  fetch: func(request: http-request) -> result<http-response, string>;
+}
+
+// cap: filesystem  (scoped to the plugin dir + the focused cwd by default)
+interface host-fs {
+  read-file: func(path: string) -> result<list<u8>, string>;
+  write-file: func(path: string, data: list<u8>) -> result<_, string>;
+}
+
+// cap: clipboard
+interface host-clipboard {
+  read: func() -> result<string, string>;
+  write: func(text: string) -> result<_, string>;
+}
+
+// cap: notify
+interface host-notify {
+  notify: func(title: string, body: string);
+}
+
+// ── Guest exports ────────────────────────────────────────────────────────────
+// Tools are the spine (Stage 1). Panels (render / on-ui-event), webview
+// messages (on-message), and event hooks (on-event) are added in later stages
+// as the world grows.
+interface guest {
+  // Called once on instantiation.
+  init: func();
+  // Handle a tool call (from the command palette or an MCP agent). Returns a
+  // JSON result string.
+  call-tool: func(name: string, params-json: string) -> result<string, string>;
+}
+
+world plugin {
+  import host-core;
+  import host-commands;
+  import host-screen;
+  import host-net;
+  import host-fs;
+  import host-clipboard;
+  import host-notify;
+  export guest;
+}
+
+// A plugin's own world imports only the interfaces it uses, so a component
+// imports exactly the capabilities it needs and the host's link-time gating is
+// precise. This one backs the Stage-1 example guest (core + commands only). The
+// host always instantiates against `plugin` (a superset), which is compatible.
+world example {
+  import host-core;
+  import host-commands;
+  export guest;
+}
+

@@ -1,0 +1,19 @@
+# Its own workspace so the wasm32-wasip2 build stays independent of the host tree.
+[workspace]
+
+[package]
+name = "testguest"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+wit-bindgen = "0.34"
+
+[profile.release]
+# Strip unused import bindings so the component imports only what it calls.
+lto = true
+opt-level = "s"

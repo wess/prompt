@@ -1,0 +1,13 @@
+[package]
+autotests = false
+name = "pluginrt"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+plugin = { path = "../plugin" }
+anyhow = "1"
+serde_json = "1"
+wasmtime = { version = "27", features = ["component-model"] }
+wasmtime-wasi = "27"

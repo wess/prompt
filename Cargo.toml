@@ -12,6 +12,7 @@ members = [
     "crates/mcp",
     "crates/notes",
     "crates/plugin",
+    "crates/pluginrt",
     "crates/pty",
     "crates/relay",
     "crates/terminal",
@@ -22,7 +23,7 @@ members = [
 # vendor/guise is its own cargo workspace (a submodule); exclude it so its
 # crates inherit from guise's [workspace.package], not ours. We depend on
 # vendor/guise/crates/guise by path.
-exclude = ["vendor/guise"]
+exclude = ["vendor/guise", "crates/pluginrt/testguest"]
 
 # Mirrored from zed's workspace — cargo patches don't propagate through git
 # dependencies. See docs/gpui.md.

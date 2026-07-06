@@ -1,0 +1,89 @@
+use super::*;
+use std::sync::{Arc, Mutex};
+
+/// A mock app host that records the commands a plugin runs.
+struct MockHost {
+    commands: Arc<Mutex<Vec<String>>>,
+}
+
+impl AppHost for MockHost {
+    fn log(&mut self, _level: LogLevel, _message: String) {}
+    fn storage_get(&mut self, _key: String) -> Option<String> {
+        None
+    }
+    fn storage_set(&mut self, _key: String, _value: String) {}
+    fn run_command(&mut self, text: String, _target: CommandTarget) -> Result<(), String> {
+        self.commands.lock().unwrap().push(text);
+        Ok(())
+    }
+    fn send_input(&mut self, _bytes: Vec<u8>) -> Result<(), String> {
+        Ok(())
+    }
+    fn read_screen(&mut self, _lines: u32) -> Result<String, String> {
+        Ok(String::new())
+    }
+    fn selection(&mut self) -> Option<String> {
+        None
+    }
+    fn fetch(&mut self, _request: HttpRequest) -> Result<HttpResponse, String> {
+        Err("no network".into())
+    }
+    fn read_file(&mut self, _path: String) -> Result<Vec<u8>, String> {
+        Err("no fs".into())
+    }
+    fn write_file(&mut self, _path: String, _data: Vec<u8>) -> Result<(), String> {
+        Err("no fs".into())
+    }
+    fn clipboard_read(&mut self) -> Result<String, String> {
+        Err("no clipboard".into())
+    }
+    fn clipboard_write(&mut self, _text: String) -> Result<(), String> {
+        Ok(())
+    }
+    fn notify(&mut self, _title: String, _body: String) {}
+}
+
+fn fixture() -> Vec<u8> {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/example.wasm");
+    std::fs::read(path).expect("example.wasm fixture")
+}
+
+#[test]
+fn builds_a_component_engine() {
+    engine().expect("wasmtime component engine");
+}
+
+#[test]
+fn tool_call_and_gated_host_call() {
+    let eng = engine().unwrap();
+    let commands = Arc::new(Mutex::new(Vec::new()));
+    let host = Box::new(MockHost { commands: commands.clone() });
+    let mut plugin = PluginInstance::new(&eng, &fixture(), &["commands".to_string()], host)
+        .expect("instantiate with the commands capability");
+
+    // A pure tool round-trips its params.
+    let echoed = plugin.call_tool("echo", "{\"a\":1}").unwrap().unwrap();
+    assert_eq!(echoed, "{\"a\":1}");
+
+    // A tool that calls the gated host-commands interface reaches the host.
+    let ran = plugin.call_tool("run", "{}").unwrap().unwrap();
+    assert_eq!(ran, "{\"ran\":true}");
+    assert_eq!(commands.lock().unwrap().as_slice(), &["echo hi".to_string()]);
+
+    // An unknown tool returns the guest's error, not a trap.
+    let err = plugin.call_tool("nope", "{}").unwrap().unwrap_err();
+    assert!(err.contains("unknown tool"), "{err}");
+}
+
+#[test]
+fn missing_capability_blocks_instantiation() {
+    let eng = engine().unwrap();
+    let host = Box::new(MockHost {
+        commands: Arc::new(Mutex::new(Vec::new())),
+    });
+    // The guest imports host-commands; without the `commands` capability the host
+    // doesn't link it, so the component can't instantiate. That is the enforced
+    // capability boundary — not an advisory flag.
+    let result = PluginInstance::new(&eng, &fixture(), &[], host);
+    assert!(result.is_err(), "instantiation must fail without the commands capability");
+}
