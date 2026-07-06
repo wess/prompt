@@ -56,6 +56,7 @@ struct RawWebview {
     placement: Option<String>,
     url: Option<String>,
     entry: Option<String>,
+    service: Option<String>,
     #[serde(default)]
     boot: bool,
 }
@@ -254,15 +255,22 @@ fn build_webview(raw: RawWebview, id: &str, name: &str, path: &Path, diags: &mut
             }
         },
     };
-    let source = match (raw.url.filter(nonblank), raw.entry.filter(nonblank)) {
-        (Some(url), None) => WebviewSource::Url(url),
-        (None, Some(entry)) => WebviewSource::Entry(entry),
-        (Some(_), Some(_)) => {
-            diags.push(diag(path, "[webview] needs exactly one of `url` or `entry`, not both"));
+    let sources: Vec<WebviewSource> = [
+        raw.url.filter(nonblank).map(WebviewSource::Url),
+        raw.entry.filter(nonblank).map(WebviewSource::Entry),
+        raw.service.filter(nonblank).map(WebviewSource::Service),
+    ]
+    .into_iter()
+    .flatten()
+    .collect();
+    let source = match sources.len() {
+        1 => sources.into_iter().next().expect("one source"),
+        0 => {
+            diags.push(diag(path, "[webview] requires a `url`, `entry`, or `service`"));
             return None;
         }
-        (None, None) => {
-            diags.push(diag(path, "[webview] requires a `url` or `entry`"));
+        _ => {
+            diags.push(diag(path, "[webview] needs exactly one of `url`, `entry`, or `service`"));
             return None;
         }
     };

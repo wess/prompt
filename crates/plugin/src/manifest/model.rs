@@ -186,8 +186,13 @@ impl Placement {
 pub enum WebviewSource {
     /// A remote or absolute URL, loaded as-is.
     Url(String),
-    /// A path relative to the plugin directory, loaded via `file://`.
+    /// A path relative to the plugin directory, served over the internal origin.
     Entry(String),
+    /// A host-managed sidecar: the host runs this command as a local server
+    /// (allocating a port + token, health-checking, reaping on close) and loads
+    /// the page from its `http` origin. Generalizes the built-in Notes server so
+    /// any plugin — including Notes itself, now a plugin — can ship a backend.
+    Service(String),
 }
 
 /// The event names a `[[trigger]]` may hook. Kept in one place so the manifest

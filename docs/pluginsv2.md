@@ -361,8 +361,13 @@ in the running GUI, not generated in one pass.
    persistent = true` plugins (spawned once, newline-JSON request/response loop),
    wired into the tool bridge; one-shot plugins keep the spawn-per-event path.
    (GUI-panel warm path reuses the same manager — follow-up.)
-5. **Webview overhaul** — two-way bridge (`onMessage`), host-managed sidecar;
-   port `dashboard`, move Notes over.
+5. 🟡 **Webview overhaul** — the host-managed sidecar mechanism is in: a
+   `[webview] service = "…"` (manifest `WebviewSource::Service`) maps to
+   `Boot::Command`, which spawns the sidecar and reads its `.service.json`
+   (`{port, token}`). The Notes plugin manifest (`plugins/notes/`) uses it.
+   Remaining: the `notes` binary writing `.service.json` + resolving the bundled
+   binary, rewiring File → Notes to open the plugin, the `onMessage` native→page
+   push, and in-GUI verification.
 6. **SDK** — `prompt-plugin` crate + `@prompt/plugin` (`componentize-js`) + docs;
    port `promptdesigner`.
 7. **Registry & trust** — signed manifest, capability consent, enable/disable,

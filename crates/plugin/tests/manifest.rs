@@ -183,9 +183,7 @@ entry = "index.html"
     fn webview_requires_a_source() {
         let (plugin, diags) = parse(path(), "id = \"dash\"\n[webview]\ntitle = \"X\"\n");
         assert!(plugin.unwrap().webview.is_none());
-        assert!(diags
-            .iter()
-            .any(|d| d.message.contains("requires a `url` or `entry`")));
+        assert!(diags.iter().any(|d| d.message.contains("requires a `url`")));
     }
 
     #[test]

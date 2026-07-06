@@ -45,6 +45,10 @@ pub enum Boot {
     /// spawns the server if needed and returns its `(port, token)`, substituted
     /// into `{port}`/`{token}` in the template (a built-in like Notes).
     Server(fn() -> Result<(u16, String), String>),
+    /// A data-driven host-managed sidecar (`[[webview]] service = "…"`): the host
+    /// spawns the command in `dir` and reads `dir/.service.json` (`{port, token}`)
+    /// for its address. Generalizes `Server` so any plugin can ship a backend.
+    Command { command: String, dir: PathBuf },
 }
 
 /// What a [`PluginWebView`] hosts: identity, content, and an optional runtime to
@@ -82,6 +86,13 @@ impl WebviewSurface {
             Some(plugin::WebviewSource::Entry(e)) => SurfaceContent::Entry {
                 dir: plugin.path.clone(),
                 entry: e.clone(),
+            },
+            Some(plugin::WebviewSource::Service(cmd)) => SurfaceContent::Boot {
+                url_template: "http://127.0.0.1:{port}/?token={token}".to_string(),
+                boot: Boot::Command {
+                    command: cmd.clone(),
+                    dir: plugin.path.clone(),
+                },
             },
             None => SurfaceContent::Url(String::new()),
         };
@@ -208,6 +219,24 @@ impl PluginWebView {
                     let target = executor
                         .spawn(async move {
                             f().map(|(port, token)| {
+                                url.replace("{port}", &port.to_string()).replace("{token}", &token)
+                            })
+                        })
+                        .await;
+                    webview.update(cx, |wv, cx| match target {
+                        Ok(u) => wv.load_url(u, cx),
+                        Err(e) => wv.load_html(failure_html(&e), cx),
+                    });
+                })
+                .detach();
+            }
+            Boot::Command { command, dir } => {
+                let command = command.clone();
+                let dir = dir.clone();
+                cx.spawn(async move |_this, cx| {
+                    let target = executor
+                        .spawn(async move {
+                            run_service(&command, &dir).map(|(port, token)| {
                                 url.replace("{port}", &port.to_string()).replace("{token}", &token)
                             })
                         })
@@ -354,6 +383,44 @@ impl PluginWebView {
 
 /// Interpret a plugin runtime's `boot` reply: `{ error }` fails; `{ url }` wins;
 /// `{ port }` fills `{port}` in the template; anything else uses the template.
+/// Run a plugin's sidecar `service` command and read its `(port, token)`. The
+/// command is spawned detached in `dir`; it reports its address by writing
+/// `dir/.service.json` (`{ "port": N, "token": "…" }`), which the host polls for.
+/// A live descriptor is reused (a second window shares the one server).
+/// Lifecycle/reaping is a follow-up.
+fn run_service(command: &str, dir: &std::path::Path) -> Result<(u16, String), String> {
+    let descriptor = dir.join(".service.json");
+    if let Some(addr) = read_service(&descriptor) {
+        return Ok(addr);
+    }
+    let mut parts = command.split_whitespace();
+    let program = parts.next().ok_or("empty service command")?;
+    let args: Vec<&str> = parts.collect();
+    std::process::Command::new(program)
+        .args(&args)
+        .current_dir(dir)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .map_err(|e| format!("spawn `{program}`: {e}"))?;
+    for _ in 0..60 {
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        if let Some(addr) = read_service(&descriptor) {
+            return Ok(addr);
+        }
+    }
+    Err("the plugin service did not report its address".into())
+}
+
+/// Read a `.service.json` descriptor's `(port, token)`.
+fn read_service(path: &std::path::Path) -> Option<(u16, String)> {
+    let value: Value = serde_json::from_slice(&std::fs::read(path).ok()?).ok()?;
+    let port = value.get("port")?.as_u64()? as u16;
+    let token = value.get("token")?.as_str()?.to_string();
+    Some((port, token))
+}
+
 fn boot_target(resp: Result<pluginhost::Response, String>, url: &str) -> Result<String, String> {
     match resp {
         Ok(r) => match r.result {
