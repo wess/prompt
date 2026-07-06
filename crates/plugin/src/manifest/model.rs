@@ -84,6 +84,11 @@ pub struct Runtime {
     pub command: String,
     /// For a `wasm` runtime: the `.wasm` module path, relative to the plugin.
     pub wasm: Option<String>,
+    /// A `process` runtime that is a long-lived stdio server (reads newline JSON
+    /// requests, writes newline JSON responses in a loop) rather than one-shot.
+    /// The host keeps it warm instead of spawning per event. Ignored for `wasm`
+    /// (always resident).
+    pub persistent: bool,
 }
 
 /// The kind of `[runtime]` host.

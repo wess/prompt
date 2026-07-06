@@ -13,6 +13,7 @@ use gpui::{App, WindowHandle};
 use serde_json::{json, Value};
 
 use crate::root::WorkspaceView;
+use crate::warmhost::WarmPlugins;
 use crate::wasmhost::WasmRuntime;
 
 /// Entry point for the `prompt mcp` subcommand: serve MCP over stdio. Built-in
@@ -30,8 +31,10 @@ pub fn run_stdio() {
     // Resident WASM instances for wasm-runtime plugins, created lazily. `None` if
     // the engine can't start; wasm tools then report it rather than crashing.
     let wasm = RefCell::new(WasmRuntime::new().ok());
+    // Warm long-lived processes for persistent native plugins.
+    let warm = RefCell::new(WarmPlugins::new());
     mcp::serve(tools, &|name, args| match routes.get(name) {
-        Some((index, tool_id)) => call_plugin_tool(&plugins[*index], tool_id, args, &wasm),
+        Some((index, tool_id)) => call_plugin_tool(&plugins[*index], tool_id, args, &wasm, &warm),
         None => crate::ipc::request(name, args),
     });
 }
@@ -80,6 +83,7 @@ fn call_plugin_tool(
     tool_id: &str,
     args: &Value,
     wasm: &RefCell<Option<WasmRuntime>>,
+    warm: &RefCell<WarmPlugins>,
 ) -> Result<Value, String> {
     if plugin.runtime.as_ref().map(|r| r.kind) == Some(plugin::RuntimeKind::Wasm) {
         let mut rt = wasm.borrow_mut();
@@ -94,6 +98,20 @@ fn call_plugin_tool(
         method: Some(tool_id),
         params: Some(args),
     };
+    // A persistent native plugin is a warm stdio server: send the request line,
+    // read the response line, instead of spawning per call.
+    if let Some(rt) = plugin.runtime.as_ref().filter(|r| r.persistent) {
+        let mut parts = rt.command.split_whitespace();
+        let program = parts.next().ok_or("empty runtime command")?;
+        let cmd_args: Vec<String> = parts.map(String::from).collect();
+        let body = serde_json::to_string(&req).map_err(|e| e.to_string())?;
+        let line = warm
+            .borrow_mut()
+            .request(&plugin.id, program, &cmd_args, &plugin.path, &body)?;
+        let resp: crate::pluginhost::Response =
+            serde_json::from_str(&line).map_err(|e| format!("bad response: {e}"))?;
+        return Ok(resp.result.unwrap_or_else(|| json!({ "ok": true })));
+    }
     let resp = crate::pluginhost::invoke(plugin, &req)?;
     Ok(resp.result.unwrap_or_else(|| json!({ "ok": true })))
 }

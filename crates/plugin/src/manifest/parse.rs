@@ -37,6 +37,8 @@ struct RawRuntime {
     kind: Option<String>,
     command: Option<String>,
     wasm: Option<String>,
+    #[serde(default)]
+    persistent: bool,
 }
 
 #[derive(Deserialize)]
@@ -203,14 +205,19 @@ fn build_runtime(raw: RawRuntime, path: &Path, diags: &mut Vec<Diagnostic>) -> O
     let wasm = raw.wasm.filter(nonblank);
     match kind {
         RuntimeKind::Process => match command {
-            Some(command) => Some(Runtime { kind, command, wasm: None }),
+            Some(command) => Some(Runtime { kind, command, wasm: None, persistent: raw.persistent }),
             None => {
                 diags.push(diag(path, "[runtime] requires a `command`"));
                 None
             }
         },
         RuntimeKind::Wasm => match wasm {
-            Some(wasm) => Some(Runtime { kind, command: command.unwrap_or_default(), wasm: Some(wasm) }),
+            Some(wasm) => Some(Runtime {
+                kind,
+                command: command.unwrap_or_default(),
+                wasm: Some(wasm),
+                persistent: false,
+            }),
             None => {
                 diags.push(diag(path, "a `wasm` runtime requires a `wasm` module path"));
                 None

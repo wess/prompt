@@ -357,8 +357,10 @@ in the running GUI, not generated in one pass.
    machinery.
 3. **Panels v2** — the `node` tree with inputs, `render` + `on-ui-event` +
    `render-panel` push. Port `git`/`docker`.
-4. **Native tier adapter** — warm-process wrapper behind the same contract; the
-   remaining v1 plugins run on it unchanged.
+4. ✓ **Native tier adapter** — a warm long-lived stdio server for `[runtime]
+   persistent = true` plugins (spawned once, newline-JSON request/response loop),
+   wired into the tool bridge; one-shot plugins keep the spawn-per-event path.
+   (GUI-panel warm path reuses the same manager — follow-up.)
 5. **Webview overhaul** — two-way bridge (`onMessage`), host-managed sidecar;
    port `dashboard`, move Notes over.
 6. **SDK** — `prompt-plugin` crate + `@prompt/plugin` (`componentize-js`) + docs;

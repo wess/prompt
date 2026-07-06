@@ -52,6 +52,7 @@ mod tabbar;
 mod tiles;
 mod titlebar;
 mod view;
+mod warmhost;
 mod wasmhost;
 
 use std::rc::Rc;
