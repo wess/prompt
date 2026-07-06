@@ -214,6 +214,11 @@ pub struct LaunchArgs {
     /// Compact the harness prompt to spend fewer tokens (terse protocol).
     #[arg(long)]
     pub optimize: bool,
+    /// Load only the relay MCP server, ignoring the project `.mcp.json` and the
+    /// user's global servers (`claude --strict-mcp-config`). Off by default so
+    /// the agent keeps its project/user MCP servers alongside relay (issue #3).
+    #[arg(long = "strict-mcp")]
+    pub strict_mcp: bool,
     /// Extra flag appended to the agent's own CLI (repeatable), e.g.
     /// `--agent-arg --dangerously-skip-permissions`.
     #[arg(long = "agent-arg")]

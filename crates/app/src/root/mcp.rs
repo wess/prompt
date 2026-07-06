@@ -353,7 +353,7 @@ impl WorkspaceView {
         if let Some(t) = title {
             self.rename_item(root, t, cx);
         }
-        self.focusactive(window, cx);
+        self.activate_item(root, window, cx);
         cx.notify();
     }
 

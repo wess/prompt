@@ -51,6 +51,7 @@ pub async fn launch(a: LaunchArgs) -> Result<()> {
         model: model.as_deref(),
         channels: &channels,
         skip_perms: a.background,
+        strict_mcp: a.strict_mcp,
         extra_args: &a.agent_args,
     })?;
 

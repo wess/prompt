@@ -136,6 +136,11 @@ impl WorkspaceView {
                 self.dispatch(action.clone(), window, cx);
             }
             ViewEvent::Attention => cx.notify(),
+            ViewEvent::Focused => {
+                if self.group.read(cx).active_item() != item {
+                    self.activate_item(item, window, cx);
+                }
+            }
             ViewEvent::Trigger(ev) => self.fire_triggers(item, ev, window, cx),
         }
     }

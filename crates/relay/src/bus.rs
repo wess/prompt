@@ -6,12 +6,37 @@ use crate::protocol::Message;
 use crate::state::App;
 use std::time::Duration;
 
+/// Marks an agent parked for the lifetime of a blocking `await_messages` call.
+/// `Drop` runs on normal return *and* when the future is cancelled (the agent's
+/// `wait` HTTP stream is dropped because its process died), so the parked set is
+/// always an honest picture of who is currently reachable.
+struct ParkGuard<'a> {
+    app: &'a App,
+    name: &'a str,
+}
+
+impl<'a> ParkGuard<'a> {
+    fn new(app: &'a App, name: &'a str) -> Self {
+        app.enter_parked(name);
+        Self { app, name }
+    }
+}
+
+impl Drop for ParkGuard<'_> {
+    fn drop(&mut self) {
+        self.app.leave_parked(self.name);
+    }
+}
+
 /// Park until messages addressed to `name` arrive (when `block`), then drain
 /// them and advance the read cursor. Returns the delivered messages (empty on
 /// timeout or when not blocking and the inbox is empty).
 pub async fn await_messages(app: &App, name: &str, block: bool, max_wait: Duration) -> Vec<Message> {
     let deadline = tokio::time::Instant::now() + max_wait;
     let signal = app.waiter(name).await;
+    // Present in the parked set for the whole blocking call; released on return
+    // or cancellation so a dead agent stops looking alive immediately.
+    let _park = block.then(|| ParkGuard::new(app, name));
     loop {
         let notified = signal.notified();
         tokio::pin!(notified);
@@ -48,6 +73,16 @@ pub async fn deliver(
     target: Option<&str>,
     body: &str,
 ) -> anyhow::Result<i64> {
+    // A direct message may be addressed to an agent that has not registered yet
+    // (the manager assigns a task the instant a team opens, racing the worker's
+    // `register`). Pre-create the recipient's row *before* inserting the message
+    // so its seeded read cursor sits just below this message's id — otherwise a
+    // brand-new agent, whose cursor is initialized to the current tip at
+    // register time, would never see the task and would stall "with nothing to
+    // do" (issue #5).
+    if let ("direct", Some(to)) = (kind, target) {
+        db::ensure_agent(&app.db, to).await?;
+    }
     let id = db::insert_message(&app.db, from, kind, target, body).await?;
     match (kind, target) {
         ("direct", Some(to)) => app.wake_one(to).await,
@@ -59,4 +94,56 @@ pub async fn deliver(
         _ => app.wake_all().await,
     }
     Ok(id)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::state::App;
+
+    async fn app() -> (App, std::path::PathBuf) {
+        // A unique temp DB per test; sqlite WAL needs a real file, not :memory:.
+        static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let n = N.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let path = std::env::temp_dir().join(format!("relay-bus-{}-{n}.db", std::process::id()));
+        let pool = db::open(path.to_str().unwrap()).await.unwrap();
+        (App::new(pool, "http://127.0.0.1:0".into(), "t".into()), path)
+    }
+
+    fn cleanup(path: &std::path::Path) {
+        let _ = std::fs::remove_file(path);
+        let _ = std::fs::remove_file(path.with_extension("db-wal"));
+        let _ = std::fs::remove_file(path.with_extension("db-shm"));
+    }
+
+    /// Issue #5: a direct message sent *before* the recipient registers must
+    /// still be delivered once it does (the manager assigns a task the instant a
+    /// team opens, racing the worker's `register`).
+    #[tokio::test]
+    async fn direct_message_before_register_is_delivered() {
+        let (app, path) = app().await;
+        deliver(&app, "manager", "direct", Some("backend"), "build the api")
+            .await
+            .unwrap();
+        // backend registers only afterwards.
+        db::upsert_agent(&app.db, "backend", "backend", "").await.unwrap();
+        let msgs = await_messages(&app, "backend", false, Duration::from_millis(10)).await;
+        assert_eq!(msgs.len(), 1, "queued task should survive late registration");
+        assert_eq!(msgs[0].body, "build the api");
+        cleanup(&path);
+    }
+
+    /// A newcomer still must NOT see broadcast history from before it joined —
+    /// the pre-create only applies to direct recipients, so this stays intact.
+    #[tokio::test]
+    async fn broadcast_history_not_replayed_to_newcomer() {
+        let (app, path) = app().await;
+        deliver(&app, "manager", "broadcast", None, "standup in 5")
+            .await
+            .unwrap();
+        db::upsert_agent(&app.db, "late", "worker", "").await.unwrap();
+        let msgs = await_messages(&app, "late", false, Duration::from_millis(10)).await;
+        assert!(msgs.is_empty(), "a new agent sees no prior broadcast");
+        cleanup(&path);
+    }
 }

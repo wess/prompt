@@ -374,13 +374,30 @@ impl WorkspaceView {
         if status.agents.is_empty() {
             body = body.child(self.sidebar_note("No agents connected."));
         } else {
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs() as i64)
+                .unwrap_or(0);
             for (i, a) in status.agents.iter().enumerate() {
+                // Truthful liveness: a filled dot only while the agent is parked
+                // or recently active; otherwise hollow with how long it's been
+                // quiet, so a crashed agent no longer reads as alive (issue #9).
+                let state = if a.online {
+                    String::new()
+                } else if !a.registered {
+                    "  ·  pending".to_string()
+                } else if a.last_seen > 0 {
+                    format!("  ·  quiet {}", rel_since(now, a.last_seen))
+                } else {
+                    "  ·  offline".to_string()
+                };
                 let label = format!(
-                    "{} {}  ·  {}  ch:{}",
+                    "{} {}  ·  {}  ch:{}{}",
                     if a.online { "\u{25cf}" } else { "\u{25cb}" },
                     a.name,
                     a.role,
-                    a.channels
+                    a.channels,
+                    state
                 );
                 body = body.child(self.sidebar_row(("sb-agentconn", i), label, false, false, false));
             }
@@ -582,5 +599,19 @@ impl WorkspaceView {
             .px_3()
             .py_2()
             .child(Text::new(text.to_string()).size(Size::Sm).dimmed())
+    }
+}
+
+/// Compact "5s"/"2m"/"1h"/"3d" since `then` (both epoch seconds).
+fn rel_since(now: i64, then: i64) -> String {
+    let s = (now - then).max(0);
+    if s < 60 {
+        format!("{s}s")
+    } else if s < 3600 {
+        format!("{}m", s / 60)
+    } else if s < 86400 {
+        format!("{}h", s / 3600)
+    } else {
+        format!("{}d", s / 86400)
     }
 }

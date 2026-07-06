@@ -55,6 +55,9 @@ pub enum ViewEvent {
     /// This pane's attention state changed (a notification arrived, or focus
     /// cleared it); the workspace repaints the tab/pane indicator.
     Attention,
+    /// Real gpui focus entered this pane (e.g. its body was clicked); the
+    /// workspace re-activates the item so guise's focused pane tracks it.
+    Focused,
     /// A terminal event a plugin `[[trigger]]` may react to; the workspace
     /// matches it against loaded triggers and runs their actions.
     Trigger(TriggerEvent),
@@ -300,6 +303,7 @@ impl TerminalView {
                 this.focused = true;
                 this.report_focus(true);
                 this.clear_attention(cx);
+                cx.emit(ViewEvent::Focused);
             });
         });
         let on_out = cx.weak_entity();

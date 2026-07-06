@@ -8,6 +8,11 @@ use tokio::process::Command;
 
 const MAX_RESTARTS: u32 = 20;
 
+/// Cap on concurrently-running spawned workers, across the MCP `spawn` tool and
+/// the CLI `--background` path (both funnel through [`launch`]). Bounds a
+/// supervisor that would otherwise start unbounded headless agents (issue #8).
+const MAX_WORKERS: usize = 8;
+
 /// A generic command to run and monitor as a background worker.
 #[derive(Clone)]
 pub struct Spec {
@@ -42,6 +47,15 @@ pub async fn launch(app: &App, spec: Spec) -> Result<String> {
             if !w.stop.load(Ordering::SeqCst) {
                 bail!("worker '{}' already exists; stop it first", spec.name);
             }
+        }
+        let live = workers
+            .values()
+            .filter(|w| !w.stop.load(Ordering::SeqCst))
+            .count();
+        if live >= MAX_WORKERS {
+            bail!(
+                "worker cap reached ({MAX_WORKERS} running); stop one with stop_worker before spawning another"
+            );
         }
     }
 

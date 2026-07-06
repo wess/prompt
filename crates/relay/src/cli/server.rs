@@ -46,6 +46,21 @@ pub async fn serve(args: ServeArgs) -> Result<()> {
     let token = gen_token();
     let app = App::new(pool, paths::endpoint(&addr), token.clone());
 
+    // Presence sweep: periodically re-emit the roster so the app's liveness dot
+    // (computed from `last_seen` + the parked set) ages a quiet or crashed agent
+    // out even when nothing else bumps the event stream (issue #9).
+    {
+        let app = app.clone();
+        tokio::spawn(async move {
+            let mut tick = tokio::time::interval(Duration::from_secs(20));
+            tick.tick().await; // discard the immediate first tick
+            loop {
+                tick.tick().await;
+                app.bump();
+            }
+        });
+    }
+
     let guarded = Router::new()
         .route("/mcp", post(transport::handle))
         .merge(control::routes())

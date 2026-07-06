@@ -86,8 +86,9 @@ async fn snapshot(app: &App) -> Value {
         .await
         .unwrap_or_default()
         .into_iter()
-        .map(|(name, role, online, chans)| {
-            json!({ "name": name, "role": role, "online": online, "channels": chans })
+        .map(|(name, role, registered, chans, last_seen)| {
+            let online = app.is_live(&name, last_seen);
+            json!({ "name": name, "role": role, "online": online, "registered": registered, "channels": chans, "last_seen": last_seen })
         })
         .collect::<Vec<_>>();
 

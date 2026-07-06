@@ -19,6 +19,11 @@ pub struct Spec<'a> {
     pub model: Option<&'a str>,
     pub channels: &'a [String],
     pub skip_perms: bool,
+    /// Load *only* the relay MCP config, ignoring the project `.mcp.json` and the
+    /// user's global servers (`claude --strict-mcp-config`). Off by default so an
+    /// agent keeps its project/user MCP servers *and* gains relay; opt in for a
+    /// hermetic worker. See issue #3.
+    pub strict_mcp: bool,
     /// Extra CLI flags appended verbatim to the agent's own argv (e.g.
     /// `--dangerously-skip-permissions`). Configured per provider by the host.
     pub extra_args: &'a [String],
@@ -142,11 +147,14 @@ fn claude(spec: &Spec) -> Launch {
     } else {
         args.push(spec.prompt.into());
     }
-    args.extend([
-        "--mcp-config".into(),
-        spec.mcp_file.into(),
-        "--strict-mcp-config".into(),
-    ]);
+    args.extend(["--mcp-config".into(), spec.mcp_file.into()]);
+    // `--mcp-config` is additive: without `--strict-mcp-config`, claude still
+    // loads the project `.mcp.json` and the user's global servers alongside
+    // relay. Only force strict when the host explicitly asks for a hermetic
+    // worker, so a manager/worker keeps its project MCP servers (issue #3).
+    if spec.strict_mcp {
+        args.push("--strict-mcp-config".into());
+    }
     if let Some(m) = spec.model {
         args.extend(["--model".into(), m.into()]);
     }
@@ -250,6 +258,7 @@ mod tests {
             model: None,
             channels: &[],
             skip_perms: false,
+            strict_mcp: false,
             extra_args: extra,
         }
     }
@@ -260,6 +269,22 @@ mod tests {
         let launch = build(&spec("claude", &extra)).unwrap();
         assert_eq!(launch.program, "claude");
         assert_eq!(launch.args.last().unwrap(), "--dangerously-skip-permissions");
+    }
+
+    #[test]
+    fn claude_is_additive_mcp_by_default() {
+        // Issue #3: without opt-in, claude keeps the project/user MCP servers.
+        let launch = build(&spec("claude", &[])).unwrap();
+        assert!(launch.args.iter().any(|a| a == "--mcp-config"));
+        assert!(!launch.args.iter().any(|a| a == "--strict-mcp-config"));
+    }
+
+    #[test]
+    fn claude_strict_mcp_opt_in() {
+        let mut s = spec("claude", &[]);
+        s.strict_mcp = true;
+        let launch = build(&s).unwrap();
+        assert!(launch.args.iter().any(|a| a == "--strict-mcp-config"));
     }
 
     #[test]

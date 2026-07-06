@@ -21,8 +21,12 @@ pub fn team_list() -> Vec<String> {
         .unwrap_or_default()
 }
 
-/// A team's layout shape and ordered `(member, role)` roster.
-pub fn team_info(name: &str) -> Option<(String, Vec<(String, String)>)> {
+/// One team member from `team info`: `(name, role, agent)`. `agent` is empty
+/// when the member doesn't override the role's default provider.
+pub type TeamMember = (String, String, String);
+
+/// A team's layout shape and ordered roster.
+pub fn team_info(name: &str) -> Option<(String, Vec<TeamMember>)> {
     let out = std::process::Command::new(binary())
         .args(["team", "info", name, "--json"])
         .output()
@@ -36,6 +40,7 @@ pub fn team_info(name: &str) -> Option<(String, Vec<(String, String)>)> {
             (
                 m["name"].as_str().unwrap_or("agent").to_string(),
                 m["role"].as_str().unwrap_or("worker").to_string(),
+                m["agent"].as_str().unwrap_or("").to_string(),
             )
         })
         .collect();
@@ -188,12 +193,19 @@ pub(crate) fn extract_json(text: &str) -> Option<&str> {
 
 /// Shell command that launches one team member in a pane. The team's first
 /// member is the human-driven `lead`, it stays interactive instead of parking
-/// on the `wait`-loop, so the human can steer it.
-pub fn launch_member(member: &str, role: &str, lead: bool, optimize: bool) -> String {
+/// on the `wait`-loop, so the human can steer it. `agent` overrides the role's
+/// default provider when set (issue #8).
+pub fn launch_member(member: &str, role: &str, agent: &str, lead: bool, optimize: bool) -> String {
     let flag = if lead { " --lead" } else { "" };
     let opt = if optimize { " --optimize" } else { "" };
+    let agent = agent.trim();
+    let agent_flag = if agent.is_empty() {
+        String::new()
+    } else {
+        format!(" --agent {agent}")
+    };
     keep_open(format!(
-        "\"{}\" --home \"{}\" launch {member} --role {role}{flag}{opt}",
+        "\"{}\" --home \"{}\" launch {member} --role {role}{agent_flag}{flag}{opt}",
         binary(),
         home_str()
     ))

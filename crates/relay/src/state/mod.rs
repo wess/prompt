@@ -8,6 +8,13 @@ use tokio::sync::{watch, Mutex, Notify, Semaphore};
 /// cap, `wait` returns immediately instead of parking.
 pub const MAX_PARKED_WAITS: usize = 256;
 
+/// An agent that made a tool call within this many seconds counts as live even
+/// when it is not currently parked on `wait` (i.e. actively working). Combined
+/// with parked-set membership this gives a truthful "alive" signal: a dead
+/// process leaves the parked set at once (its `wait` SSE stream is dropped) and
+/// stops touching, so it ages out of the live set within this window.
+pub const ACTIVE_WINDOW_SECS: i64 = 60;
+
 /// Shared application state. Cloned per request (cheap: pool + Arcs).
 #[derive(Clone)]
 pub struct App {
@@ -31,6 +38,12 @@ pub struct App {
     /// `/control/events` stream can re-emit a fresh snapshot. Subscribers call
     /// `.changed()` then re-query; `send_modify` never errors with no receivers.
     pub events: Arc<watch::Sender<u64>>,
+    /// Agents currently parked on a blocking `wait`, by name (ref-counted for
+    /// overlapping calls). A parked agent is provably alive: if its process
+    /// dies, axum drops the `wait` SSE future and the [`ParkGuard`] in
+    /// `bus::await_messages` removes it here. A `std` mutex so the guard's
+    /// `Drop` can release it without awaiting.
+    pub parked: Arc<std::sync::Mutex<HashMap<String, u32>>>,
 }
 
 impl App {
@@ -45,7 +58,49 @@ impl App {
             token,
             waits: Arc::new(Semaphore::new(MAX_PARKED_WAITS)),
             events: Arc::new(events),
+            parked: Arc::new(std::sync::Mutex::new(HashMap::new())),
         }
+    }
+
+    /// Mark `name` as parked on a blocking wait (ref-counted). Bumps the event
+    /// stream so the roster's liveness refreshes on the transition.
+    pub fn enter_parked(&self, name: &str) {
+        {
+            let mut m = self.parked.lock().unwrap_or_else(|e| e.into_inner());
+            *m.entry(name.to_string()).or_insert(0) += 1;
+        }
+        self.bump();
+    }
+
+    /// Drop one park reference for `name`, removing it when the count hits zero.
+    /// Runs when a `wait` returns *or* its future is cancelled (the agent died),
+    /// so a dead agent leaves the live set at once.
+    pub fn leave_parked(&self, name: &str) {
+        {
+            let mut m = self.parked.lock().unwrap_or_else(|e| e.into_inner());
+            if let Some(c) = m.get_mut(name) {
+                *c = c.saturating_sub(1);
+                if *c == 0 {
+                    m.remove(name);
+                }
+            }
+        }
+        self.bump();
+    }
+
+    /// Whether `name` is currently parked on a blocking wait.
+    pub fn is_parked(&self, name: &str) -> bool {
+        self.parked
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(name)
+            .is_some_and(|c| *c > 0)
+    }
+
+    /// Truthful liveness: parked on `wait`, or active (touched) within
+    /// [`ACTIVE_WINDOW_SECS`]. A crashed agent satisfies neither.
+    pub fn is_live(&self, name: &str, last_seen: i64) -> bool {
+        self.is_parked(name) || crate::protocol::now().saturating_sub(last_seen) <= ACTIVE_WINDOW_SECS
     }
 
     /// Signal that the live roster/worker state changed so `/control/events`

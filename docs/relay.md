@@ -208,6 +208,12 @@ Coordination happens through MCP tools the agent calls:
 | `agents` / `channels` / `whoami` | introspection |
 | `spawn` / `workers` / `stop_worker` | a supervisor agent grows/manages its own team |
 
+A supervisor grows its team on demand with `spawn` (pick the provider with
+`agent`, default `claude`), inspects it with `workers`, and tears a worker down
+with `stop_worker`. `spawn` is bounded by a concurrent-worker cap (8) so an
+over-eager supervisor can't start runaway agents; past the cap it must
+`stop_worker` one first.
+
 `wait` is the key to zero idle cost: it's a single blocking tool call (held open
 as an SSE response with keepalives), not a poll loop, so a parked agent burns no
 tokens until a message actually arrives.
@@ -247,11 +253,26 @@ button that checks it's reachable (CLI `--version`, or the Ollama API port).
   the bus still trusts the self-asserted `from`/`name` within a single user's
   mesh. Binding `relay-address` to a public interface is still discouraged: the
   token is the only gate, with no transport encryption.
-- **Ordering.** A new agent only sees messages sent after it registers. Start
-  workers before dispatching, or re-register (the same name keeps its read
-  cursor).
+- **Ordering.** A *direct* message addressed to an agent that hasn't registered
+  yet is now held and delivered the moment it does — the server pre-creates the
+  recipient, so a task assigned the instant a team opens is never dropped.
+  *Broadcast* and *channel* history is still not replayed: a new agent only sees
+  those sent after it registers, so start workers before broadcasting, or
+  re-register (the same name keeps its read cursor).
+- **MCP servers.** A launched agent loads your project `.mcp.json` and your
+  global MCP servers *alongside* the relay server — relay's `--mcp-config` is
+  additive, not exclusive. For a hermetic worker that sees only relay, launch it
+  with `relay launch … --strict-mcp` (or set `agent-claude-args =
+  --strict-mcp-config`).
+- **Permissions.** Interactive agents inherit your project and user
+  `.claude/settings.json` permission allow/deny lists automatically once you
+  accept the workspace-trust prompt — you don't re-grant them per agent.
+  Background workers can't answer a prompt, so they run with
+  `--dangerously-skip-permissions` by design. Pass extra flags to every launched
+  agent with `agent-claude-args` (e.g. `--permission-mode acceptEdits`).
 - **Context.** A long-running agent holds one growing context for its whole
-  shift; restart it for a fresh one.
+  shift; restart it for a fresh one. Pausing/resuming a whole session with work
+  intact is a larger, agent-CLI-bound effort — see `docs/pauseresume.md`.
 - **Codex/Gemini MCP** wiring is unverified — see above.
 
 ## Internals

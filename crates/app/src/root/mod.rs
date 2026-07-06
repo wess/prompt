@@ -101,8 +101,15 @@ impl gpui::Global for MacroReplays {}
 pub struct AgentConn {
     pub name: String,
     pub role: String,
+    /// Truthful liveness: parked on `wait` or active within the last minute.
+    /// Computed by the server from a heartbeat + parked set, not a sticky flag.
     pub online: bool,
+    /// Whether the agent has ever registered (false = a pending direct-message
+    /// recipient the server pre-created; see relay issue #5).
+    pub registered: bool,
     pub channels: i64,
+    /// Epoch seconds of the agent's last activity (0 if never seen).
+    pub last_seen: i64,
 }
 
 /// A live Relay worker (spawned agent process) from the status stream.

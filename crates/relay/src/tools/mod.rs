@@ -67,12 +67,13 @@ pub fn list() -> Value {
         tool("whoami", "Show your own name, role, and channel subscriptions.", json!({
             "type": "object", "properties": {}
         })),
-        tool("spawn", "Spawn a new headless Claude Code worker that joins this mesh, registers, and parks on wait. Use this to grow your team.", json!({
+        tool("spawn", "Spawn a new headless worker (Claude Code by default) that joins this mesh, registers, and parks on wait. Use this to grow your team. Bounded by a concurrent-worker cap.", json!({
             "type": "object",
             "properties": {
                 "name": {"type": "string", "description": "Unique name for the new worker."},
                 "role": {"type": "string", "description": "Role, e.g. 'backend dev'."},
                 "task": {"type": "string", "description": "Standing focus/instructions for the worker."},
+                "agent": {"type": "string", "description": "Agent CLI to run: 'claude' (default) or 'codex'."},
                 "channels": {"type": "array", "items": {"type": "string"}, "description": "Channels the worker should join."},
                 "model": {"type": "string", "description": "Optional model override, e.g. 'claude-sonnet-4-6'."},
                 "cwd": {"type": "string", "description": "Working directory for the worker (defaults to the server's cwd)."},
@@ -143,6 +144,9 @@ pub async fn call(app: &App, session: &str, name: &str, args: &Value) -> Value {
     let Some(me) = app.name_of(session).await else {
         return fail("not registered on this connection — call 'register' first");
     };
+    // Heartbeat: every tool call refreshes this agent's `last_seen`, so one that
+    // stops calling (and is not parked on `wait`) ages out of the live set.
+    db::touch(&app.db, &me).await.ok();
 
     match name {
         "send" => {
@@ -196,7 +200,10 @@ pub async fn call(app: &App, session: &str, name: &str, args: &Value) -> Value {
             Ok(rows) => {
                 let list: Vec<Value> = rows
                     .into_iter()
-                    .map(|(n, r, on, c)| json!({"name": n, "role": r, "online": on, "channels": c}))
+                    .map(|(n, r, reg, c, ls)| {
+                        let online = app.is_live(&n, ls);
+                        json!({"name": n, "role": r, "online": online, "registered": reg, "channels": c, "last_seen": ls})
+                    })
                     .collect();
                 text(serde_json::to_string_pretty(&json!({"agents": list})).unwrap_or_default())
             }
@@ -223,6 +230,7 @@ pub async fn call(app: &App, session: &str, name: &str, args: &Value) -> Value {
             let role = arg(args, "role").unwrap_or("worker");
             let task = arg(args, "task");
             let model = arg(args, "model");
+            let agent = arg(args, "agent").unwrap_or("claude");
             let channels = parse_list(args.get("channels"));
             let cwd = arg(args, "cwd").map(str::to_string).unwrap_or_else(|| {
                 std::env::current_dir()
@@ -240,7 +248,7 @@ pub async fn call(app: &App, session: &str, name: &str, args: &Value) -> Value {
                 .unwrap_or_default();
             let prompt = crate::cli::agent::harness_prompt(wname, role, &brief, &channels, task, false, false);
             let built = match crate::cli::agent::build(&crate::cli::agent::Spec {
-                agent: "claude",
+                agent,
                 custom: None,
                 name: wname,
                 role,
@@ -251,6 +259,7 @@ pub async fn call(app: &App, session: &str, name: &str, args: &Value) -> Value {
                 model,
                 channels: &channels,
                 skip_perms: true,
+                strict_mcp: false,
                 extra_args: &[],
             }) {
                 Ok(b) => b,
@@ -320,9 +329,12 @@ async fn roster_text(app: &App) -> String {
         Ok(rows) if !rows.is_empty() => {
             let names: Vec<String> = rows
                 .into_iter()
-                .map(|(n, r, on, _)| format!("  - {n} ({r}){}", if on { "" } else { " [offline]" }))
+                .map(|(n, r, _reg, _c, ls)| {
+                    let live = app.is_live(&n, ls);
+                    format!("  - {n} ({r}){}", if live { "" } else { " [offline]" })
+                })
                 .collect();
-            format!("online roster:\n{}", names.join("\n"))
+            format!("roster:\n{}", names.join("\n"))
         }
         _ => "roster is empty".into(),
     }

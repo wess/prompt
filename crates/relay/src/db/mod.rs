@@ -108,12 +108,32 @@ pub async fn upsert_agent(pool: &SqlitePool, name: &str, role: &str, caps: &str)
     Ok(())
 }
 
-/// Reserved for a future presence sweep (HTTP has no per-session disconnect).
-#[allow(dead_code)]
-pub async fn set_online(pool: &SqlitePool, name: &str, online: bool) -> Result<()> {
-    sqlx::query("UPDATE agents SET online = ?2, last_seen = ?3 WHERE name = ?1")
+/// Pre-create a placeholder row for a not-yet-registered agent so a direct
+/// message queued *before* it registers is still delivered once it does. The
+/// read cursor is seeded to the current message tip (captured before the
+/// triggering message is inserted) and `online = 0` marks it as not-yet-present.
+/// `INSERT OR IGNORE` never disturbs an already-registered agent, and
+/// `upsert_agent` preserves the cursor on conflict, so the later real register
+/// keeps this low cursor and delivers the queued message.
+pub async fn ensure_agent(pool: &SqlitePool, name: &str) -> Result<()> {
+    let start = max_message_id(pool).await?;
+    sqlx::query(
+        "INSERT OR IGNORE INTO agents (name, role, caps, cursor, online, last_seen) VALUES (?1, '', '', ?2, 0, ?3)",
+    )
+    .bind(name)
+    .bind(start)
+    .bind(now())
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+/// Bump an agent's `last_seen` to now — a heartbeat proving its process is alive
+/// and looping. Called on every MCP tool call, so an agent that stops making
+/// calls (and is not parked on `wait`) ages out of the live set.
+pub async fn touch(pool: &SqlitePool, name: &str) -> Result<()> {
+    sqlx::query("UPDATE agents SET last_seen = ?2 WHERE name = ?1")
         .bind(name)
-        .bind(online as i64)
         .bind(now())
         .execute(pool)
         .await?;
@@ -255,12 +275,16 @@ pub async fn subs_of(pool: &SqlitePool, agent: &str) -> Result<Vec<String>> {
     Ok(rows.into_iter().map(|r| r.0).collect())
 }
 
-/// (name, role, online, channel_count) for every known agent.
-pub async fn list_agents(pool: &SqlitePool) -> Result<Vec<(String, String, bool, i64)>> {
-    let rows: Vec<(String, String, i64, i64)> = sqlx::query_as(
+/// (name, role, registered, channel_count, last_seen) for every known agent.
+/// `registered` is the stored online bit — false for a not-yet-registered
+/// placeholder (see [`ensure_agent`]); true liveness is computed by the caller
+/// from `last_seen` plus the in-memory parked set (see [`crate::state::App`]).
+pub async fn list_agents(pool: &SqlitePool) -> Result<Vec<(String, String, bool, i64, i64)>> {
+    let rows: Vec<(String, String, i64, i64, i64)> = sqlx::query_as(
         r#"
         SELECT a.name, a.role, a.online,
-               (SELECT COUNT(*) FROM subs s WHERE s.agent = a.name) AS chans
+               (SELECT COUNT(*) FROM subs s WHERE s.agent = a.name) AS chans,
+               a.last_seen
         FROM agents a
         ORDER BY a.online DESC, a.name ASC
         "#,
@@ -269,7 +293,7 @@ pub async fn list_agents(pool: &SqlitePool) -> Result<Vec<(String, String, bool,
     .await?;
     Ok(rows
         .into_iter()
-        .map(|(n, r, o, c)| (n, r, o != 0, c))
+        .map(|(n, r, o, c, ls)| (n, r, o != 0, c, ls))
         .collect())
 }
 
