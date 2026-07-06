@@ -170,9 +170,9 @@ impl Render for UpdatePromptView {
         let me = cx.entity().downgrade();
 
         let body = if self.install.is_in_place() {
-            "A new version is available. Update now?".to_string()
+            "A new version is available. Update now?"
         } else {
-            "Open the download page to update.".to_string()
+            "Open the download page to update."
         };
 
         div()

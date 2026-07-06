@@ -120,16 +120,15 @@ pub fn detect_install() -> Install {
     if let Some(img) = std::env::var_os("APPIMAGE") {
         return Install::AppImage(PathBuf::from(img));
     }
-    let exe = std::env::current_exe().unwrap_or_default();
     #[cfg(target_os = "macos")]
     {
         // .../Prompt.app/Contents/MacOS/prompt -> the .app bundle is 3 up. Any
         // macOS .app self-updates; we never ask Homebrew whether it owns it.
+        let exe = std::env::current_exe().unwrap_or_default();
         if let Some(app) = exe.ancestors().nth(3).filter(|p| p.extension().is_some_and(|e| e == "app")) {
             return Install::MacApp(app.to_path_buf());
         }
     }
-    let _ = exe;
     // A Linux distro package under a system prefix is root-owned; we can't swap
     // it in place, so it falls through to Unknown (open the download page).
     Install::Unknown
@@ -163,7 +162,7 @@ pub fn stage(release: &Release, install: &Install) -> Result<PathBuf, String> {
     match install {
         Install::MacApp(app) => stage_mac_app(release, app, &dir),
         Install::AppImage(path) => stage_appimage(release, path, &dir),
-        _ => Err("this install can't be updated in place".to_string()),
+        Install::Unknown => Err("this install can't be updated in place".to_string()),
     }
 }
 
