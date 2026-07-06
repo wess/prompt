@@ -336,14 +336,19 @@ The sandbox is what makes a real ecosystem safe:
 
 ## 9. Build order (the one push, staged so the build stays green)
 
-0. **Foundation & cleanup** — manifest → serde (delete `parse.rs`/`RawPlugin`);
+Progress: **Stages 0–2 shipped** (manifest→serde + DX; the `pluginrt` wasmtime
+runtime with link-time capability gating, proven end-to-end; WASM plugin tools
+running in the app with a bundled `screentools` reference plugin). Stages 3–7
+below remain — each is substantial app / webview / toolchain integration.
+
+0. ✓ **Foundation & cleanup** — manifest → serde (delete `parse.rs`/`RawPlugin`);
    delete the dead WASM stub error; collapse the duplicated Plugin Manager;
    surface stderr + per-node panel resilience (immediate DX wins). *No behavior
    change for existing plugins.*
-1. **`pluginrt` + WIT world + capability linker** — instantiate a component, wire
+1. ✓ **`pluginrt` + WIT world + capability linker** — instantiate a component, wire
    `call-tool`, gate imports by capability. Prove it end-to-end with a Rust
    `sysinfo` port (tools only).
-2. **Host functions** — implement the gated `Host` in `app` (`run-command`,
+2. ✓ **Host functions** — implement the gated `Host` in `app` (`run-command`,
    `read-screen`, `fetch`, `storage`, `notify`, `log`), mapped onto existing
    machinery.
 3. **Panels v2** — the `node` tree with inputs, `render` + `on-ui-event` +
