@@ -527,6 +527,12 @@ impl WorkspaceView {
                 }
                 row.into_any_element()
             }
+            // An unrecognized block renders an inline notice rather than blanking
+            // the whole panel — the resilience the single-parse path now allows.
+            Block::Unknown => div()
+                .px_2()
+                .child(Text::new("(unsupported block)").size(Size::Sm).dimmed())
+                .into_any_element(),
         }
     }
 }

@@ -104,6 +104,11 @@ pub enum Block {
         #[serde(default)]
         children: Vec<Block>,
     },
+    /// An unrecognized block type. Kept as a catch-all so one unknown node (a
+    /// newer block type, a typo) renders an inline notice instead of failing the
+    /// whole panel's parse.
+    #[serde(other)]
+    Unknown,
 }
 
 /// Invoke `plugin`'s runtime with `req`, returning the parsed response. The
@@ -131,7 +136,7 @@ pub fn invoke(plugin: &plugin::Plugin, req: &Request) -> Result<Response, String
         .current_dir(&plugin.path)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
-        .stderr(Stdio::null())
+        .stderr(Stdio::piped())
         .spawn()
         .map_err(|e| format!("spawn `{program}`: {e}. Is `{program}` installed and on your PATH?"))?;
 
@@ -173,12 +178,30 @@ pub fn invoke(plugin: &plugin::Plugin, req: &Request) -> Result<Response, String
     let out = out.map_err(|e| format!("wait: {e}"))?;
 
     if !out.status.success() {
-        return Err(format!("`{program}` exited with {}", out.status));
+        return Err(format!(
+            "`{program}` exited with {}{}",
+            out.status,
+            stderr_tail(&out.stderr)
+        ));
     }
     if out.stdout.iter().all(u8::is_ascii_whitespace) {
         return Ok(Response::default());
     }
-    serde_json::from_slice::<Response>(&out.stdout).map_err(|e| format!("bad response: {e}"))
+    serde_json::from_slice::<Response>(&out.stdout)
+        .map_err(|e| format!("bad response: {e}{}", stderr_tail(&out.stderr)))
+}
+
+/// The last few lines of a plugin's stderr, appended to an error so the author
+/// sees why it failed (v1 discarded stderr entirely). Empty when it printed none.
+fn stderr_tail(bytes: &[u8]) -> String {
+    let text = String::from_utf8_lossy(bytes);
+    let text = text.trim();
+    if text.is_empty() {
+        return String::new();
+    }
+    let lines: Vec<&str> = text.lines().collect();
+    let start = lines.len().saturating_sub(8);
+    format!("\n--- stderr ---\n{}", lines[start..].join("\n"))
 }
 
 #[cfg(test)]

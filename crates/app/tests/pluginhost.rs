@@ -37,3 +37,12 @@ fn empty_object_is_empty_response() {
     assert!(r.run.is_empty());
     assert!(r.title.is_none());
 }
+
+#[test]
+fn unknown_block_type_does_not_fail_the_parse() {
+    // A newer/typo'd block type degrades to Unknown instead of blanking the panel.
+    let json = r#"{"blocks":[{"type":"text","text":"ok"},{"type":"gizmo","x":1},{"type":"divider"}]}"#;
+    let r: Response = serde_json::from_str(json).expect("parses despite the unknown block");
+    assert_eq!(r.blocks.len(), 3);
+    assert!(matches!(r.blocks[1], Block::Unknown));
+}
