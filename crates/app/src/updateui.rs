@@ -9,7 +9,6 @@ use gpui::{
 };
 use guise::{Button, Variant};
 
-use crate::root::WorkspaceView;
 use crate::update::{self, Install, Release};
 
 const WIDTH: f32 = 460.0;
@@ -118,29 +117,21 @@ impl UpdatePromptView {
 
     /// The Update button's label, tailored to how the app was installed.
     fn action_label(&self) -> &'static str {
-        match self.install {
-            Install::BrewCask => "Update via Homebrew",
-            Install::LinuxPackage => "Show Upgrade Command",
-            Install::MacApp(_) | Install::AppImage(_) => "Update & Restart",
-            Install::Unknown => "Open Download",
+        if self.install.is_in_place() {
+            "Update & Restart"
+        } else {
+            "Open Download"
         }
     }
 
     fn do_update(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        match update::managed_command(&self.install) {
-            // Package-managed: run the upgrade command in a pane on the workspace.
-            Some(cmd) => {
-                run_in_workspace(&cmd, cx);
-                window.remove_window();
-            }
-            None => match &self.install {
-                Install::MacApp(_) | Install::AppImage(_) => self.stage_and_restart(cx),
-                // Unknown install: just open the release page.
-                _ => {
-                    cx.open_url(&self.release.url);
-                    window.remove_window();
-                }
-            },
+        if self.install.is_in_place() {
+            // Download the release and swap it in place, then relaunch.
+            self.stage_and_restart(cx);
+        } else {
+            // Can't rewrite this install ourselves — open the release page.
+            cx.open_url(&self.release.url);
+            window.remove_window();
         }
     }
 
@@ -177,15 +168,11 @@ impl Render for UpdatePromptView {
         let text = t.text().hsla();
         let dim = t.dimmed().hsla();
         let me = cx.entity().downgrade();
-        let manual = matches!(self.install, Install::LinuxPackage | Install::Unknown);
 
-        let body = if manual {
-            match update::managed_command(&self.install) {
-                Some(cmd) => format!("Run this to update:\n\n{cmd}"),
-                None => "Open the download page to update.".to_string(),
-            }
-        } else {
+        let body = if self.install.is_in_place() {
             "A new version is available. Update now?".to_string()
+        } else {
+            "Open the download page to update.".to_string()
         };
 
         div()
@@ -244,17 +231,6 @@ impl Render for UpdatePromptView {
                             }),
                     ),
             )
-    }
-}
-
-/// Run `cmd` in a new split on the frontmost workspace window.
-fn run_in_workspace(cmd: &str, cx: &mut App) {
-    for handle in cx.windows() {
-        if let Some(ws) = handle.downcast::<WorkspaceView>() {
-            let cmd = cmd.to_string();
-            ws.update(cx, |view, window, cx| view.run_update_command(&cmd, window, cx)).ok();
-            return;
-        }
     }
 }
 

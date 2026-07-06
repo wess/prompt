@@ -1,12 +1,14 @@
 //! Self-update: check GitHub for a newer release (on launch + hourly) and, when
-//! one is found, offer to update. Modeled on Zed's `auto_update`.
+//! one is found, download it and swap it in place. Modeled on Zed's
+//! `auto_update` — the app updates itself; it never shells out to a package
+//! manager (no `brew`, no `apt`).
 //!
-//! The install method decides how we update: a package-managed install
-//! (Homebrew cask, `.deb`) defers to the package manager (we run its upgrade
-//! command in a pane), while a manual `.dmg`/AppImage install is swapped in
-//! place and relaunched via gpui's [`gpui::App::restart`]. Pure checking and
-//! detection live here; the UI (prompt window, menu, About) lives in
-//! `updateui.rs`.
+//! A macOS `.app` (however it was installed, Homebrew included) and a Linux
+//! AppImage are swapped in place and relaunched via gpui's
+//! [`gpui::App::restart`]. An install we can't rewrite ourselves — a root-owned
+//! distro package, or a dev build — falls back to opening the release page.
+//! Pure checking and detection live here; the UI (prompt window, menu, About)
+//! lives in `updateui.rs`.
 
 use std::path::PathBuf;
 use std::process::Command;
@@ -87,24 +89,32 @@ pub fn check() -> Result<Option<Release>, String> {
     Ok(Some(Release { version, url: page, assets }))
 }
 
-/// How this copy of Prompt was installed, which decides the update path.
-/// (Some variants are only constructed on their platform.)
+/// How this copy of Prompt was installed, which decides the update path. We
+/// self-update where we can rewrite the install ourselves; anything else opens
+/// the download page. (Some variants are only constructed on their platform.)
 #[allow(dead_code)]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Install {
-    /// Homebrew cask — defer to `brew upgrade`.
-    BrewCask,
-    /// A `.deb`/`.rpm`/pacman install — defer to the system package manager.
-    LinuxPackage,
-    /// A manually-installed macOS `.app` bundle at this path (swap in place).
+    /// A macOS `.app` bundle at this path — swap it in place. Covers every
+    /// macOS install, Homebrew casks included; how it got there doesn't matter.
     MacApp(PathBuf),
     /// A running AppImage at this path (replace the file).
     AppImage(PathBuf),
-    /// Unknown / unsupported — fall back to opening the release page.
+    /// An install we can't rewrite ourselves — a root-owned distro package
+    /// (`.deb`/`.rpm`), or a dev build. Fall back to opening the release page.
     Unknown,
 }
 
-/// Detect the install method from the running executable and environment.
+impl Install {
+    /// Whether this install can be updated in place (vs. opening the page).
+    pub fn is_in_place(&self) -> bool {
+        matches!(self, Install::MacApp(_) | Install::AppImage(_))
+    }
+}
+
+/// Detect the install method from the running executable and environment. This
+/// only decides *how* to install an update — the check for whether one exists
+/// is [`check`], which asks GitHub. No package manager is consulted.
 pub fn detect_install() -> Install {
     // Linux AppImage exports APPIMAGE pointing at the running image.
     if let Some(img) = std::env::var_os("APPIMAGE") {
@@ -113,45 +123,16 @@ pub fn detect_install() -> Install {
     let exe = std::env::current_exe().unwrap_or_default();
     #[cfg(target_os = "macos")]
     {
-        // .../Prompt.app/Contents/MacOS/prompt -> the .app bundle is 3 up.
+        // .../Prompt.app/Contents/MacOS/prompt -> the .app bundle is 3 up. Any
+        // macOS .app self-updates; we never ask Homebrew whether it owns it.
         if let Some(app) = exe.ancestors().nth(3).filter(|p| p.extension().is_some_and(|e| e == "app")) {
-            if brew_manages_cask() {
-                return Install::BrewCask;
-            }
             return Install::MacApp(app.to_path_buf());
         }
     }
-    #[cfg(target_os = "linux")]
-    {
-        // Installed under a system prefix => a distro package owns it.
-        if exe.starts_with("/usr") || exe.starts_with("/opt") {
-            return Install::LinuxPackage;
-        }
-    }
     let _ = exe;
+    // A Linux distro package under a system prefix is root-owned; we can't swap
+    // it in place, so it falls through to Unknown (open the download page).
     Install::Unknown
-}
-
-/// Whether Homebrew tracks the `prompt` cask (best-effort; false if brew absent).
-#[cfg(target_os = "macos")]
-fn brew_manages_cask() -> bool {
-    Command::new("brew")
-        .args(["list", "--cask", "prompt"])
-        .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false)
-}
-
-/// The shell command that updates a package-managed install, or `None` when the
-/// install is swapped in place instead.
-pub fn managed_command(install: &Install) -> Option<String> {
-    match install {
-        Install::BrewCask => Some("brew upgrade --cask prompt".to_string()),
-        Install::LinuxPackage => {
-            Some("sudo apt-get update && sudo apt-get install --only-upgrade prompt".to_string())
-        }
-        _ => None,
-    }
 }
 
 /// Download `url` to `dest` over https (streamed, so large assets are fine).
@@ -174,7 +155,8 @@ fn download_to(url: &str, dest: &std::path::Path) -> Result<(), String> {
 
 /// Download the release and swap it into place, returning the binary to restart
 /// into. Only for in-place installs ([`Install::MacApp`], [`Install::AppImage`]);
-/// managed installs go through [`managed_command`] instead. Blocking.
+/// an [`Install::Unknown`] has no in-place path and opens the release page
+/// instead (see `updateui`). Blocking.
 pub fn stage(release: &Release, install: &Install) -> Result<PathBuf, String> {
     let dir = std::env::temp_dir().join(format!("prompt-update-{}", release.version));
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;

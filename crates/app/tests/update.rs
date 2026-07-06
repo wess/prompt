@@ -33,8 +33,10 @@ fn release_asset_lookup() {
 }
 
 #[test]
-fn managed_command_per_install() {
-    assert_eq!(managed_command(&Install::BrewCask).as_deref(), Some("brew upgrade --cask prompt"));
-    assert!(managed_command(&Install::LinuxPackage).is_some());
-    assert!(managed_command(&Install::MacApp(std::path::PathBuf::from("/x"))).is_none());
+fn only_swappable_installs_update_in_place() {
+    // macOS .app and Linux AppImage are rewritten in place; everything else
+    // (a root-owned distro package, a dev build) opens the download page.
+    assert!(Install::MacApp(std::path::PathBuf::from("/Applications/Prompt.app")).is_in_place());
+    assert!(Install::AppImage(std::path::PathBuf::from("/x/Prompt.AppImage")).is_in_place());
+    assert!(!Install::Unknown.is_in_place());
 }
