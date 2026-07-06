@@ -66,25 +66,38 @@ impl SocketHost {
     fn new(plugin_id: String, root: std::path::PathBuf) -> Self {
         Self { plugin_id, root }
     }
+}
 
-    /// Per-plugin key/value store directory.
-    fn storage_dir(&self) -> Option<std::path::PathBuf> {
-        let base = plugin::defaultdir()?.parent()?.join("pluginstorage");
-        Some(base.join(&self.plugin_id))
-    }
+/// Per-plugin key/value store directory.
+fn storage_dir(id: &str) -> Option<std::path::PathBuf> {
+    Some(plugin::defaultdir()?.parent()?.join("pluginstorage").join(id))
+}
 
-    /// Resolve `path` inside the plugin's root, rejecting escapes (`..`, absolute).
-    fn scoped(&self, path: &str) -> Result<std::path::PathBuf, String> {
-        let p = std::path::Path::new(path);
-        if p.is_absolute() || p.components().any(|c| c == std::path::Component::ParentDir) {
-            return Err("path escapes the plugin directory".into());
+/// Read a per-plugin storage value.
+pub(crate) fn storage_read(id: &str, key: &str) -> Option<String> {
+    std::fs::read_to_string(storage_dir(id)?.join(sanitize(key))).ok()
+}
+
+/// Write a per-plugin storage value (best effort).
+pub(crate) fn storage_write(id: &str, key: &str, value: &str) {
+    if let Some(dir) = storage_dir(id) {
+        if std::fs::create_dir_all(&dir).is_ok() {
+            let _ = std::fs::write(dir.join(sanitize(key)), value);
         }
-        Ok(self.root.join(p))
     }
 }
 
+/// Resolve `path` inside `root`, rejecting escapes (`..`, absolute).
+pub(crate) fn scoped(root: &std::path::Path, path: &str) -> Result<std::path::PathBuf, String> {
+    let p = std::path::Path::new(path);
+    if p.is_absolute() || p.components().any(|c| c == std::path::Component::ParentDir) {
+        return Err("path escapes the plugin directory".into());
+    }
+    Ok(root.join(p))
+}
+
 /// Map a WIT command target to the `run_command` op's `target` token.
-fn target_token(target: CommandTarget) -> &'static str {
+pub(crate) fn target_token(target: CommandTarget) -> &'static str {
     match target {
         CommandTarget::Pane => "pane",
         CommandTarget::Tab => "tab",
@@ -114,16 +127,11 @@ impl AppHost for SocketHost {
     }
 
     fn storage_get(&mut self, key: String) -> Option<String> {
-        let path = self.storage_dir()?.join(sanitize(&key));
-        std::fs::read_to_string(path).ok()
+        storage_read(&self.plugin_id, &key)
     }
 
     fn storage_set(&mut self, key: String, value: String) {
-        if let Some(dir) = self.storage_dir() {
-            if std::fs::create_dir_all(&dir).is_ok() {
-                let _ = std::fs::write(dir.join(sanitize(&key)), value);
-            }
-        }
+        storage_write(&self.plugin_id, &key, &value);
     }
 
     fn run_command(&mut self, text: String, target: CommandTarget) -> Result<(), String> {
@@ -154,11 +162,11 @@ impl AppHost for SocketHost {
     }
 
     fn read_file(&mut self, path: String) -> Result<Vec<u8>, String> {
-        std::fs::read(self.scoped(&path)?).map_err(|e| e.to_string())
+        std::fs::read(scoped(&self.root, &path)?).map_err(|e| e.to_string())
     }
 
     fn write_file(&mut self, path: String, data: Vec<u8>) -> Result<(), String> {
-        std::fs::write(self.scoped(&path)?, data).map_err(|e| e.to_string())
+        std::fs::write(scoped(&self.root, &path)?, data).map_err(|e| e.to_string())
     }
 
     fn clipboard_read(&mut self) -> Result<String, String> {

@@ -129,7 +129,7 @@ fn bundled_screentools_greps_the_screen() {
     let tree = plugin.render("{}").unwrap();
     let node: serde_json::Value = serde_json::from_str(&tree).unwrap();
     assert_eq!(node["title"], "Screen Tools");
-    assert_eq!(node["nodes"][0]["type"], "section");
+    assert_eq!(node["blocks"][0]["type"], "section");
     // A UI event is accepted (no-op here).
     plugin.on_ui_event("{\"id\":\"x\"}").unwrap();
 }

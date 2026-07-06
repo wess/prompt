@@ -339,6 +339,12 @@ impl WorkspaceView {
             Some(pn) => pn.id.clone(),
             None => return,
         };
+        // A wasm plugin renders in-process (microseconds) — no subprocess spawn,
+        // no off-thread hop.
+        if plugin.runtime.as_ref().map(|r| r.kind) == Some(plugin::RuntimeKind::Wasm) {
+            self.render_wasm_panel(&plugin, &panel_id, cx);
+            return;
+        }
         let cwd = self.focused_cwd(cx).map(|p| p.to_string_lossy().into_owned());
         let executor = cx.background_executor().clone();
         cx.spawn(async move |this, cx| {
@@ -365,6 +371,61 @@ impl WorkspaceView {
         .detach();
     }
 
+    /// Lazily create the GUI-side wasm runtime (one engine per window).
+    fn ensure_gui_wasm(&mut self) -> Option<&mut crate::guiwasm::GuiWasm> {
+        if self.gui_wasm.is_none() {
+            self.gui_wasm = crate::guiwasm::GuiWasm::new();
+        }
+        self.gui_wasm.as_mut()
+    }
+
+    /// Render a wasm plugin's panel synchronously into the panel cache.
+    fn render_wasm_panel(&mut self, plugin: &plugin::Plugin, panel_id: &str, cx: &mut Context<Self>) {
+        let rendered = match self.ensure_gui_wasm() {
+            Some(gw) => gw.render(plugin),
+            None => Err("wasm runtime unavailable".to_string()),
+        };
+        let response = match rendered {
+            Ok(json) => serde_json::from_str::<Response>(&json)
+                .unwrap_or_else(|e| error_response(&format!("bad panel: {e}"))),
+            Err(e) => error_response(&e),
+        };
+        self.plugin_panels.insert(panel_id.to_string(), response);
+        cx.notify();
+    }
+
+    /// Deliver a wasm panel button click: run `on_ui_event`, dispatch any queued
+    /// commands, then re-render — all in-process on the UI thread.
+    fn wasm_ui_event(
+        &mut self,
+        plugin: &plugin::Plugin,
+        panel_id: &str,
+        action: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let event = json!({ "id": action }).to_string();
+        let result = match self.ensure_gui_wasm() {
+            Some(gw) => gw.on_ui_event(plugin, &event),
+            None => Err("wasm runtime unavailable".to_string()),
+        };
+        let commands = self.gui_wasm.as_ref().map(|gw| gw.take_commands()).unwrap_or_default();
+        for c in commands {
+            let _ = self.mcp_dispatch(
+                "run_command",
+                &json!({ "text": c.text, "target": c.target }),
+                window,
+                cx,
+            );
+        }
+        if let Err(e) = result {
+            self.plugin_panels.insert(panel_id.to_string(), error_response(&e));
+            cx.notify();
+        } else {
+            self.render_wasm_panel(plugin, panel_id, cx);
+        }
+    }
+
     /// Handle a button click in a plugin panel off the UI thread: invoke the
     /// runtime with an `action` request, then run any returned directives and
     /// re-cache the panel on the foreground.
@@ -375,14 +436,19 @@ impl WorkspaceView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(handle) = window.window_handle().downcast::<WorkspaceView>() else {
-            return;
-        };
         let plugin = match self.plugins.iter().find(|p| {
             p.runtime.is_some() && p.panel.as_ref().map(|pn| pn.id.as_str()) == Some(panel_id)
         }) {
             Some(p) => p.clone(),
             None => return,
+        };
+        // A wasm panel handles the event in-process.
+        if plugin.runtime.as_ref().map(|r| r.kind) == Some(plugin::RuntimeKind::Wasm) {
+            self.wasm_ui_event(&plugin, panel_id, action, window, cx);
+            return;
+        }
+        let Some(handle) = window.window_handle().downcast::<WorkspaceView>() else {
+            return;
         };
         let panel = panel_id.to_string();
         let action = action.to_string();

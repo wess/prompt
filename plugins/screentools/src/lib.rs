@@ -40,7 +40,7 @@ impl Guest for Screentools {
         // block-tree with inputs in later work; a section + text here.
         serde_json::json!({
             "title": "Screen Tools",
-            "nodes": [
+            "blocks": [
                 { "type": "section", "title": "Screen Tools" },
                 { "type": "text", "text": "Call the screentools_grep tool to search the visible screen." }
             ]

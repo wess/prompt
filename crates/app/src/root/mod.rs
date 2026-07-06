@@ -375,6 +375,8 @@ pub struct WorkspaceView {
     /// Live hosts for panel-placement `[webview]` plugins, keyed by webview id.
     /// Built at load; the native page spins up on the panel's first render.
     webview_hosts: HashMap<String, Entity<crate::pluginwebview::PluginWebView>>,
+    /// GUI-side WASM runtime for `wasm` plugin panels, created on first use.
+    gui_wasm: Option<crate::guiwasm::GuiWasm>,
     /// Installable catalog plugin names, fetched lazily when the Plugins panel
     /// opens; `None` until the first fetch.
     catalog: Option<Vec<String>>,
@@ -476,6 +478,7 @@ impl WorkspaceView {
             right_panel: None,
             plugin_panels: HashMap::new(),
             webview_hosts: HashMap::new(),
+            gui_wasm: None,
             catalog: None,
             catalog_status: None,
             catalog_loading: false,

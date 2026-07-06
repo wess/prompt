@@ -15,6 +15,7 @@ mod exportcmd;
 mod fidelity;
 mod font;
 mod guisetheme;
+mod guiwasm;
 mod help;
 mod ipc;
 mod keys;
