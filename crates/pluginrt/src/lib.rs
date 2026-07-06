@@ -124,15 +124,17 @@ impl bindings::prompt::plugin::host_notify::Host for State {
     }
 }
 
-/// Build the shared component-model engine.
-///
-/// Resource-bounding a runaway guest (fuel / epoch-interruption with a ticker
-/// thread, the analogue of the process runtime's SIGKILL) is a hardening pass on
-/// top of this — enabling epoch interruption here without a ticker + per-call
-/// deadline just traps every guest immediately.
+/// Fuel granted per guest call. Roughly one unit per wasm instruction, so this
+/// allows a lot of real work but bounds a runaway loop — a guest that exhausts
+/// it traps instead of freezing the caller (the analogue of the process
+/// runtime's SIGKILL, but cooperative and precise).
+const FUEL_PER_CALL: u64 = 5_000_000_000;
+
+/// Build the shared component-model engine with fuel metering on.
 pub fn engine() -> Result<Engine> {
     let mut config = Config::new();
     config.wasm_component_model(true);
+    config.consume_fuel(true);
     Engine::new(&config)
 }
 
@@ -140,6 +142,8 @@ pub fn engine() -> Result<Engine> {
 pub struct PluginInstance {
     store: Store<State>,
     world: bindings::Plugin,
+    /// Fuel granted per call (default [`FUEL_PER_CALL`]).
+    fuel: u64,
 }
 
 impl PluginInstance {
@@ -192,16 +196,29 @@ impl PluginInstance {
         );
         let world = bindings::Plugin::instantiate(&mut store, &component, &linker)
             .context("instantiate plugin component")?;
+        store.set_fuel(FUEL_PER_CALL)?;
         world
             .prompt_plugin_guest()
             .call_init(&mut store)
             .context("plugin init")?;
-        Ok(Self { store, world })
+        Ok(Self {
+            store,
+            world,
+            fuel: FUEL_PER_CALL,
+        })
+    }
+
+    /// Override the per-call fuel budget (mainly for tests).
+    pub fn set_fuel_budget(&mut self, fuel: u64) {
+        self.fuel = fuel;
     }
 
     /// Call a tool the plugin exports. Returns the plugin's JSON result, or its
     /// error string. The outer `Result` is a host-side trap (a crashed guest).
     pub fn call_tool(&mut self, name: &str, params_json: &str) -> Result<Result<String, String>> {
+        // Refill fuel per call so a bounded budget applies to each invocation and
+        // an infinite loop traps rather than hanging the caller.
+        self.store.set_fuel(self.fuel)?;
         self.world
             .prompt_plugin_guest()
             .call_call_tool(&mut self.store, name, params_json)

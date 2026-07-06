@@ -91,6 +91,21 @@ fn missing_capability_blocks_instantiation() {
     assert!(result.is_err(), "instantiation must fail without the commands capability");
 }
 
+/// An infinite-loop tool traps on fuel exhaustion instead of hanging the host.
+#[test]
+fn runaway_guest_is_fuel_bounded() {
+    let eng = engine().unwrap();
+    let host = Box::new(MockHost {
+        commands: Arc::new(Mutex::new(Vec::new())),
+        screen: String::new(),
+    });
+    let mut plugin =
+        PluginInstance::new(&eng, &fixture(), &["commands".to_string()], host).unwrap();
+    plugin.set_fuel_budget(50_000_000); // small budget so the test is fast
+    let result = plugin.call_tool("spin", "{}");
+    assert!(result.is_err(), "an infinite-loop tool must trap, not hang");
+}
+
 /// The shipped bundled `screentools` plugin actually loads and runs: it reads the
 /// screen through the gated host-screen interface and greps it.
 #[test]

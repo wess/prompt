@@ -23,6 +23,14 @@ impl Guest for Example {
             // Uses the gated `host-commands` interface — only reachable when the
             // plugin was granted the `commands` capability.
             "run" => run_command("echo hi", CommandTarget::Pane).map(|()| "{\"ran\":true}".to_string()),
+            // Runs forever — exercises the host's fuel bound (traps, not hangs).
+            "spin" => {
+                let mut n: u64 = 0;
+                loop {
+                    n = n.wrapping_add(1);
+                    std::hint::black_box(n);
+                }
+            }
             other => Err(format!("unknown tool: {other}")),
         }
     }
