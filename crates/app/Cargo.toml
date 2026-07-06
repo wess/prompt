@@ -51,6 +51,7 @@ input = { path = "../input" }
 macros = { path = "../macros" }
 mcp = { path = "../mcp" }
 plugin = { path = "../plugin" }
+pluginrt = { path = "../pluginrt" }
 pty = { path = "../pty" }
 raw-window-handle = "0.6"
 regex = "1"

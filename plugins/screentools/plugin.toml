@@ -1,0 +1,26 @@
+id = "screentools"
+name = "Screen Tools"
+version = "0.1.0"
+description = "A sandboxed WASM plugin: reads the terminal screen and exposes a grep tool to agents"
+capabilities = ["screen"]
+
+[runtime]
+type = "wasm"
+wasm = "plugin.wasm"
+
+# An agent-callable tool (appears as `screentools_grep` in `prompt mcp`). Reads
+# the last N screen lines through the gated host-screen interface and returns the
+# lines matching `query`. No shell round-trip, no process spawn.
+[[tool]]
+id = "grep"
+description = "Search the visible terminal screen for lines containing a query. Returns matching lines as JSON."
+
+[[tool.param]]
+name = "query"
+type = "string"
+description = "Substring to match (empty returns all visible lines)."
+
+[[tool.param]]
+name = "lines"
+type = "integer"
+description = "How many recent screen lines to search (default 200)."

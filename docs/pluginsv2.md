@@ -316,10 +316,15 @@ The sandbox is what makes a real ecosystem safe:
   auto-mapped to `[[tool.param]]`).
 - **Native tier keeps v1 plugins running** unchanged (they become `type =
   "native"` implicitly when they declare only `command`).
-- **Port the five bundled plugins to WASM** (Rust or `componentize-js`) as the
-  reference set, in this order: `sysinfo` (pure tool, simplest) → `git` /
-  `docker` (panel + commands) → `dashboard` (webview) → `promptdesigner`
-  (webview + stateful). Each port is the SDK's proving ground.
+- **Bundled plugins mostly stay native** (refinement found while building Stage
+  2). `git` / `docker` / `sysinfo` fundamentally spawn processes and read their
+  output (`git status`, `docker ps`, `df`) — which a WASM sandbox cannot do. They
+  are the *canonical* native-tier plugins. WASM is the tier for **sandboxed,
+  host-function** plugins: ones that read the screen, drive the terminal, fetch
+  URLs, read/write scoped files, or expose computed tools. The reference WASM
+  plugin is therefore a purpose-built one (a screen/terminal utility), not a port
+  of a process-spawning bundled plugin. `dashboard`/`promptdesigner` (webviews)
+  are a separate axis — see the webview stage.
 - **Notes** moves out of the core into a first-party **plugin**, behaving
   identically. It ships the bundled Rust `notes` binary and declares a
   `[[webview]]` with `service = true`; the host-managed sidecar runs it (port +

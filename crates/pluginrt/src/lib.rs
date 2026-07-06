@@ -4,7 +4,7 @@
 //! Defines the [`AppHost`] trait the app implements, keeping `wasmtime` out of
 //! the `app` crate's own dependency surface.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use anyhow::{Context, Result};
 use wasmtime::component::{Component, Linker};
@@ -205,6 +205,65 @@ impl PluginInstance {
         self.world
             .prompt_plugin_guest()
             .call_call_tool(&mut self.store, name, params_json)
+    }
+}
+
+/// Manages resident plugin instances by id over one shared engine, so callers
+/// never touch the wasmtime `Engine` themselves (keeping `wasmtime` out of the
+/// app's dependency surface).
+pub struct Runtime {
+    engine: Engine,
+    instances: HashMap<String, PluginInstance>,
+}
+
+impl Runtime {
+    pub fn new() -> Result<Self> {
+        Ok(Self {
+            engine: engine()?,
+            instances: HashMap::new(),
+        })
+    }
+
+    /// Whether `id` already has a resident instance.
+    pub fn is_resident(&self, id: &str) -> bool {
+        self.instances.contains_key(id)
+    }
+
+    /// Instantiate `id` from `wasm` (with `capabilities` + `host`) unless it is
+    /// already resident. Idempotent.
+    pub fn ensure(
+        &mut self,
+        id: &str,
+        wasm: &[u8],
+        capabilities: &[String],
+        host: Box<dyn AppHost>,
+    ) -> Result<()> {
+        if !self.instances.contains_key(id) {
+            let instance = PluginInstance::new(&self.engine, wasm, capabilities, host)?;
+            self.instances.insert(id.to_string(), instance);
+        }
+        Ok(())
+    }
+
+    /// Call a tool on a resident plugin (call [`Runtime::ensure`] first). The
+    /// inner `Result` is the plugin's own success/error; the outer is a host-side
+    /// trap.
+    pub fn call_tool(
+        &mut self,
+        id: &str,
+        tool: &str,
+        params_json: &str,
+    ) -> Result<Result<String, String>> {
+        let instance = self
+            .instances
+            .get_mut(id)
+            .context("plugin is not instantiated")?;
+        instance.call_tool(tool, params_json)
+    }
+
+    /// Drop a resident instance (e.g. on plugin disable/reload).
+    pub fn evict(&mut self, id: &str) {
+        self.instances.remove(id);
     }
 }
 

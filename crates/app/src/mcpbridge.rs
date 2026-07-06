@@ -6,12 +6,14 @@
 //! on the active [`WorkspaceView`]. Splitting it this way keeps the stdio
 //! process trivial (no GUI) and lets any MCP client drive the live terminal.
 
+use std::cell::RefCell;
 use std::collections::HashMap;
 
 use gpui::{App, WindowHandle};
 use serde_json::{json, Value};
 
 use crate::root::WorkspaceView;
+use crate::wasmhost::WasmRuntime;
 
 /// Entry point for the `prompt mcp` subcommand: serve MCP over stdio. Built-in
 /// terminal-control tools bridge to the running GUI over the socket; plugin
@@ -25,8 +27,11 @@ pub fn run_stdio() {
         .clone();
     let plugins = plugin::load(&plugins).0;
     let (tools, routes) = all_tools(&plugins);
+    // Resident WASM instances for wasm-runtime plugins, created lazily. `None` if
+    // the engine can't start; wasm tools then report it rather than crashing.
+    let wasm = RefCell::new(WasmRuntime::new().ok());
     mcp::serve(tools, &|name, args| match routes.get(name) {
-        Some((index, tool_id)) => call_plugin_tool(&plugins[*index], tool_id, args),
+        Some((index, tool_id)) => call_plugin_tool(&plugins[*index], tool_id, args, &wasm),
         None => crate::ipc::request(name, args),
     });
 }
@@ -68,8 +73,19 @@ fn tool_schema(params: &[plugin::ToolParam]) -> Value {
     json!({ "type": "object", "properties": props, "required": required })
 }
 
-/// Invoke a plugin's runtime with a `tool` request and return its `result`.
-fn call_plugin_tool(plugin: &plugin::Plugin, tool_id: &str, args: &Value) -> Result<Value, String> {
+/// Invoke a plugin's tool and return its `result`. A `wasm` plugin runs through
+/// the in-process [`WasmRuntime`]; a `process` plugin is spawned as before.
+fn call_plugin_tool(
+    plugin: &plugin::Plugin,
+    tool_id: &str,
+    args: &Value,
+    wasm: &RefCell<Option<WasmRuntime>>,
+) -> Result<Value, String> {
+    if plugin.runtime.as_ref().map(|r| r.kind) == Some(plugin::RuntimeKind::Wasm) {
+        let mut rt = wasm.borrow_mut();
+        let rt = rt.as_mut().ok_or("wasm plugin runtime is unavailable")?;
+        return rt.call_tool(plugin, tool_id, args);
+    }
     let req = crate::pluginhost::Request {
         kind: "tool",
         panel: &plugin.id,

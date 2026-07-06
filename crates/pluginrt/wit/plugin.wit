@@ -104,3 +104,10 @@ world example {
   export guest;
 }
 
+// The bundled `screentools` reference plugin: reads the terminal screen.
+world screentools {
+  import host-core;
+  import host-screen;
+  export guest;
+}
+

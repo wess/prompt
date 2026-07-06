@@ -1,9 +1,11 @@
 use super::*;
 use std::sync::{Arc, Mutex};
 
-/// A mock app host that records the commands a plugin runs.
+/// A mock app host that records the commands a plugin runs and serves a canned
+/// screen to `read_screen`.
 struct MockHost {
     commands: Arc<Mutex<Vec<String>>>,
+    screen: String,
 }
 
 impl AppHost for MockHost {
@@ -20,7 +22,7 @@ impl AppHost for MockHost {
         Ok(())
     }
     fn read_screen(&mut self, _lines: u32) -> Result<String, String> {
-        Ok(String::new())
+        Ok(self.screen.clone())
     }
     fn selection(&mut self) -> Option<String> {
         None
@@ -57,7 +59,7 @@ fn builds_a_component_engine() {
 fn tool_call_and_gated_host_call() {
     let eng = engine().unwrap();
     let commands = Arc::new(Mutex::new(Vec::new()));
-    let host = Box::new(MockHost { commands: commands.clone() });
+    let host = Box::new(MockHost { commands: commands.clone(), screen: String::new() });
     let mut plugin = PluginInstance::new(&eng, &fixture(), &["commands".to_string()], host)
         .expect("instantiate with the commands capability");
 
@@ -80,10 +82,31 @@ fn missing_capability_blocks_instantiation() {
     let eng = engine().unwrap();
     let host = Box::new(MockHost {
         commands: Arc::new(Mutex::new(Vec::new())),
+        screen: String::new(),
     });
     // The guest imports host-commands; without the `commands` capability the host
     // doesn't link it, so the component can't instantiate. That is the enforced
     // capability boundary — not an advisory flag.
     let result = PluginInstance::new(&eng, &fixture(), &[], host);
     assert!(result.is_err(), "instantiation must fail without the commands capability");
+}
+
+/// The shipped bundled `screentools` plugin actually loads and runs: it reads the
+/// screen through the gated host-screen interface and greps it.
+#[test]
+fn bundled_screentools_greps_the_screen() {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../plugins/screentools/plugin.wasm");
+    let wasm = std::fs::read(path).expect("screentools plugin.wasm");
+    let eng = engine().unwrap();
+    let host = Box::new(MockHost {
+        commands: Arc::new(Mutex::new(Vec::new())),
+        screen: "alpha\nbeta error\ngamma\ndelta error\n".to_string(),
+    });
+    let mut plugin = PluginInstance::new(&eng, &wasm, &["screen".to_string()], host)
+        .expect("instantiate screentools");
+    let out = plugin.call_tool("grep", "{\"query\":\"error\"}").unwrap().unwrap();
+    let value: serde_json::Value = serde_json::from_str(&out).unwrap();
+    assert_eq!(value["count"], 2, "{out}");
+    assert_eq!(value["matches"][0], "beta error");
 }
