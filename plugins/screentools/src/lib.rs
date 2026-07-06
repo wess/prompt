@@ -34,6 +34,21 @@ impl Guest for Screentools {
         let out = serde_json::json!({ "count": matches.len(), "matches": matches });
         Ok(out.to_string())
     }
+
+    fn render(_request_json: String) -> String {
+        // The v2 panel node tree (JSON) — the host renders it. Extends the
+        // block-tree with inputs in later work; a section + text here.
+        serde_json::json!({
+            "title": "Screen Tools",
+            "nodes": [
+                { "type": "section", "title": "Screen Tools" },
+                { "type": "text", "text": "Call the screentools_grep tool to search the visible screen." }
+            ]
+        })
+        .to_string()
+    }
+
+    fn on_ui_event(_event_json: String) {}
 }
 
 export!(Screentools);

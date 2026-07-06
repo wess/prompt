@@ -34,6 +34,12 @@ impl Guest for Example {
             other => Err(format!("unknown tool: {other}")),
         }
     }
+
+    fn render(_request_json: String) -> String {
+        "{}".to_string()
+    }
+
+    fn on_ui_event(_event_json: String) {}
 }
 
 export!(Example);

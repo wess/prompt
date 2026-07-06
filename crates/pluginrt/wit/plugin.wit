@@ -81,6 +81,15 @@ interface guest {
   // Handle a tool call (from the command palette or an MCP agent). Returns a
   // JSON result string.
   call-tool: func(name: string, params-json: string) -> result<string, string>;
+  // Render a panel: return its UI node tree as JSON (the host renders it). A
+  // recursive node tree is awkward as a WIT value type, so it travels as JSON —
+  // the same shape the block-tree renderer already consumes, extended with
+  // inputs. A tool-only plugin returns "{}".
+  render: func(request-json: string) -> string;
+  // React to a UI event from a rendered panel (a button click, an input change).
+  // The plugin updates its state and pushes a fresh tree via host render-panel
+  // (wired in the GUI stage). No-op for a tool-only plugin.
+  on-ui-event: func(event-json: string);
 }
 
 world plugin {

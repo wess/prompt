@@ -336,10 +336,14 @@ The sandbox is what makes a real ecosystem safe:
 
 ## 9. Build order (the one push, staged so the build stays green)
 
-Progress: **Stages 0–2 shipped** (manifest→serde + DX; the `pluginrt` wasmtime
-runtime with link-time capability gating, proven end-to-end; WASM plugin tools
-running in the app with a bundled `screentools` reference plugin). Stages 3–7
-below remain — each is substantial app / webview / toolchain integration.
+Progress: **Stages 0–2 shipped**, plus fuel-bounded guest calls and the **Stage 3
+render *data path*** (the guest `render` export returns a node-tree JSON; proven
+by a test where `screentools` renders a panel). What remains of Stage 3 is the
+GUI half — mapping the node-tree JSON to guise components and wiring the pushed
+`render-panel` updates — which needs iteration in the running app. Stages 4–7
+below (native warm-process, webview + Notes, SDK, registry) are likewise
+substantial app / webview / toolchain integration that must be built and verified
+in the running GUI, not generated in one pass.
 
 0. ✓ **Foundation & cleanup** — manifest → serde (delete `parse.rs`/`RawPlugin`);
    delete the dead WASM stub error; collapse the duplicated Plugin Manager;

@@ -223,6 +223,22 @@ impl PluginInstance {
             .prompt_plugin_guest()
             .call_call_tool(&mut self.store, name, params_json)
     }
+
+    /// Render a panel: returns the plugin's UI node tree as a JSON string.
+    pub fn render(&mut self, request_json: &str) -> Result<String> {
+        self.store.set_fuel(self.fuel)?;
+        self.world
+            .prompt_plugin_guest()
+            .call_render(&mut self.store, request_json)
+    }
+
+    /// Deliver a UI event (button click, input change) from a rendered panel.
+    pub fn on_ui_event(&mut self, event_json: &str) -> Result<()> {
+        self.store.set_fuel(self.fuel)?;
+        self.world
+            .prompt_plugin_guest()
+            .call_on_ui_event(&mut self.store, event_json)
+    }
 }
 
 /// Manages resident plugin instances by id over one shared engine, so callers
@@ -276,6 +292,22 @@ impl Runtime {
             .get_mut(id)
             .context("plugin is not instantiated")?;
         instance.call_tool(tool, params_json)
+    }
+
+    /// Render a resident plugin's panel to a node-tree JSON string.
+    pub fn render(&mut self, id: &str, request_json: &str) -> Result<String> {
+        self.instances
+            .get_mut(id)
+            .context("plugin is not instantiated")?
+            .render(request_json)
+    }
+
+    /// Deliver a UI event to a resident plugin's panel.
+    pub fn on_ui_event(&mut self, id: &str, event_json: &str) -> Result<()> {
+        self.instances
+            .get_mut(id)
+            .context("plugin is not instantiated")?
+            .on_ui_event(event_json)
     }
 
     /// Drop a resident instance (e.g. on plugin disable/reload).
