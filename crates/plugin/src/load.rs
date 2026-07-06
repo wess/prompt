@@ -48,6 +48,7 @@ pub fn load(paths: &[String]) -> (Vec<Plugin>, Vec<Diagnostic>) {
 }
 
 fn loadmanifests(paths: Vec<PathBuf>) -> (Vec<Plugin>, Vec<Diagnostic>) {
+    let installed = crate::install::Installed::load();
     let mut seen = HashSet::new();
     let mut plugins = Vec::new();
     let mut diags = Vec::new();
@@ -60,7 +61,8 @@ fn loadmanifests(paths: Vec<PathBuf>) -> (Vec<Plugin>, Vec<Diagnostic>) {
             Ok(text) => {
                 let (plugin, mut local) = manifest::parse(path, &text);
                 diags.append(&mut local);
-                if let Some(plugin) = plugin {
+                // A disabled plugin stays installed but does not load.
+                if let Some(plugin) = plugin.filter(|p| installed.is_enabled(&p.id)) {
                     plugins.push(plugin);
                 }
             }

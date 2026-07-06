@@ -4,9 +4,11 @@
 //! point is command contributions: plugins can expose shell commands, give
 //! them titles, and optionally assign default keybindings.
 
+mod install;
 mod load;
 mod manifest;
 
+pub use install::{Entry, Installed};
 pub use load::{defaultdir, load};
 pub use manifest::{
     parse, Command, CommandMode, Diagnostic, Panel, Placement, Plugin, Runtime, RuntimeKind, Tool,

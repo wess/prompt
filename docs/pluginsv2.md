@@ -370,8 +370,12 @@ in the running GUI, not generated in one pass.
    push, and in-GUI verification.
 6. 🟡 **SDK** — `prompt-plugin` crate + `@prompt/plugin` (`componentize-js`) + docs;
    port `promptdesigner`.
-7. **Registry & trust** — signed manifest, capability consent, enable/disable,
-   version pinning, registry index.
+7. 🟡 **Registry & trust** — the install-state model is in: `installed.toml`
+   (`plugin::Installed`) records each plugin's version, source, enabled flag, and
+   the capabilities the user granted; `plugin::load` skips disabled plugins.
+   Replaces "a folder exists = enabled, capabilities self-attested." Remaining:
+   the capability-consent UI at install, signature verification, and a registry
+   index off the single monorepo folder (app / security / network work).
 
 Each stage is independently shippable and leaves the tree green.
 
