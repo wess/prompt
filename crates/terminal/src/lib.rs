@@ -4,8 +4,6 @@
 //! a [`vt::Terminal`] on a dedicated reader thread, and reports [`Event`]s
 //! (wakeups, title changes, bell, exit) to the embedder over a channel.
 
-#![cfg(unix)]
-
 pub mod event;
 pub mod options;
 pub mod session;
