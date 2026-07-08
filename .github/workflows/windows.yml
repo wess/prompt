@@ -55,8 +55,10 @@ jobs:
 
       # Informational only: compile the whole workspace so the log captures the
       # full remaining Windows surface (pty/terminal are #![cfg(unix)] and app
-      # depends on them unconditionally). Expected to fail today; never gates.
+      # depends on them unconditionally). `--keep-going` enumerates every
+      # failing crate in one run instead of stopping at the first. Expected to
+      # fail today; never gates.
       - name: Full workspace surface (informational)
         if: always()
         continue-on-error: true
-        run: cargo build --workspace
+        run: cargo build --workspace --keep-going
