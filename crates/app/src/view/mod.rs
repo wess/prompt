@@ -266,9 +266,14 @@ pub struct TerminalView {
     /// Set when this pane posts a desktop notification (OSC 9/777/99) while
     /// unfocused; drives the tab/pane attention indicator. Cleared on focus.
     attention: bool,
-    /// Tracks pane focus (kept in sync by the focus-in/out subscriptions), so
-    /// a notification only raises the attention indicator on a background pane.
+    /// Tracks true focus — window *and* pane — kept in sync by the focus-in/out
+    /// subscriptions. Drives ?1004 reporting and the attention indicator (a
+    /// background notification), both of which react to the window losing focus.
     focused: bool,
+    /// Tracks the active *pane* only — unlike `focused` it survives the whole
+    /// window losing focus. Drives the unfocused-split dimming and the hidden
+    /// cursor, so those reflect which split is active, not window focus.
+    pane_active: bool,
     /// True while a repaint is being withheld for synchronized output
     /// (?2026), with a safety timer armed to release it.
     sync_pending: bool,
@@ -326,16 +331,29 @@ impl TerminalView {
         let sub_in = window.on_focus_in(&focus, cx, move |_window, cx| {
             let _ = on_in.update(cx, |this, cx| {
                 this.focused = true;
+                this.pane_active = true;
                 this.report_focus(true);
                 this.clear_attention(cx);
                 cx.emit(ViewEvent::Focused);
             });
         });
         let on_out = cx.weak_entity();
-        let sub_out = window.on_focus_out(&focus, cx, move |_event, _window, cx| {
-            let _ = on_out.update(cx, |this, _| {
+        let sub_out = window.on_focus_out(&focus, cx, move |_event, window, cx| {
+            // `focused` tracks true focus (window + pane) — it drives ?1004
+            // reporting and the background-notification attention dot, both of
+            // which should react to the window losing focus. `pane_active`
+            // tracks the active *pane* only and drives the split dimming +
+            // hidden cursor, so it stays set when the whole window merely
+            // deactivates (which also fires focus-out); only a real pane switch,
+            // where the window is still active, clears it.
+            let pane_switch = window.is_window_active();
+            let _ = on_out.update(cx, |this, cx| {
                 this.focused = false;
                 this.report_focus(false);
+                if pane_switch {
+                    this.pane_active = false;
+                }
+                cx.notify();
             });
         });
         Self {
@@ -365,6 +383,7 @@ impl TerminalView {
             bell: false,
             attention: false,
             focused: false,
+            pane_active: false,
             sync_pending: false,
             search: None,
             hints: None,
@@ -598,9 +617,11 @@ impl Render for TerminalView {
         let menu = self
             .context_menu
             .map(|pos| self.context_menu_overlay(pos, cx));
-        // Dim a pane while it is not focused so the active split is obvious;
-        // `1.0` (the opt default when unset) leaves it untouched.
-        let dim = if self.focused {
+        // Dim a pane while it is not the active split so the active one is
+        // obvious; `1.0` (the opt default when unset) leaves it untouched. Keyed
+        // off `pane_active`, not `focused`, so backgrounding the window doesn't
+        // dim every pane.
+        let dim = if self.pane_active {
             1.0
         } else {
             self.unfocused_split_opacity.clamp(0.0, 1.0)
@@ -642,7 +663,7 @@ impl Render for TerminalView {
                 self.copy_on_select,
                 self.smart_select,
                 self.middle_click_paste,
-                self.focused,
+                self.pane_active,
                 query,
                 self.suggestion_ghost(),
                 self.image_cache.clone(),
