@@ -20,11 +20,21 @@ pub struct SpawnOptions {
 }
 
 /// The user's shell from `$SHELL`, falling back to `/bin/zsh`.
+#[cfg(unix)]
 pub fn default_shell() -> String {
     std::env::var("SHELL")
         .ok()
         .filter(|s| !s.is_empty())
         .unwrap_or_else(|| "/bin/zsh".to_string())
+}
+
+/// The command interpreter from `%COMSPEC%`, falling back to `cmd.exe`.
+#[cfg(windows)]
+pub fn default_shell() -> String {
+    std::env::var("COMSPEC")
+        .ok()
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "cmd.exe".to_string())
 }
 
 /// Default environment overrides for terminal children.

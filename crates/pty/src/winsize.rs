@@ -36,6 +36,7 @@ impl Winsize {
 
     /// Convert to the kernel `struct winsize`. Pixel fields are the total
     /// window pixel size (grid * cell), saturating on overflow.
+    #[cfg(unix)]
     pub fn to_termios(self) -> rustix::termios::Winsize {
         rustix::termios::Winsize {
             ws_row: self.rows,

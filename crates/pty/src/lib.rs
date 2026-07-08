@@ -1,7 +1,9 @@
-//! Unix pseudo-terminal management for the Prompt terminal emulator.
+//! Pseudo-terminal management for the Prompt terminal emulator.
 //!
-//! Open a pty pair, spawn a shell (or any argv) on the slave, and drive the
-//! master: read child output, write input, resize, kill/wait.
+//! Open a pty, spawn a shell (or any argv) attached to it, and drive it: read
+//! child output, write input, resize, kill/wait. Two backends implement one
+//! [`Pty`] API — a Unix pty pair (`rustix`) and a Windows pseudoconsole
+//! (ConPTY, via the `windows` crate).
 //!
 //! ```no_run
 //! let opts = pty::SpawnOptions::default(); // user's login shell
@@ -9,14 +11,24 @@
 //! session.resize(pty::Winsize::new(120, 40)).unwrap();
 //! ```
 
-#![cfg(unix)]
-
-mod session;
 mod spawn;
-mod unix;
 mod winsize;
 
-pub use session::Pty;
+#[cfg(unix)]
+mod session;
+#[cfg(unix)]
+mod unix;
+
+#[cfg(windows)]
+mod windows;
+
 pub use spawn::{default_env, default_shell, SpawnOptions};
-pub use unix::{open_pair, spawn_child, PtyPair};
 pub use winsize::Winsize;
+
+#[cfg(unix)]
+pub use session::Pty;
+#[cfg(unix)]
+pub use unix::{open_pair, spawn_child, PtyPair};
+
+#[cfg(windows)]
+pub use windows::Pty;
