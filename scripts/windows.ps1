@@ -78,3 +78,8 @@ try {
 Remove-Item -Recurse -Force $stage -ErrorAction SilentlyContinue
 Write-Host "[windows] artifacts in dist/windows:"
 Get-ChildItem $out | Select-Object -ExpandProperty Name
+
+# The zip is the guaranteed deliverable; a best-effort MSI failure above must
+# not leave a non-zero exit code that fails the job (getting here means the
+# build + zip succeeded — a cargo failure would have thrown earlier).
+exit 0
