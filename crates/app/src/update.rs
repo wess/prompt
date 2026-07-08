@@ -152,8 +152,9 @@ fn download_to(url: &str, dest: &std::path::Path) -> Result<(), String> {
     }
 }
 
-/// Download the release and swap it into place, returning the binary to restart
-/// into. Only for in-place installs ([`Install::MacApp`], [`Install::AppImage`]);
+/// Download the release and swap it into place, returning the path to relaunch
+/// (the `.app` bundle on macOS, the AppImage on Linux). Only for in-place
+/// installs ([`Install::MacApp`], [`Install::AppImage`]);
 /// an [`Install::Unknown`] has no in-place path and opens the release page
 /// instead (see `updateui`). Blocking.
 pub fn stage(release: &Release, install: &Install) -> Result<PathBuf, String> {
@@ -167,7 +168,10 @@ pub fn stage(release: &Release, install: &Install) -> Result<PathBuf, String> {
 }
 
 /// macOS: download the notarized `.dmg`, mount it, copy the new `.app` over the
-/// installed one, unmount, and return the inner binary to relaunch.
+/// installed one, unmount, and return the `.app` bundle to relaunch. gpui's
+/// restart `open`s this path, and `open` must be handed the bundle, not the
+/// inner Mach-O — `open` on a raw executable has no bundle handler and falls
+/// back to launching it inside Terminal.app.
 #[cfg(target_os = "macos")]
 fn stage_mac_app(release: &Release, app: &std::path::Path, dir: &std::path::Path) -> Result<PathBuf, String> {
     let url = release.asset(".dmg").ok_or("release has no .dmg asset")?;
@@ -206,7 +210,7 @@ fn stage_mac_app(release: &Release, app: &std::path::Path, dir: &std::path::Path
         return Err(format!("install update: {e}"));
     }
     let _ = std::fs::remove_dir_all(&backup);
-    Ok(app.join("Contents/MacOS/prompt"))
+    Ok(app.to_path_buf())
 }
 
 #[cfg(not(target_os = "macos"))]
