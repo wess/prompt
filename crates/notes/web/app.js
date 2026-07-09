@@ -29,6 +29,8 @@ const state = {
   saveTimer: null,
   editor: null,
   applying: false, // set while pushing external content, to suppress onChange
+  pickerBusy: false, // native folder dialog in flight
+  pickerError: null, // last vault open/pick failure, shown on the picker card
 };
 
 const app = document.getElementById("app");
@@ -102,6 +104,16 @@ async function renderPicker() {
   actions.append(open, create);
   card.append(actions);
 
+  // Status/error line: folder picking crosses the native-dialog and macOS
+  // folder-permission boundary, and both must be visible when they fail.
+  const status = el("div", "picker-status");
+  if (state.pickerBusy) status.textContent = "Choose a folder in the dialog…";
+  else if (state.pickerError) {
+    status.textContent = state.pickerError;
+    status.classList.add("error");
+  }
+  card.append(status);
+
   if (recents.length) {
     card.append(el("div", "recents-title", "Recent"));
     for (const r of recents) {
@@ -126,12 +138,30 @@ async function renderPicker() {
 }
 
 async function pickVault(mode) {
-  const v = await api.send("POST", "/vault/pick", { mode });
-  if (v && v.root) await afterVaultChange(v);
+  state.pickerBusy = true;
+  state.pickerError = null;
+  render();
+  try {
+    const v = await api.send("POST", "/vault/pick", { mode });
+    state.pickerBusy = false;
+    if (v && v.root) return afterVaultChange(v);
+    state.pickerError = v && v.error ? v.error : null; // null: dialog cancelled
+  } catch {
+    state.pickerBusy = false;
+    state.pickerError = "The notes server stopped responding — close and reopen this tab.";
+  }
+  render();
 }
 async function openVault(path) {
-  const v = await api.send("POST", "/vault/open", { path });
-  if (v && v.root) await afterVaultChange(v);
+  state.pickerError = null;
+  try {
+    const v = await api.send("POST", "/vault/open", { path });
+    if (v && v.root) return afterVaultChange(v);
+    state.pickerError = v && v.error ? v.error : "couldn't open that folder";
+  } catch {
+    state.pickerError = "The notes server stopped responding — close and reopen this tab.";
+  }
+  render();
 }
 async function afterVaultChange(v) {
   state.vault = v;

@@ -31,9 +31,30 @@ pub struct AppState {
     self_writes: Arc<Mutex<HashMap<String, Instant>>>,
     last_active: Mutex<Instant>,
     clients: AtomicUsize,
+    /// Native folder dialogs currently in flight; holds off the idle reaper
+    /// while the user is still browsing for a folder.
+    picks: AtomicUsize,
     watcher: Mutex<Option<notify::RecommendedWatcher>>,
     port: u16,
     token: String,
+}
+
+/// RAII marker for an in-flight folder dialog. Drop-based so a cancelled
+/// request (webview closed mid-pick) still releases the reaper hold.
+struct PickGuard(Arc<AppState>);
+
+impl PickGuard {
+    fn new(s: &Arc<AppState>) -> Self {
+        s.picks.fetch_add(1, Ordering::Relaxed);
+        Self(s.clone())
+    }
+}
+
+impl Drop for PickGuard {
+    fn drop(&mut self) {
+        self.0.picks.fetch_sub(1, Ordering::Relaxed);
+        touch(&self.0);
+    }
 }
 
 pub async fn run(port: u16, token: String) {
@@ -44,6 +65,7 @@ pub async fn run(port: u16, token: String) {
         self_writes: Arc::new(Mutex::new(HashMap::new())),
         last_active: Mutex::new(Instant::now()),
         clients: AtomicUsize::new(0),
+        picks: AtomicUsize::new(0),
         watcher: Mutex::new(None),
         port,
         token,
@@ -213,7 +235,10 @@ fn spawn_reaper(state: Arc<AppState>) {
                 .lock()
                 .map(|t| t.elapsed())
                 .unwrap_or_default();
-            if state.clients.load(Ordering::Relaxed) == 0 && idle > Duration::from_secs(60) {
+            if state.clients.load(Ordering::Relaxed) == 0
+                && state.picks.load(Ordering::Relaxed) == 0
+                && idle > Duration::from_secs(60)
+            {
                 std::process::exit(0);
             }
         }
@@ -233,53 +258,90 @@ async fn get_vault(State(s): State<Arc<AppState>>) -> Response {
     ok(serde_json::to_value(cur).unwrap_or(Value::Null))
 }
 
-async fn vault_open(State(s): State<Arc<AppState>>, Json(body): Json<Value>) -> Response {
-    touch(&s);
-    let path = body.get("path").and_then(Value::as_str).unwrap_or_default();
-    let res = s.vault.lock().map_err(|e| e.to_string()).and_then(|mut v| v.open(path));
+/// Check that `dir` is a usable folder, off-thread and with a deadline.
+/// A folder under macOS privacy protection (Documents, Desktop, …) blocks the
+/// first `stat` until the user answers the consent prompt — probing on a
+/// blocking thread with a timeout keeps the request (and the picker UI behind
+/// it) from hanging forever, and turns a denial into an actionable message
+/// instead of a bare "not a folder".
+async fn probe_dir(dir: String, create: bool) -> Result<(), String> {
+    let task = tokio::task::spawn_blocking(move || {
+        if create {
+            std::fs::create_dir_all(&dir).map_err(|e| match e.kind() {
+                std::io::ErrorKind::PermissionDenied => deny_msg(),
+                _ => e.to_string(),
+            })?;
+        }
+        match std::fs::read_dir(&dir) {
+            Ok(_) => Ok(()),
+            Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => Err(deny_msg()),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                Err(format!("no such folder: {dir}"))
+            }
+            Err(e) => Err(format!("can't open {dir}: {e}")),
+        }
+    });
+    match tokio::time::timeout(Duration::from_secs(15), task).await {
+        Ok(Ok(res)) => res,
+        Ok(Err(e)) => Err(e.to_string()),
+        Err(_) => Err(
+            "still waiting for folder access — if macOS is showing a permission \
+             dialog, answer it, then try again"
+                .to_string(),
+        ),
+    }
+}
+
+fn deny_msg() -> String {
+    "macOS blocked access to that folder. Allow Sinclair under System Settings \
+     → Privacy & Security → Files and Folders, then try again."
+        .to_string()
+}
+
+async fn open_probed(s: &Arc<AppState>, dir: &str, create: bool) -> Response {
+    if let Err(e) = probe_dir(dir.to_string(), create).await {
+        return err(e);
+    }
+    let res = s.vault.lock().map_err(|e| e.to_string()).and_then(|mut v| {
+        if create {
+            v.create(dir)
+        } else {
+            v.open(dir)
+        }
+    });
     match res {
         Ok(info) => {
-            arm_watch(&s);
+            arm_watch(s);
             ok(serde_json::to_value(info).unwrap_or(Value::Null))
         }
         Err(e) => err(e),
     }
 }
 
+async fn vault_open(State(s): State<Arc<AppState>>, Json(body): Json<Value>) -> Response {
+    touch(&s);
+    let path = body.get("path").and_then(Value::as_str).unwrap_or_default().to_string();
+    open_probed(&s, &path, false).await
+}
+
 async fn vault_create(State(s): State<Arc<AppState>>, Json(body): Json<Value>) -> Response {
     touch(&s);
-    let path = body.get("path").and_then(Value::as_str).unwrap_or_default();
-    let res = s.vault.lock().map_err(|e| e.to_string()).and_then(|mut v| v.create(path));
-    match res {
-        Ok(info) => {
-            arm_watch(&s);
-            ok(serde_json::to_value(info).unwrap_or(Value::Null))
-        }
-        Err(e) => err(e),
-    }
+    let path = body.get("path").and_then(Value::as_str).unwrap_or_default().to_string();
+    open_probed(&s, &path, true).await
 }
 
 async fn vault_pick(State(s): State<Arc<AppState>>, Json(body): Json<Value>) -> Response {
     touch(&s);
     let mode = body.get("mode").and_then(Value::as_str).unwrap_or("open");
-    let Some(dir) = pick_folder().await else {
+    let dir = {
+        let _guard = PickGuard::new(&s);
+        pick_folder().await
+    };
+    let Some(dir) = dir else {
         let cur = s.vault.lock().ok().and_then(|mut v| v.current());
         return ok(serde_json::to_value(cur).unwrap_or(Value::Null));
     };
-    let res = s.vault.lock().map_err(|e| e.to_string()).and_then(|mut v| {
-        if mode == "create" {
-            v.create(&dir)
-        } else {
-            v.open(&dir)
-        }
-    });
-    match res {
-        Ok(info) => {
-            arm_watch(&s);
-            ok(serde_json::to_value(info).unwrap_or(Value::Null))
-        }
-        Err(e) => err(e),
-    }
+    open_probed(&s, &dir, mode == "create").await
 }
 
 async fn vault_forget(State(s): State<Arc<AppState>>, Json(body): Json<Value>) -> Response {
@@ -479,5 +541,43 @@ async fn pick_folder() -> Option<String> {
     {
         let _ = cmd;
         None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::probe_dir;
+
+    #[tokio::test]
+    async fn probe_accepts_a_real_folder() {
+        let dir = std::env::temp_dir().join("sinclairnotesprobeok");
+        std::fs::create_dir_all(&dir).unwrap();
+        assert_eq!(probe_dir(dir.to_string_lossy().into_owned(), false).await, Ok(()));
+    }
+
+    #[tokio::test]
+    async fn probe_reports_missing_folder() {
+        let e = probe_dir("/definitely/not/here".into(), false).await.unwrap_err();
+        assert!(e.contains("no such folder"), "{e}");
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn probe_maps_permission_denied_to_privacy_hint() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = std::env::temp_dir().join("sinclairnotesprobedeny");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o000)).unwrap();
+        let e = probe_dir(dir.to_string_lossy().into_owned(), false).await.unwrap_err();
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o755)).unwrap();
+        assert!(e.contains("Privacy & Security"), "{e}");
+    }
+
+    #[tokio::test]
+    async fn probe_create_makes_the_folder() {
+        let dir = std::env::temp_dir().join("sinclairnotesprobecreate/nested");
+        let _ = std::fs::remove_dir_all(std::env::temp_dir().join("sinclairnotesprobecreate"));
+        assert_eq!(probe_dir(dir.to_string_lossy().into_owned(), true).await, Ok(()));
+        assert!(dir.is_dir());
     }
 }

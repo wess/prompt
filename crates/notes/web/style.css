@@ -21,6 +21,8 @@ body {
 .picker h1 { font-size: 18px; margin: 0 0 4px; }
 .picker p { color: var(--dim); margin: 0 0 16px; }
 .picker .actions { display: flex; gap: 8px; margin-bottom: 18px; }
+.picker-status { min-height: 18px; font-size: 12px; color: var(--dim); margin-bottom: 12px; }
+.picker-status.error { color: #e5534b; }
 .recents-title { font-size: 11px; text-transform: uppercase; color: var(--dim); margin: 8px 0; }
 .recent { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border: 1px solid var(--border);
   border-radius: 8px; background: var(--surface); margin-bottom: 6px; cursor: pointer; }
