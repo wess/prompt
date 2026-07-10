@@ -9,8 +9,15 @@ fn install_adds_all_events() {
     for (event, state) in HOOK_EVENTS {
         let arr = hooks.get(*event).unwrap().as_array().unwrap();
         let cmd = arr[0]["hooks"][0]["command"].as_str().unwrap();
-        assert_eq!(cmd, format!("/bin/sinclair agent-status {state}"));
+        assert_eq!(cmd, format!("'/bin/sinclair' agent-status {state}"));
     }
+}
+
+#[test]
+fn install_quotes_an_exe_path_with_spaces() {
+    let out = install_into(json!({}), "/Applications/My Apps/sinclair");
+    let cmd = out["hooks"]["Stop"][0]["hooks"][0]["command"].as_str().unwrap();
+    assert_eq!(cmd, "'/Applications/My Apps/sinclair' agent-status done");
 }
 
 #[test]

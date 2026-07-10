@@ -1,16 +1,38 @@
 use super::*;
 
+/// How many trailing buffer rows the assist overlays rank. Bounds the text
+/// materialized under the terminal lock on each rescan; line numbers stay
+/// global so jumping to a hit still lands on the right row.
+const ASSIST_SCAN_ROWS: usize = 1000;
+
 impl TerminalView {
+    /// The most recent [`ASSIST_SCAN_ROWS`] rows (scrollback + live grid) as
+    /// assist lines, numbered in global-row space.
     fn lines(&self) -> Vec<::assist::Line> {
         self.session.with_term(|term| {
-            term.text_lines()
-                .into_iter()
-                .map(|(number, text, prompt)| ::assist::Line {
-                    number,
-                    text,
-                    prompt,
-                })
-                .collect()
+            let grid = term.grid();
+            let sb = grid.scrollback();
+            let total = sb.len() + grid.rows();
+            let skip = total.saturating_sub(ASSIST_SCAN_ROWS);
+            let mut out = Vec::with_capacity(total - skip);
+            for i in skip..sb.len() {
+                if let Some(row) = sb.get(i) {
+                    out.push(::assist::Line {
+                        number: i,
+                        text: row.text(),
+                        prompt: row.prompt,
+                    });
+                }
+            }
+            for i in sb.len().max(skip)..total {
+                let row = grid.row(i - sb.len());
+                out.push(::assist::Line {
+                    number: i,
+                    text: row.text(),
+                    prompt: row.prompt,
+                });
+            }
+            out
         })
     }
 
@@ -81,6 +103,7 @@ impl TerminalView {
         self.search = None;
         self.assist = Some(Assist::Compose {
             edit: guise::TextEdit::new(""),
+            miss: false,
         });
         cx.notify();
     }
@@ -151,15 +174,19 @@ impl TerminalView {
                     }
                 }
             },
-            Assist::Compose { edit } => match ks.key.as_str() {
+            Assist::Compose { edit, miss } => match ks.key.as_str() {
                 "escape" => self.assist = None,
                 "enter" => {
-                    let command = ::assist::compose(&edit.text());
-                    if !command.trim().is_empty() {
-                        self.scroll_to_bottom(cx);
-                        let _ = self.session.write(command.as_bytes());
+                    // A miss keeps the panel open with a "no match" note
+                    // instead of echoing the request into the shell.
+                    match ::assist::compose_match(&edit.text()) {
+                        Some(command) if !command.trim().is_empty() => {
+                            self.scroll_to_bottom(cx);
+                            let _ = self.session.write(command.as_bytes());
+                            self.assist = None;
+                        }
+                        _ => *miss = true,
                     }
-                    self.assist = None;
                 }
                 "left" => edit.left(),
                 "right" => edit.right(),
@@ -167,9 +194,11 @@ impl TerminalView {
                 "end" => edit.end(),
                 "backspace" => {
                     edit.backspace();
+                    *miss = false;
                 }
                 "delete" => {
                     edit.delete();
+                    *miss = false;
                 }
                 _ => {
                     if let Some(text) = ks
@@ -178,6 +207,7 @@ impl TerminalView {
                         .filter(|t| !t.is_empty() && !mods.alt)
                     {
                         edit.insert(text);
+                        *miss = false;
                     }
                 }
             },
@@ -195,12 +225,12 @@ impl TerminalView {
                 }
                 _ => {}
             },
-            Assist::ClipboardWrite { text } => match ks.key.as_str() {
+            Assist::ClipboardWrite { text, primary } => match ks.key.as_str() {
                 "escape" | "n" => self.assist = None,
                 "enter" | "y" => {
-                    let text = text.clone();
+                    let (text, primary) = (text.clone(), *primary);
                     self.assist = None;
-                    self.write_clipboard(text, cx);
+                    self.write_clipboard(text, primary, cx);
                 }
                 _ => {}
             },
@@ -235,6 +265,9 @@ impl TerminalView {
             .bottom(px(8.0))
             .left(px(8.0))
             .max_w(px(620.0))
+            // Occlude the grid: a press on the panel must not fall through
+            // and start a selection at the cell beneath it.
+            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
             .bg(colors::rgba(self.colors.bg))
             .border_1()
             .border_color(border)
@@ -274,7 +307,20 @@ impl TerminalView {
                 }
                 panel
             }
-            Assist::Compose { edit } => panel.child(self.input_line("Command", edit)),
+            Assist::Compose { edit, miss } => {
+                let panel = panel.child(self.input_line("Command", edit));
+                if *miss {
+                    let mut dim = colors::hsla(self.colors.fg);
+                    dim.a = 0.7;
+                    panel.child(
+                        div()
+                            .text_color(dim)
+                            .child("No matching command \u{00b7} try rephrasing"),
+                    )
+                } else {
+                    panel
+                }
+            }
             Assist::Message { title, body } => panel
                 .child(
                     div()

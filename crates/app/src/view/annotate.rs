@@ -23,6 +23,16 @@ impl TerminalView {
         cx.notify();
     }
 
+    /// Drop annotations whose rows have been evicted from scrollback; their
+    /// sequences can never render again. Called from `update_line_times`.
+    pub(crate) fn prune_annotations(&mut self, committed: u64, sb_len: usize) {
+        if self.annotations.is_empty() {
+            return;
+        }
+        let oldest = oldest_seq(committed, sb_len);
+        self.annotations.retain(|&seq, _| seq >= oldest);
+    }
+
     /// The annotation pills over their rows, when any are visible.
     pub(crate) fn annotations_overlay(&self) -> Option<AnyElement> {
         if self.annotations.is_empty() {
@@ -69,3 +79,13 @@ impl TerminalView {
         any.then(|| layer.into_any_element())
     }
 }
+
+/// The oldest line sequence still reachable: everything below has been
+/// evicted from the scrollback ring.
+pub(crate) fn oldest_seq(committed: u64, sb_len: usize) -> u64 {
+    committed.saturating_sub(sb_len as u64)
+}
+
+#[cfg(test)]
+#[path = "../../tests/annotate.rs"]
+mod tests;

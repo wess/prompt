@@ -1,5 +1,18 @@
 use super::*;
 
+/// Rows the focused match is pushed below the viewport top when jumping, so
+/// it clears the full-width find bar drawn over the first row.
+const JUMP_CLEARANCE: usize = 2;
+
+/// Display offset that shows scrollback match `line` just below the find
+/// bar. Matches already on the live screen stay put.
+pub(crate) fn jump_offset(scrollback: usize, line: usize) -> usize {
+    if line >= scrollback {
+        return 0;
+    }
+    (scrollback - line + JUMP_CLEARANCE).min(scrollback)
+}
+
 impl TerminalView {
     /// Open/close the scrollback search overlay.
     pub fn toggle_search(&mut self, cx: &mut Context<Self>) {
@@ -10,7 +23,7 @@ impl TerminalView {
                 edit: guise::TextEdit::new(""),
                 current: 0,
                 cached_query: None,
-                results: Vec::new(),
+                results: Rc::new(Vec::new()),
                 dirty: true,
             }),
         };
@@ -18,11 +31,12 @@ impl TerminalView {
     }
 
     /// Current search results, cached until the query changes or new output
-    /// marks them stale: the full-buffer scan never runs on an idle repaint.
-    pub(crate) fn search_matches(&mut self) -> Vec<vt::Match> {
+    /// marks them stale: the full-buffer scan never runs on an idle repaint,
+    /// and the shared `Rc` means a repaint never deep-copies the match list.
+    pub(crate) fn search_matches(&mut self) -> Rc<Vec<vt::Match>> {
         let q = match &self.search {
             Some(s) => s.edit.text(),
-            None => return Vec::new(),
+            None => return Rc::new(Vec::new()),
         };
         if let Some(s) = &self.search {
             if !s.dirty && s.cached_query.as_deref() == Some(q.as_str()) {
@@ -30,9 +44,9 @@ impl TerminalView {
             }
         }
         let hits = if q.is_empty() {
-            Vec::new()
+            Rc::new(Vec::new())
         } else {
-            self.session.with_term(|t| t.search(&q, false))
+            Rc::new(self.session.with_term(|t| t.search(&q, false)))
         };
         if let Some(s) = &mut self.search {
             s.results = hits.clone();
@@ -56,7 +70,7 @@ impl TerminalView {
         let line = matches[s.current].line;
         self.session.with_term(|t| {
             let sb = t.grid().scrollback().len();
-            t.set_display_offset(sb.saturating_sub(line));
+            t.set_display_offset(jump_offset(sb, line));
         });
         cx.notify();
     }
@@ -230,6 +244,9 @@ impl TerminalView {
             .gap_2()
             .px_2()
             .py_1()
+            // Occlude the grid: a press on the bar must not fall through and
+            // start a selection at the cell beneath it.
+            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
             .bg(bg)
             .border_b_1()
             .border_color(border)
@@ -268,3 +285,7 @@ impl TerminalView {
             .child(button("search-close", "\u{00d7}", None))
     }
 }
+
+#[cfg(test)]
+#[path = "../../tests/search.rs"]
+mod tests;

@@ -223,3 +223,113 @@ fn scroll_indicator_tracks_position() {
     assert!(low.origin.y > top.origin.y);
     assert!(f32::from(low.origin.y) + f32::from(low.size.height) <= 400.0 + 1e-3);
 }
+
+fn test_cell() -> CellSize {
+    CellSize {
+        width: 8.0,
+        height: 16.0,
+    }
+}
+
+#[test]
+fn undamaged_identical_frames_reuse_the_snapshot() {
+    let mut term = vt::Terminal::new(20, 4, 100);
+    term.feed(b"hello");
+    let colors = Rc::new(test_colors());
+    let mut cache = SnapCache::default();
+    let mut images = std::collections::HashMap::new();
+    let a = snapshot_reuse(&mut term, &mut cache, &colors, None, test_cell(), &mut images, None);
+    let b = snapshot_reuse(&mut term, &mut cache, &colors, None, test_cell(), &mut images, None);
+    assert!(Rc::ptr_eq(&a, &b), "no damage + identical inputs must reuse");
+}
+
+#[test]
+fn new_output_rebuilds_the_snapshot() {
+    let mut term = vt::Terminal::new(20, 4, 100);
+    term.feed(b"hello");
+    let colors = Rc::new(test_colors());
+    let mut cache = SnapCache::default();
+    let mut images = std::collections::HashMap::new();
+    let a = snapshot_reuse(&mut term, &mut cache, &colors, None, test_cell(), &mut images, None);
+    term.feed(b" world");
+    let b = snapshot_reuse(&mut term, &mut cache, &colors, None, test_cell(), &mut images, None);
+    assert!(!Rc::ptr_eq(&a, &b));
+    assert_eq!(b.spans[1].text, "world");
+}
+
+#[test]
+fn cursor_motion_alone_rebuilds_the_snapshot() {
+    let mut term = vt::Terminal::new(20, 4, 0);
+    term.feed(b"hi");
+    let colors = Rc::new(test_colors());
+    let mut cache = SnapCache::default();
+    let mut images = std::collections::HashMap::new();
+    let a = snapshot_reuse(&mut term, &mut cache, &colors, None, test_cell(), &mut images, None);
+    // CUP repositions the cursor without printing a cell.
+    term.feed(b"\x1b[2;5H");
+    let b = snapshot_reuse(&mut term, &mut cache, &colors, None, test_cell(), &mut images, None);
+    assert!(!Rc::ptr_eq(&a, &b));
+    assert_ne!(a.cursor, b.cursor);
+}
+
+#[test]
+fn hover_change_rebuilds_without_damage() {
+    let mut term = vt::Terminal::new(20, 4, 0);
+    term.feed(b"https://example.com");
+    let colors = Rc::new(test_colors());
+    let mut cache = SnapCache::default();
+    let mut images = std::collections::HashMap::new();
+    let a = snapshot_reuse(&mut term, &mut cache, &colors, None, test_cell(), &mut images, None);
+    let b = snapshot_reuse(
+        &mut term,
+        &mut cache,
+        &colors,
+        None,
+        test_cell(),
+        &mut images,
+        Some((0, 0, 18)),
+    );
+    assert!(!Rc::ptr_eq(&a, &b), "hover underline is a snapshot input");
+}
+
+#[test]
+fn snapkeys_compare_search_by_identity_and_colors_by_pointer() {
+    let term = vt::Terminal::new(10, 3, 10);
+    let colors = Rc::new(test_colors());
+    let matches = Rc::new(Vec::new());
+    let sq = SearchQuery {
+        query: "x".to_string(),
+        current: 0,
+        matches: matches.clone(),
+    };
+    let a = snapkey(&term, &colors, Some(&sq), test_cell(), None);
+    let b = snapkey(&term, &colors, Some(&sq), test_cell(), None);
+    assert!(keyeq(&a, &b));
+    // Same query text but a fresh match list: a rescan replaced the Rc.
+    let sq2 = SearchQuery {
+        query: "x".to_string(),
+        current: 0,
+        matches: Rc::new(Vec::new()),
+    };
+    assert!(!keyeq(&a, &snapkey(&term, &colors, Some(&sq2), test_cell(), None)));
+    // Focused-match step.
+    let sq3 = SearchQuery {
+        query: "x".to_string(),
+        current: 1,
+        matches,
+    };
+    assert!(!keyeq(&a, &snapkey(&term, &colors, Some(&sq3), test_cell(), None)));
+    // Closing the overlay.
+    assert!(!keyeq(&a, &snapkey(&term, &colors, None, test_cell(), None)));
+    // A theme reload swaps the colors Rc even when values are identical.
+    let colors2 = Rc::new(test_colors());
+    assert!(!keyeq(&a, &snapkey(&term, &colors2, Some(&sq), test_cell(), None)));
+    // Hover link.
+    assert!(!keyeq(&a, &snapkey(&term, &colors, Some(&sq), test_cell(), Some((0, 0, 2)))));
+    // Cell metrics (font size change).
+    let big = CellSize {
+        width: 10.0,
+        height: 20.0,
+    };
+    assert!(!keyeq(&a, &snapkey(&term, &colors, Some(&sq), big, None)));
+}

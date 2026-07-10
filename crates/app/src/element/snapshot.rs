@@ -90,6 +90,105 @@ pub(crate) struct Snapshot {
     pub(crate) images: Vec<ImageDraw>,
 }
 
+/// The app-side inputs a [`Snapshot`] was built from, beyond grid content
+/// (which vt's damage tracks). [`snapshot_reuse`] compares these — every one
+/// of them changes what the snapshot resolves — before reusing a frame.
+pub(crate) struct SnapKey {
+    offset: usize,
+    scrollback: usize,
+    cols: usize,
+    rows: usize,
+    cell: CellSize,
+    /// Theme identity: a config/theme reload swaps the view's `Rc<Colors>`,
+    /// so pointer equality is exact.
+    colors: Rc<Colors>,
+    selection: Option<vt::Selection>,
+    /// Query text, focused index, and match-list identity (the view caches
+    /// matches behind an `Rc` and replaces it on rescan).
+    search: Option<(String, usize, Rc<Vec<vt::Match>>)>,
+    hover_link: Option<(usize, usize, usize)>,
+    /// Image placement identity (id + anchor); decoded textures are cached
+    /// separately by id.
+    images: Vec<(u64, isize, usize)>,
+}
+
+/// Capture the current snapshot inputs. Runs under the terminal lock.
+pub(crate) fn snapkey(
+    term: &vt::Terminal,
+    colors: &Rc<Colors>,
+    search: Option<&SearchQuery>,
+    cell: CellSize,
+    hover_link: Option<(usize, usize, usize)>,
+) -> SnapKey {
+    SnapKey {
+        offset: term.display_offset(),
+        scrollback: term.grid().scrollback().len(),
+        cols: term.cols(),
+        rows: term.rows(),
+        cell,
+        colors: colors.clone(),
+        selection: term.selection().copied(),
+        search: search.map(|s| (s.query.clone(), s.current, s.matches.clone())),
+        hover_link,
+        images: term.images().iter().map(|p| (p.id, p.line, p.col)).collect(),
+    }
+}
+
+/// Whether two input keys are equivalent for snapshot reuse.
+pub(crate) fn keyeq(a: &SnapKey, b: &SnapKey) -> bool {
+    a.offset == b.offset
+        && a.scrollback == b.scrollback
+        && a.cols == b.cols
+        && a.rows == b.rows
+        && a.cell == b.cell
+        && Rc::ptr_eq(&a.colors, &b.colors)
+        && a.selection == b.selection
+        && a.hover_link == b.hover_link
+        && a.images == b.images
+        && match (&a.search, &b.search) {
+            (None, None) => true,
+            (Some((qa, ca, ma)), Some((qb, cb, mb))) => {
+                qa == qb && ca == cb && Rc::ptr_eq(ma, mb)
+            }
+            _ => false,
+        }
+}
+
+/// The previous frame's snapshot and the inputs it was built from.
+#[derive(Default)]
+pub(crate) struct SnapCache {
+    snap: Option<Rc<Snapshot>>,
+    key: Option<SnapKey>,
+}
+
+/// [`snapshot`] with cross-frame reuse: when vt reports no damage and every
+/// [`SnapKey`] input plus the resolved cursor state is unchanged, the
+/// previous frame's snapshot is returned untouched instead of re-resolving
+/// every visible cell.
+pub(crate) fn snapshot_reuse(
+    term: &mut vt::Terminal,
+    cache: &mut SnapCache,
+    colors: &Rc<Colors>,
+    search: Option<&SearchQuery>,
+    cell: CellSize,
+    image_cache: &mut HashMap<u64, Arc<RenderImage>>,
+    hover_link: Option<(usize, usize, usize)>,
+) -> Rc<Snapshot> {
+    let key = snapkey(term, colors, search, cell, hover_link);
+    if term.take_damage().is_empty() {
+        if let (Some(prev), Some(snap)) = (&cache.key, &cache.snap) {
+            // Cursor motion is not damage-tracked; compare its resolved state.
+            if keyeq(prev, &key) && snap.cursor == cursor_snap(term, colors) {
+                return snap.clone();
+            }
+        }
+    }
+    let snap = Rc::new(snapshot(term, colors, search, cell, image_cache, hover_link));
+    cache.key = Some(key);
+    cache.snap = Some(snap.clone());
+    snap
+}
+
 /// Capture visible rows as background runs and styled spans. Resolves all
 /// colors (theme palette + OSC 4 overrides + inverse + bold brightening +
 /// selection) so nothing after this needs the lock.
@@ -102,8 +201,8 @@ pub(crate) fn snapshot(
     hover_link: Option<(usize, usize, usize)>,
 ) -> Snapshot {
     term.set_cell_pixels(cell.width.round() as u16, cell.height.round() as u16);
-    // TODO(perf): use the damage to clip painting; for now drain it so the
-    // accumulator does not grow without bound.
+    // Reset the accumulator; `snapshot_reuse` consults the damage before
+    // deciding to call here, and a full rebuild covers whatever it said.
     let _ = term.take_damage();
 
     let rows = term.rows();
@@ -240,42 +339,7 @@ pub(crate) fn snapshot(
         }
     }
 
-    let cursor = (term.cursor_visible() && term.display_offset() == 0).then(|| {
-        let (row, col) = term.cursor_pos();
-        let cell = term.cell(row, col);
-        // Resolve the effective background under the cursor (inverse and
-        // selection included): full-screen programs paint their own cell
-        // backgrounds, so the cursor must keep contrast against those, not
-        // just the theme background.
-        let mut cell_bg = if cell.flags.contains(CellFlags::INVERSE) {
-            let bold = cell.flags.contains(CellFlags::BOLD);
-            colors::cell_rgb(cell.fg, colors.fg, bold, &colors.palette, ovr)
-        } else {
-            colors::cell_rgb(cell.bg, colors.bg, false, &colors.palette, ovr)
-        };
-        if selection
-            .as_ref()
-            .is_some_and(|sel| sel.contains(metrics::selection_point(row, col, offset)))
-        {
-            cell_bg = colors.selection_bg;
-        }
-        let color = term
-            .cursor_color()
-            .map(|(r, g, b)| Rgb::new(r, g, b))
-            .unwrap_or(colors.cursor);
-        let color = colors::enforce_contrast(color, cell_bg, colors::CURSOR_MIN_CONTRAST);
-        let text_color =
-            colors::enforce_contrast(colors.cursor_text, color, colors::CURSOR_MIN_CONTRAST);
-        CursorSnap {
-            row,
-            col,
-            style: term.cursor_style(),
-            wide: cell.is_wide(),
-            ch: cell.ch,
-            color,
-            text_color,
-        }
-    });
+    let cursor = cursor_snap(term, colors);
 
     let placements = term.images();
     let live: std::collections::HashSet<u64> = placements.iter().map(|p| p.id).collect();
@@ -306,6 +370,48 @@ pub(crate) fn snapshot(
         scrollback: term.grid().scrollback().len(),
         images,
     }
+}
+
+/// Resolve the cursor's drawable state, or `None` while hidden or scrolled
+/// back. The effective background under the cursor (inverse and selection
+/// included) matters: full-screen programs paint their own cell backgrounds,
+/// so the cursor must keep contrast against those, not just the theme
+/// background.
+pub(crate) fn cursor_snap(term: &vt::Terminal, colors: &Colors) -> Option<CursorSnap> {
+    if !term.cursor_visible() || term.display_offset() != 0 {
+        return None;
+    }
+    let ovr = |i: u8| term.palette_override(i);
+    let (row, col) = term.cursor_pos();
+    let cell = term.cell(row, col);
+    let mut cell_bg = if cell.flags.contains(CellFlags::INVERSE) {
+        let bold = cell.flags.contains(CellFlags::BOLD);
+        colors::cell_rgb(cell.fg, colors.fg, bold, &colors.palette, ovr)
+    } else {
+        colors::cell_rgb(cell.bg, colors.bg, false, &colors.palette, ovr)
+    };
+    if term
+        .selection()
+        .is_some_and(|sel| sel.contains(metrics::selection_point(row, col, term.display_offset())))
+    {
+        cell_bg = colors.selection_bg;
+    }
+    let color = term
+        .cursor_color()
+        .map(|(r, g, b)| Rgb::new(r, g, b))
+        .unwrap_or(colors.cursor);
+    let color = colors::enforce_contrast(color, cell_bg, colors::CURSOR_MIN_CONTRAST);
+    let text_color =
+        colors::enforce_contrast(colors.cursor_text, color, colors::CURSOR_MIN_CONTRAST);
+    Some(CursorSnap {
+        row,
+        col,
+        style: term.cursor_style(),
+        wide: cell.is_wide(),
+        ch: cell.ch,
+        color,
+        text_color,
+    })
 }
 
 /// Width of the scrollback indicator bar, in pixels.

@@ -253,9 +253,16 @@ impl TerminalView {
         self.write_paste(&text, cx);
     }
 
-    /// Place text on the system clipboard on behalf of an OSC 52 write, once
-    /// the configured policy has cleared it.
-    pub(crate) fn write_clipboard(&self, text: String, cx: &mut Context<Self>) {
+    /// Place text on a clipboard on behalf of an OSC 52 write, once the
+    /// configured policy has cleared it. `primary` targets the primary
+    /// selection where the platform has one (Linux); elsewhere such a write
+    /// is dropped rather than misrouted into the system clipboard.
+    pub(crate) fn write_clipboard(&self, text: String, primary: bool, cx: &mut Context<Self>) {
+        if primary {
+            #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+            cx.write_to_primary(ClipboardItem::new_string(text));
+            return;
+        }
         cx.write_to_clipboard(ClipboardItem::new_string(text));
     }
 

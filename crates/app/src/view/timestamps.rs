@@ -46,8 +46,11 @@ fn relative(secs_ago: u64) -> String {
 impl TerminalView {
     /// Keep `line_times` parallel to the scrollback, stamping rows that scrolled
     /// off since the last wakeup with the current time. Called from `wakeup`.
+    /// Also prunes annotations whose rows have been evicted, which must happen
+    /// whether or not the timestamp gutter is enabled.
     pub(crate) fn update_line_times(&mut self, cx: &gpui::App) {
-        if !enabled(cx) {
+        let on = enabled(cx);
+        if !on && self.annotations.is_empty() {
             // Reset so re-enabling starts fresh rather than back-dating history.
             self.committed_last = u64::MAX;
             self.line_times.clear();
@@ -56,6 +59,12 @@ impl TerminalView {
         let (committed, sb_len) = self
             .session
             .with_term(|t| (t.committed_lines(), t.grid().scrollback().len()));
+        self.prune_annotations(committed, sb_len);
+        if !on {
+            self.committed_last = u64::MAX;
+            self.line_times.clear();
+            return;
+        }
         if self.committed_last == u64::MAX {
             // First scan since enabling: existing scrollback has no real time.
             self.line_times = VecDeque::from(vec![0u64; sb_len]);

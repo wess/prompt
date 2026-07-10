@@ -217,6 +217,13 @@ pub fn moved(p: &Pointer, e: &MouseMoveEvent, window: &mut Window, _cx: &mut App
     p.state.borrow_mut().last_motion = Some(cell);
 }
 
+/// Whether releasing with the open-modifier held should open the link under
+/// the pointer: only inside this pane's bounds, only when the press began in
+/// this pane, and never at the end of a drag (which is a selection gesture).
+pub(crate) fn opens_link(contains: bool, pressed_here: bool, dragged: bool) -> bool {
+    contains && pressed_here && !dragged
+}
+
 pub fn up(p: &Pointer, e: &MouseUpEvent, window: &mut Window, cx: &mut App) {
     let m = mods(&e.modifiers);
 
@@ -232,7 +239,18 @@ pub fn up(p: &Pointer, e: &MouseUpEvent, window: &mut Window, cx: &mut App) {
         return;
     }
 
-    if e.button == gpui::MouseButton::Left && open_mod(&m) {
+    if e.button != gpui::MouseButton::Left {
+        return;
+    }
+
+    let (selecting, pressed_here, dragged) = {
+        let s = p.state.borrow();
+        (s.selecting, s.pressed.is_some(), s.dragged)
+    };
+
+    if open_mod(&m)
+        && opens_link(p.bounds.contains(&e.position), pressed_here, dragged)
+    {
         let (row, col) = cell_at(p, e.position);
         let url = p.session.with_term(|t| t.link_at(row, col).map(|l| l.url));
         if let Some(url) = url {
@@ -252,7 +270,7 @@ pub fn up(p: &Pointer, e: &MouseUpEvent, window: &mut Window, cx: &mut App) {
         }
     }
 
-    if e.button != gpui::MouseButton::Left || !p.state.borrow().selecting {
+    if !selecting {
         return;
     }
     let dragged = {

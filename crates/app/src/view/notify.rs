@@ -10,37 +10,107 @@ const REPLAY_TIMEOUT: Duration = Duration::from_secs(20);
 /// pacing cannot key off a fresh prompt.
 const REPLAY_FALLBACK_GAP: Duration = Duration::from_millis(150);
 
+/// Minimum gap between OS notifications posted by one pane. Each one spawns
+/// a helper process, so without a limit a misbehaving program could
+/// fork-bomb the desktop through OSC 9/777/99 or a chatty trigger.
+const NOTIFY_GAP: Duration = Duration::from_secs(1);
+
+/// Per-pane notification rate limiter: at most one every [`NOTIFY_GAP`];
+/// suppressed ones surface as a count on the next notification through.
+#[derive(Default)]
+pub(crate) struct NotifyLimit {
+    last: Option<Instant>,
+    dropped: u32,
+}
+
+impl NotifyLimit {
+    /// The body to post now (annotated with how many notifications were
+    /// dropped since the last one), or `None` to suppress this one.
+    pub(crate) fn admit(&mut self, now: Instant, body: &str) -> Option<String> {
+        if self.last.is_some_and(|t| now.duration_since(t) < NOTIFY_GAP) {
+            self.dropped += 1;
+            return None;
+        }
+        self.last = Some(now);
+        let out = if self.dropped > 0 {
+            format!("{body} (+{} dropped)", self.dropped)
+        } else {
+            body.to_string()
+        };
+        self.dropped = 0;
+        Some(out)
+    }
+}
+
+/// The stable-sequence range `[from, end)` of rows to trigger-scan, given
+/// the previous mark and the buffer's shape. Sequences follow vt's
+/// `committed_lines`: scrollback row `i` is `committed - sb_len + i`, live
+/// row `r` is `committed + r`. The final live row is excluded (it may still
+/// be mid-write) and rows already evicted are skipped.
+pub(crate) fn scanrange(hwm: u64, committed: u64, sb_len: usize, rows: usize) -> (u64, u64) {
+    let end = committed + (rows as u64).saturating_sub(1);
+    let from = hwm.max(committed.saturating_sub(sb_len as u64)).min(end);
+    (from, end)
+}
+
+/// Text of the row holding stable sequence `seq`, or `None` once evicted or
+/// past the live grid.
+fn seqrow(t: &vt::Terminal, seq: u64, committed: u64, sb_len: usize) -> Option<String> {
+    if seq >= committed {
+        let r = (seq - committed) as usize;
+        (r < t.rows()).then(|| t.grid().row(r).text())
+    } else {
+        let i = (seq + sb_len as u64).checked_sub(committed)?;
+        t.grid().scrollback().get(i as usize).map(|row| row.text())
+    }
+}
+
 impl TerminalView {
-    /// Scan output lines newly completed since the last wakeup against the
+    /// Scan output rows newly completed since the last wakeup against the
     /// configured regex triggers, firing a desktop notification per match.
-    /// `trigger_hwm == usize::MAX` marks the first scan, which only records the
-    /// high-water mark so pre-existing scrollback doesn't fire.
+    /// The mark lives in vt's monotonic `committed_lines` sequence space, so
+    /// it survives eviction and keeps advancing past the scrollback cap, and
+    /// only rows above the previous mark are materialized (never the whole
+    /// buffer). `trigger_hwm == u64::MAX` marks the first scan, which only
+    /// records the mark so pre-existing content doesn't fire.
     pub(crate) fn scan_triggers(&mut self, cx: &mut Context<Self>) {
         let Some(triggers) = crate::trigger::current(cx) else {
-            self.trigger_hwm = usize::MAX;
+            self.trigger_hwm = u64::MAX;
             return;
         };
         let start = self.trigger_hwm;
-        let (fires, total) = self.session.with_term(|t| {
-            let lines = t.text_lines();
-            let total = lines.len();
-            // Skip the final line: it may still be mid-write.
-            let end = total.saturating_sub(1);
+        let (fires, mark) = self.session.with_term(|t| {
+            // The alternate screen has no scrollback and its own committed
+            // counter; hold the mark and resume on the primary screen.
+            if t.is_alt_screen() {
+                return (Vec::new(), start);
+            }
+            let committed = t.committed_lines();
+            let sb_len = t.grid().scrollback().len();
+            let (from, end) = scanrange(start, committed, sb_len, t.rows());
             let mut fires = Vec::new();
-            if start != usize::MAX {
-                for (idx, text, _) in &lines {
-                    if *idx >= start && *idx < end {
-                        if let Some(hit) = triggers.check(text) {
-                            fires.push(hit);
-                        }
+            if start != u64::MAX {
+                for seq in from..end {
+                    let Some(text) = seqrow(t, seq, committed, sb_len) else {
+                        continue;
+                    };
+                    if let Some(hit) = triggers.check(&text) {
+                        fires.push(hit);
                     }
                 }
             }
-            (fires, total)
+            (fires, if start == u64::MAX { end } else { end.max(start) })
         });
-        self.trigger_hwm = total.saturating_sub(1);
+        self.trigger_hwm = mark;
         for (title, body) in fires {
-            post_os_notification(&title, &body);
+            self.post_notification(&title, &body);
+        }
+    }
+
+    /// Post a desktop notification through this pane's rate limiter.
+    pub(crate) fn post_notification(&mut self, title: &str, body: &str) {
+        if let Some(body) = self.notify_limit.admit(Instant::now(), body) {
+            post_os_notification(title, &body);
         }
     }
 
@@ -124,7 +194,14 @@ impl TerminalView {
             return;
         };
         let out = cast.with_extension(format);
-        let exe = std::env::current_exe().unwrap_or_else(|_| std::path::PathBuf::from("prompt"));
+        let Ok(exe) = std::env::current_exe() else {
+            self.assist = Some(Assist::Message {
+                title: "Recording export failed".to_string(),
+                body: "could not locate the running binary".to_string(),
+            });
+            cx.notify();
+            return;
+        };
         let out_display = out.display().to_string();
         let name = cast
             .file_name()
@@ -282,7 +359,7 @@ fn recording_target() -> Option<(std::path::PathBuf, u64)> {
         .as_secs();
     let dir = config::default_path()?.parent()?.join("recordings");
     std::fs::create_dir_all(&dir).ok()?;
-    Some((dir.join(format!("prompt-{ts}.cast")), ts))
+    Some((dir.join(format!("sinclair-{ts}.cast")), ts))
 }
 
 /// The newest `.cast` under the recordings directory, if any.
@@ -303,3 +380,7 @@ fn latest_recording() -> Option<std::path::PathBuf> {
     }
     newest.map(|(_, path)| path)
 }
+
+#[cfg(test)]
+#[path = "../../tests/notify.rs"]
+mod tests;

@@ -71,3 +71,21 @@ fn extract_json_balances_nested_braces() {
     assert_eq!(extract_json(reply).unwrap(), "{\"a\":{\"b\":1},\"c\":2}");
     assert!(extract_json("no json here").is_none());
 }
+
+#[test]
+fn launch_member_quotes_hostile_values() {
+    let cmd = launch_member("x'; rm -rf /;'", "worker role", "$(whoami)", true, false);
+    // Every interpolated value stays a single quoted shell token.
+    assert!(cmd.contains(" launch 'x'\\''; rm -rf /;'\\'''"), "member not quoted: {cmd}");
+    assert!(cmd.contains("--role 'worker role'"), "role not quoted: {cmd}");
+    assert!(cmd.contains("--agent '$(whoami)'"), "agent not quoted: {cmd}");
+    assert!(cmd.contains(" --lead"));
+}
+
+#[test]
+fn launch_member_omits_empty_agent_flag() {
+    let cmd = launch_member("lead", "supervisor", "  ", false, true);
+    assert!(!cmd.contains("--agent"));
+    assert!(cmd.contains("--optimize"));
+    assert!(cmd.contains(" launch 'lead' --role 'supervisor'"));
+}

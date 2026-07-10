@@ -38,8 +38,8 @@ pub struct SearchQuery {
     pub query: String,
     pub current: usize,
     /// Precomputed (and view-cached) matches, so the renderer never re-scans
-    /// the buffer itself.
-    pub matches: Vec<vt::Match>,
+    /// the buffer itself. Shared by `Rc`: cloning a query is O(1).
+    pub matches: Rc<Vec<vt::Match>>,
 }
 
 pub struct TerminalElement {
@@ -63,6 +63,9 @@ pub struct TerminalElement {
     /// GPU textures for decoded sixel images, keyed by placement id and shared
     /// with the view so they survive across frames.
     image_cache: Rc<RefCell<HashMap<u64, Arc<RenderImage>>>>,
+    /// Previous frame's snapshot plus the inputs it was built from, shared
+    /// with the view; an undamaged, input-identical frame reuses it.
+    snap_cache: Rc<RefCell<SnapCache>>,
 }
 
 impl TerminalElement {
@@ -83,6 +86,7 @@ impl TerminalElement {
         search: Option<SearchQuery>,
         ghost: Option<String>,
         image_cache: Rc<RefCell<HashMap<u64, Arc<RenderImage>>>>,
+        snap_cache: Rc<RefCell<SnapCache>>,
     ) -> Self {
         Self {
             session,
@@ -100,6 +104,7 @@ impl TerminalElement {
             search,
             ghost,
             image_cache,
+            snap_cache,
         }
     }
 }
@@ -173,14 +178,30 @@ impl Element for TerminalElement {
 
         let current = self.session.with_term(|term| (term.cols(), term.rows()));
         if current != (cols, rows) {
-            let _ = self.session.resize(cols, rows);
+            // Carry the cell box so TIOCSWINSZ reports real pixel sizes to
+            // pixel-addressing programs (kitty graphics, sixel).
+            let _ = self.session.resize_px(
+                cols,
+                rows,
+                self.cell.width.round() as u16,
+                self.cell.height.round() as u16,
+            );
         }
 
         let hover_link = self.mouse.borrow().hover_link;
         let snap = {
-            let mut cache = self.image_cache.borrow_mut();
+            let mut images = self.image_cache.borrow_mut();
+            let mut cache = self.snap_cache.borrow_mut();
             self.session.with_term(|term| {
-                snapshot(term, &self.colors, self.search.as_ref(), self.cell, &mut cache, hover_link)
+                snapshot_reuse(
+                    term,
+                    &mut cache,
+                    &self.colors,
+                    self.search.as_ref(),
+                    self.cell,
+                    &mut images,
+                    hover_link,
+                )
             })
         };
 

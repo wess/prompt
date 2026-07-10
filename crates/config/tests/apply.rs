@@ -147,3 +147,29 @@ clipboard-write = ask
         assert!(o.font_family.is_empty());
         assert_eq!(o.primary_font(), "Menlo");
     }
+
+#[test]
+fn visual_bell_parses_and_resets() {
+    let (o, diags) = parse_str("visual-bell = true\n");
+    assert!(diags.is_empty(), "{diags:?}");
+    assert!(o.visual_bell);
+    let (o, diags) = parse_str("visual-bell = true\nvisual-bell =\n");
+    assert!(diags.is_empty());
+    assert!(!o.visual_bell);
+    let (_, diags) = parse_str("visual-bell = sometimes\n");
+    assert_eq!(diags.len(), 1);
+}
+
+#[test]
+fn word_chars_parses_rejects_whitespace_and_resets() {
+    let (o, diags) = parse_str("word-chars = /:@-\n");
+    assert!(diags.is_empty(), "{diags:?}");
+    assert_eq!(o.word_chars, "/:@-");
+    // Whitespace would glue every word together; refuse it with a diagnostic.
+    let (o, diags) = parse_str("word-chars = a b\n");
+    assert_eq!(diags.len(), 1);
+    assert_eq!(o.word_chars, Options::default().word_chars);
+    let (o, diags) = parse_str("word-chars = /:@\nword-chars =\n");
+    assert!(diags.is_empty());
+    assert_eq!(o.word_chars, "/-_.~");
+}

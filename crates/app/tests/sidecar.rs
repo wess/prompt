@@ -10,10 +10,29 @@ fn mint_token_is_nonempty_hex() {
 
 #[test]
 fn reserved_port_is_free_for_the_child() {
-    let port = reserve_port().unwrap();
+    let reservation = reserve_port().unwrap();
+    let port = reservation.local_addr().unwrap().port();
     assert_ne!(port, 0);
-    // The listener was dropped, so the child can bind the port immediately.
+    // Once the reservation is dropped, the child can bind the port immediately.
+    drop(reservation);
     std::net::TcpListener::bind(("127.0.0.1", port)).unwrap();
+}
+
+#[test]
+fn wait_ready_fails_when_the_port_is_squatted_and_the_child_exits() {
+    // Someone else owns the port; our child (per the sidecar contract) exits
+    // when it can't bind. The boot must fail rather than trust the squatter.
+    let squatter = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
+    let port = squatter.local_addr().unwrap().port();
+    let mut child = std::process::Command::new("sh")
+        .args(["-c", "sleep 0.2; exit 1"])
+        .spawn()
+        .unwrap();
+    let err = wait_ready(&mut child, port).unwrap_err();
+    assert!(
+        err.contains("something else may be listening") || err.contains("exited"),
+        "{err}"
+    );
 }
 
 #[test]

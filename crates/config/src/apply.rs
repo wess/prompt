@@ -70,6 +70,22 @@ pub fn apply(opts: &mut Options, d: &Options, key: &str, val: &str) -> Result<()
                 value::parse_bool(val).ok_or_else(|| bad("boolean", val))?
             };
         }
+        "visual-bell" => {
+            opts.visual_bell = if empty {
+                d.visual_bell
+            } else {
+                value::parse_bool(val).ok_or_else(|| bad("boolean", val))?
+            };
+        }
+        "word-chars" => {
+            if empty {
+                opts.word_chars = d.word_chars.clone();
+            } else if val.chars().any(char::is_whitespace) {
+                return Err(bad("word characters (no whitespace)", val));
+            } else {
+                opts.word_chars = val.to_string();
+            }
+        }
         "smart-select" => {
             opts.smart_select = if empty {
                 d.smart_select

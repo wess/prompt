@@ -283,6 +283,13 @@ pub struct Options {
     pub theme_dark: String,
     /// File key: `timestamps` - show a per-line timestamp gutter in the terminal.
     pub timestamps: bool,
+    /// File key: `visual-bell` - flash the pane briefly when BEL arrives.
+    /// Off by default.
+    pub visual_bell: bool,
+    /// File key: `word-chars` - characters (beyond alphanumerics) treated as
+    /// part of a word by double-click and word-motion selection. Defaults to
+    /// `/-_.~`.
+    pub word_chars: String,
     /// File key: `smart-select` - double-click selects a whole URL / path /
     /// email / hash rather than a single whitespace word. On by default.
     pub smart_select: bool,
@@ -426,6 +433,8 @@ impl Default for Options {
             theme_light: String::new(),
             theme_dark: String::new(),
             timestamps: false,
+            visual_bell: false,
+            word_chars: "/-_.~".to_string(),
             smart_select: true,
             redact: Vec::new(),
             background_opacity: 1.0,

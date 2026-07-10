@@ -26,6 +26,7 @@ mod hints;
 mod keys;
 mod mouse;
 mod notify;
+mod paneopts;
 mod scroll;
 mod search;
 mod suggest;
@@ -37,6 +38,9 @@ pub use timestamps::install as install_timestamps;
 /// Maximum time a frame is withheld for synchronized output before it is
 /// painted anyway, so a stuck ?2026 cannot freeze the view.
 const SYNC_TIMEOUT: Duration = Duration::from_millis(150);
+
+/// How long the visual bell flash stays on screen.
+const BELL_FLASH: Duration = Duration::from_millis(120);
 
 /// Pane events the workspace root reacts to.
 #[derive(Debug, Clone, PartialEq)]
@@ -165,7 +169,8 @@ struct Search {
     cached_query: Option<String>,
     /// Cached match list, reused across frames until the query changes or new
     /// output arrives, so the whole buffer isn't re-scanned every repaint.
-    results: Vec<vt::Match>,
+    /// Shared by `Rc`, so handing it to the renderer never deep-copies it.
+    results: Rc<Vec<vt::Match>>,
     /// Set when new output may have changed the matches.
     dirty: bool,
 }
@@ -185,6 +190,8 @@ enum Assist {
     },
     Compose {
         edit: guise::TextEdit,
+        /// The last submitted request matched nothing; shown until edited.
+        miss: bool,
     },
     Message {
         title: String,
@@ -196,6 +203,8 @@ enum Assist {
     },
     ClipboardWrite {
         text: String,
+        /// OSC 52 aimed at the primary selection rather than the clipboard.
+        primary: bool,
     },
 }
 
@@ -252,6 +261,9 @@ pub struct TerminalView {
     mouse: Rc<RefCell<MouseState>>,
     /// Decoded sixel textures, keyed by placement id; persists across frames.
     image_cache: Rc<RefCell<std::collections::HashMap<u64, Arc<gpui::RenderImage>>>>,
+    /// Previous frame's render snapshot, reused while vt reports no damage
+    /// and every snapshot input is unchanged.
+    snap_cache: Rc<RefCell<crate::element::SnapCache>>,
     focus: FocusHandle,
     /// Last vt title (OSC 0/2); `None` until the child sets one.
     title: Option<String>,
@@ -261,7 +273,8 @@ pub struct TerminalView {
     fallback: String,
     /// When set, keystrokes and pastes are not forwarded to the pty.
     read_only: bool,
-    /// Set when BEL arrives. TODO: visual bell.
+    /// Set while the visual bell flashes (BEL arrived with `visual-bell` on);
+    /// a short timer clears it.
     pub bell: bool,
     /// Set when this pane posts a desktop notification (OSC 9/777/99) while
     /// unfocused; drives the tab/pane attention indicator. Cleared on focus.
@@ -283,9 +296,13 @@ pub struct TerminalView {
     hints: Option<hints::Hints>,
     /// Active copy mode (vi-style keyboard selection), if open.
     copy_mode: Option<copymode::CopyMode>,
-    /// High-water global line index already scanned for output triggers;
-    /// `usize::MAX` until the first scan (which skips pre-existing content).
-    trigger_hwm: usize,
+    /// High-water stable line sequence (vt `committed_lines` space) already
+    /// scanned for output triggers; `u64::MAX` until the first scan (which
+    /// skips pre-existing content).
+    trigger_hwm: u64,
+    /// Rate limiter for this pane's desktop notifications (OSC 9/777/99 and
+    /// output triggers), so bursts can't spawn unbounded helper processes.
+    notify_limit: notify::NotifyLimit,
     /// Capture times (epoch secs) parallel to scrollback, for the timestamp
     /// gutter; kept aligned via vt's `committed_lines`.
     line_times: std::collections::VecDeque<u64>,
@@ -326,6 +343,8 @@ impl TerminalView {
         cx: &mut Context<Self>,
     ) -> Self {
         session.with_term(|term| term.set_report_colors(colors::report_colors(&colors)));
+        let chars = paneopts::word_chars(cx);
+        session.with_term(|term| term.set_word_chars(&chars));
         let focus = cx.focus_handle();
         let on_in = cx.weak_entity();
         let sub_in = window.on_focus_in(&focus, cx, move |_window, cx| {
@@ -375,6 +394,7 @@ impl TerminalView {
             grid_bounds: gpui::Bounds::default(),
             mouse: Rc::new(RefCell::new(MouseState::default())),
             image_cache: Rc::new(RefCell::new(std::collections::HashMap::new())),
+            snap_cache: Rc::new(RefCell::new(crate::element::SnapCache::default())),
             focus,
             title: None,
             override_title: None,
@@ -388,7 +408,8 @@ impl TerminalView {
             search: None,
             hints: None,
             copy_mode: None,
-            trigger_hwm: usize::MAX,
+            trigger_hwm: u64::MAX,
+            notify_limit: notify::NotifyLimit::default(),
             line_times: std::collections::VecDeque::new(),
             committed_last: u64::MAX,
             annotations: std::collections::HashMap::new(),
@@ -460,8 +481,14 @@ impl TerminalView {
         self.clipboard_write = a.clipboard_write;
         self.unfocused_split_opacity = a.unfocused_split_opacity;
         self.suggest_cfg = a.suggest;
-        self.session
-            .with_term(|term| term.set_report_colors(colors::report_colors(&self.colors)));
+        self.session.with_term(|term| {
+            term.set_report_colors(colors::report_colors(&self.colors));
+        });
+        // A reload delivered a fresh appearance; pick up the pane options
+        // that ride outside it in the same pass.
+        paneopts::refresh(cx);
+        let chars = paneopts::word_chars(cx);
+        self.session.with_term(|term| term.set_word_chars(&chars));
         cx.notify();
     }
 
@@ -486,12 +513,12 @@ impl TerminalView {
                 cx.emit(ViewEvent::Trigger(TriggerEvent::TitleChanged(title)));
             }
             Event::Bell => {
-                self.bell = true;
+                self.ring_bell(cx);
                 cx.emit(ViewEvent::Trigger(TriggerEvent::Bell));
             }
             Event::Notify { title, body } => {
                 let heading = title.clone().unwrap_or_else(|| self.title().to_string());
-                post_os_notification(&heading, &body);
+                self.post_notification(&heading, &body);
                 if !self.focused {
                     self.attention = true;
                     cx.emit(ViewEvent::Attention);
@@ -499,16 +526,20 @@ impl TerminalView {
                 }
                 cx.emit(ViewEvent::Trigger(TriggerEvent::Notify { title, body }));
             }
-            Event::Clipboard { data, .. } => {
+            Event::Clipboard { kind, data } => {
                 let text = String::from_utf8_lossy(&data).into_owned();
+                // OSC 52 can aim at the primary selection (`p`) rather than
+                // the clipboard; honor that instead of clobbering the system
+                // clipboard.
+                let primary = kind.contains('p') && !kind.contains('c');
                 match self.clipboard_write {
                     config::ClipboardAccess::Deny => {}
                     config::ClipboardAccess::Ask => {
                         self.search = None;
-                        self.assist = Some(Assist::ClipboardWrite { text });
+                        self.assist = Some(Assist::ClipboardWrite { text, primary });
                         cx.notify();
                     }
-                    config::ClipboardAccess::Allow => self.write_clipboard(text, cx),
+                    config::ClipboardAccess::Allow => self.write_clipboard(text, primary, cx),
                 }
             }
             Event::CommandFinished(code) => {
@@ -579,6 +610,42 @@ impl TerminalView {
             cx.emit(ViewEvent::Attention);
             cx.notify();
         }
+    }
+
+    /// Flash the pane briefly on BEL when `visual-bell` is enabled.
+    fn ring_bell(&mut self, cx: &mut Context<Self>) {
+        if self.bell || !paneopts::visual_bell(cx) {
+            return;
+        }
+        self.bell = true;
+        cx.notify();
+        let timer = cx.background_executor().timer(BELL_FLASH);
+        cx.spawn(async move |this, cx| {
+            timer.await;
+            let _ = this.update(cx, |this, cx| {
+                this.bell = false;
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    /// A subtle whole-pane flash while the visual bell is ringing.
+    fn bell_overlay(&self) -> Option<AnyElement> {
+        if !self.bell {
+            return None;
+        }
+        let mut flash = colors::hsla(self.colors.fg);
+        flash.a = 0.12;
+        Some(
+            div()
+                .absolute()
+                .top_0()
+                .left_0()
+                .size_full()
+                .bg(flash)
+                .into_any_element(),
+        )
     }
 }
 
@@ -667,7 +734,9 @@ impl Render for TerminalView {
                 query,
                 self.suggestion_ghost(),
                 self.image_cache.clone(),
+                self.snap_cache.clone(),
             ))
+            .children(self.bell_overlay())
             .children(self.badge_overlay(cx))
             .children(self.suggestion_popup_overlay(cx))
             .children(self.timestamps_overlay(cx))

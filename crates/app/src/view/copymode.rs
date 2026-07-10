@@ -9,11 +9,18 @@ use gpui::{div, px, AnyElement, ClipboardItem, Context, IntoElement, Styled};
 use super::TerminalView;
 use crate::colors;
 
-/// Active copy-mode cursor.
+/// Active copy-mode cursor. `line` is a global row index (0 = oldest
+/// scrollback row, `sb + rows - 1` = bottom live row).
 pub(crate) struct CopyMode {
     line: isize,
     col: usize,
     selecting: bool,
+}
+
+/// Map a global row index onto vt's selection line scheme, where 0 is the
+/// top live row and scrollback rows are negative (see `vt::selection`).
+pub(crate) fn vtline(global: isize, scrollback: usize) -> isize {
+    global - scrollback as isize
 }
 
 impl TerminalView {
@@ -97,7 +104,10 @@ impl TerminalView {
         }
 
         self.session.with_term(|t| {
-            let point = vt::Point::new(line, col);
+            // The cursor lives in global-row space; vt selection points are
+            // live-grid relative, so convert exactly once at this boundary.
+            let sb = t.grid().scrollback().len();
+            let point = vt::Point::new(vtline(line, sb), col);
             if selecting {
                 if t.selection().is_none() {
                     t.start_selection(vt::SelectionMode::Cell, point);
@@ -108,7 +118,6 @@ impl TerminalView {
                 t.clear_selection();
             }
             // Scroll so the cursor line stays on screen.
-            let sb = t.grid().scrollback().len();
             let base = sb.saturating_sub(t.display_offset()) as isize;
             let vr = line - base;
             if vr < 0 {
@@ -151,3 +160,7 @@ impl TerminalView {
         )
     }
 }
+
+#[cfg(test)]
+#[path = "../../tests/copymode.rs"]
+mod tests;
