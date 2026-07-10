@@ -44,30 +44,6 @@ impl Engine {
             .find(|e| on_path(e.binary()))
     }
 
-    /// Argv that probes whether the engine daemon is up and responding
-    /// (`docker info`). A zero exit status means running.
-    pub fn info_argv(self) -> Vec<String> {
-        vec![
-            self.binary().to_string(),
-            "info".to_string(),
-            "--format".to_string(),
-            "{{.ServerVersion}}".to_string(),
-        ]
-    }
-
-    /// True when the engine binary exists *and* its daemon answers. Runs
-    /// `info_argv` and checks the exit status. This shells out, so it is not
-    /// unit-tested; callers should treat it as a best-effort probe.
-    pub fn running(self) -> bool {
-        std::process::Command::new(self.binary())
-            .args(&self.info_argv()[1..])
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .status()
-            .map(|s| s.success())
-            .unwrap_or(false)
-    }
-
     /// Resolve the engine to use: an explicit `pref` when it names one that is
     /// installed, otherwise autodetect. `auto`/unknown prefs fall back to
     /// detection. Returns `None` when no engine is available.

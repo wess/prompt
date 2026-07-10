@@ -213,6 +213,14 @@ fn build_runtime(raw: RawRuntime, path: &Path, diags: &mut Vec<Diagnostic>) -> O
             }
         },
         RuntimeKind::Wasm => match wasm {
+            Some(wasm) if !contained(&wasm) => {
+                diags.push(diag(
+                    path,
+                    "the `wasm` module path must stay inside the plugin folder \
+                     (no absolute paths or `..`)",
+                ));
+                None
+            }
             Some(wasm) => Some(Runtime {
                 kind,
                 command: command.unwrap_or_default(),
@@ -274,6 +282,17 @@ fn build_webview(raw: RawWebview, id: &str, name: &str, path: &Path, diags: &mut
             return None;
         }
     };
+    if let WebviewSource::Entry(entry) = &source {
+        // The host joins `entry` onto the plugin dir; keep it inside.
+        if !contained(entry) {
+            diags.push(diag(
+                path,
+                "the webview `entry` must stay inside the plugin folder \
+                 (no absolute paths or `..`)",
+            ));
+            return None;
+        }
+    }
     Some(Webview {
         id: wid,
         title: raw.title.filter(nonblank).unwrap_or_else(|| name.to_string()),
@@ -411,6 +430,15 @@ fn validid(s: &str) -> bool {
     !s.is_empty()
         && s.bytes()
             .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'.' || b == b'-')
+}
+
+/// A manifest file path the host will join onto the plugin dir: it must be
+/// relative and free of `..`, so it can't escape the plugin's own folder.
+fn contained(path: &str) -> bool {
+    use std::path::Component;
+    Path::new(path).components().all(|c| {
+        !matches!(c, Component::RootDir | Component::Prefix(_) | Component::ParentDir)
+    })
 }
 
 fn diag(path: &Path, message: &str) -> Diagnostic {

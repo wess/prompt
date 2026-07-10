@@ -5,9 +5,7 @@ pub mod context;
 pub mod model;
 pub mod safety;
 pub mod suggest;
-pub mod task;
 
-pub use context::{blocktext, lastblock, search, Block, Line};
-pub use model::{compose, explain};
+pub use context::{lastblock, search, Block, Line};
+pub use model::{compose, compose_match, explain};
 pub use safety::{analyze, PasteRisk, RiskLevel};
-pub use task::{Answer, Request};

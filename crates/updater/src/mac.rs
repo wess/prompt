@@ -45,23 +45,60 @@ pub(crate) fn install(
 
     // rsync the mounted bundle's *contents* (trailing slash) onto the
     // installed bundle; --delete drops files the new version no longer ships.
-    // `Icon?` is the dmg's custom-icon file (`Icon\r`), not part of the app.
+    // --delay-updates stages every changed file inside the bundle (per-dir
+    // `.~tmp~` folders) and promotes it by rename only at the end, so a sync
+    // that dies partway leaves the old files intact instead of a mixed bundle
+    // with a broken signature. `Icon?` is the dmg's custom-icon file
+    // (`Icon\r`), not part of the app.
     let src = app_in(&mount)?;
     let mut contents = std::ffi::OsString::from(src);
     contents.push("/");
     let synced = Command::new("rsync")
-        .args(["-a", "--delete", "--exclude", "Icon?"])
+        .args(["-a", "--delete", "--delay-updates", "--exclude", "Icon?"])
         .arg(&contents)
         .arg(app)
         .status()
         .map_err(|e| format!("rsync: {e}"))?;
     if !synced.success() {
+        scrub_staging(app);
         return Err("could not copy the update into place".to_string());
+    }
+
+    // The bundle must come out of the sync exactly as it was signed —
+    // Gatekeeper can kill the next launch over a broken signature, so treat
+    // a verification failure as a failed install rather than relaunching.
+    let verified = Command::new("codesign")
+        .args(["--verify", "--deep"])
+        .arg(app)
+        .status()
+        .map_err(|e| format!("codesign: {e}"))?;
+    if !verified.success() {
+        return Err("the updated app failed signature verification".to_string());
     }
 
     drop(unmount);
     let _ = std::fs::remove_dir_all(&dir);
     Ok(crate::Relaunch::Current)
+}
+
+/// Remove the `.~tmp~` staging folders `rsync --delay-updates` leaves under
+/// `dir` when a sync fails partway.
+#[cfg(target_os = "macos")]
+fn scrub_staging(dir: &std::path::Path) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !path.is_dir() {
+            continue;
+        }
+        if path.file_name().is_some_and(|n| n == ".~tmp~") {
+            let _ = std::fs::remove_dir_all(&path);
+        } else {
+            scrub_staging(&path);
+        }
+    }
 }
 
 /// The first `.app` bundle inside `dir` (the mounted update image).

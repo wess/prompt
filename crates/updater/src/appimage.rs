@@ -13,18 +13,26 @@ pub(crate) fn install(release: &Release, target: &Path) -> Result<Relaunch, Stri
     // not cross filesystems (`/tmp` is often tmpfs), or it fails with EXDEV.
     let name = target.file_name().and_then(|n| n.to_str()).unwrap_or("Sinclair.AppImage");
     let staged = target.with_file_name(format!(".{name}.update"));
-    fetch::file(url, &staged)?;
+    if let Err(e) = fetch::file(url, &staged) {
+        // A dead download must not strand a partial image next to the app.
+        let _ = std::fs::remove_file(&staged);
+        return Err(e);
+    }
     promote(&staged, target)
 }
 
-/// Mark `staged` executable and rename it over `target`.
+/// Mark `staged` executable and rename it over `target`, dropping the staged
+/// file if the rename fails.
 fn promote(staged: &Path, target: &Path) -> Result<Relaunch, String> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
         let _ = std::fs::set_permissions(staged, std::fs::Permissions::from_mode(0o755));
     }
-    std::fs::rename(staged, target).map_err(|e| format!("replace AppImage: {e}"))?;
+    if let Err(e) = std::fs::rename(staged, target) {
+        let _ = std::fs::remove_file(staged);
+        return Err(format!("replace AppImage: {e}"));
+    }
     Ok(Relaunch::Binary(target.to_path_buf()))
 }
 

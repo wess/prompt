@@ -29,6 +29,30 @@ fn notifications_get_no_reply() {
 }
 
 #[test]
+fn malformed_json_gets_a_parse_error() {
+    let reply: Value = serde_json::from_str(
+        &reply_for("{not json", &tools(), &json!({}), &handle).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(reply["error"]["code"], -32700);
+    assert_eq!(reply["id"], Value::Null);
+}
+
+#[test]
+fn idless_request_gets_invalid_request_not_silence() {
+    let msg = json!({ "jsonrpc": "2.0", "method": "tools/list" });
+    let reply: Value =
+        serde_json::from_str(&dispatch(&msg, &tools(), &json!({}), &handle).unwrap()).unwrap();
+    assert_eq!(reply["error"]["code"], -32600);
+    assert_eq!(reply["id"], Value::Null);
+}
+
+#[test]
+fn blank_lines_get_no_reply() {
+    assert!(reply_for("   ", &tools(), &json!({}), &handle).is_none());
+}
+
+#[test]
 fn tools_list_returns_registered_tools() {
     let msg = json!({ "jsonrpc": "2.0", "id": 2, "method": "tools/list" });
     let reply: Value =

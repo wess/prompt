@@ -46,8 +46,13 @@ impl Installed {
 
     /// Load the record, or an empty one if absent/unparsable (never fails).
     pub fn load() -> Self {
-        Self::path()
-            .and_then(|p| std::fs::read_to_string(p).ok())
+        Self::path().map(|p| Self::load_from(&p)).unwrap_or_default()
+    }
+
+    /// Load the record at `path`; absent/unparsable yields an empty one.
+    pub fn load_from(path: &std::path::Path) -> Self {
+        std::fs::read_to_string(path)
+            .ok()
             .and_then(|text| toml::from_str(&text).ok())
             .unwrap_or_default()
     }
@@ -57,6 +62,11 @@ impl Installed {
         let Some(path) = Self::path() else {
             return Ok(());
         };
+        self.save_to(&path)
+    }
+
+    /// Persist the record at `path`, creating parent directories as needed.
+    pub fn save_to(&self, path: &std::path::Path) -> std::io::Result<()> {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
@@ -97,14 +107,16 @@ impl Installed {
     }
 
     /// Record an install (or update): version, source, and the granted caps the
-    /// user consented to.
+    /// user consented to. An update keeps the plugin's enabled/disabled state —
+    /// re-enabling is its own explicit act ([`set_enabled`](Self::set_enabled)).
     pub fn record(&mut self, id: &str, version: &str, source: &str, granted: Vec<String>) {
+        let enabled = self.is_enabled(id);
         self.plugins.insert(
             id.to_string(),
             Entry {
                 version: version.to_string(),
                 source: source.to_string(),
-                enabled: true,
+                enabled,
                 granted,
             },
         );

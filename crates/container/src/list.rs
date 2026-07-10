@@ -1,8 +1,8 @@
 //! Listing and attaching to already-running containers.
 //!
 //! `ps_argv` asks the engine for running containers in a stable, parseable
-//! format; `parse_ps` turns that into [`Running`] rows; `exec_argv` builds the
-//! interactive `exec` invocation used to attach a tab to one of them.
+//! format; `parse_ps` turns that into [`Running`] rows; `attach_argv` builds
+//! the interactive `exec` invocation used to attach a tab to one of them.
 
 use crate::engine::Engine;
 
@@ -55,24 +55,6 @@ pub fn parse_ps(output: &str) -> Vec<Running> {
             })
         })
         .collect()
-}
-
-/// Argv that attaches an interactive shell to an existing container
-/// (`engine exec -it <id> <command...>`).
-pub fn exec_argv(engine: Engine, container: &str, command: &str) -> Vec<String> {
-    let mut argv = vec![
-        engine.binary().to_string(),
-        "exec".to_string(),
-        "-it".to_string(),
-        container.to_string(),
-    ];
-    let words: Vec<String> = command.split_whitespace().map(str::to_string).collect();
-    if words.is_empty() {
-        argv.push("sh".to_string());
-    } else {
-        argv.extend(words);
-    }
-    argv
 }
 
 /// Argv that attaches an interactive shell to a container, preferring `bash`

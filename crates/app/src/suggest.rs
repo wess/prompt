@@ -99,10 +99,7 @@ pub fn candidates(
 
 /// The ghost suffix (past the cursor) for `input`, or `None`.
 pub fn ghost(candidates: &[String], input: &str) -> Option<String> {
-    candidates
-        .first()
-        .filter(|c| c.len() > input.len() && c.starts_with(input))
-        .map(|c| c[input.len()..].to_string())
+    assist::suggest::ghost(input, candidates)
 }
 
 /// Path completions: complete the last whitespace token of `input` against the

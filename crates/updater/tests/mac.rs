@@ -23,3 +23,19 @@ fn empty_image_is_an_error() {
     assert!(app_in(&dir).is_err());
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn scrub_removes_only_rsync_staging_dirs() {
+    let dir = scratch("scrub");
+    std::fs::create_dir_all(dir.join("Contents/MacOS/.~tmp~")).unwrap();
+    std::fs::write(dir.join("Contents/MacOS/.~tmp~/sinclair"), b"half").unwrap();
+    std::fs::create_dir_all(dir.join("Contents/.~tmp~")).unwrap();
+    std::fs::write(dir.join("Contents/Info.plist"), b"keep").unwrap();
+
+    scrub_staging(&dir);
+
+    assert!(!dir.join("Contents/MacOS/.~tmp~").exists());
+    assert!(!dir.join("Contents/.~tmp~").exists());
+    assert_eq!(std::fs::read(dir.join("Contents/Info.plist")).unwrap(), b"keep");
+    let _ = std::fs::remove_dir_all(&dir);
+}

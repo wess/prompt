@@ -21,14 +21,7 @@ pub fn serve(tools: Vec<Tool>, handler: &Handler<'_>) {
 
     for line in stdin.lock().lines() {
         let Ok(line) = line else { break };
-        let trimmed = line.trim();
-        if trimmed.is_empty() {
-            continue;
-        }
-        let Ok(msg) = serde_json::from_str::<Value>(trimmed) else {
-            continue;
-        };
-        if let Some(reply) = dispatch(&msg, &tools, &server_info, handler) {
+        if let Some(reply) = reply_for(&line, &tools, &server_info, handler) {
             if writeln!(stdout, "{reply}").and_then(|()| stdout.flush()).is_err() {
                 break;
             }
@@ -36,10 +29,31 @@ pub fn serve(tools: Vec<Tool>, handler: &Handler<'_>) {
     }
 }
 
-/// Produce the reply for one message, or `None` for notifications (no id).
+/// The reply owed for one input line, or `None` when it warrants none (blank
+/// lines and notifications). Every other line gets an answer — a client that
+/// sent a broken request is waiting on one.
+fn reply_for(line: &str, tools: &[Tool], server_info: &Value, handler: &Handler<'_>) -> Option<String> {
+    let trimmed = line.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let Ok(msg) = serde_json::from_str::<Value>(trimmed) else {
+        return Some(err(&Value::Null, -32700, "parse error"));
+    };
+    dispatch(&msg, tools, server_info, handler)
+}
+
+/// Produce the reply for one message, or `None` for notifications.
 fn dispatch(msg: &Value, tools: &[Tool], server_info: &Value, handler: &Handler<'_>) -> Option<String> {
     let method = msg.get("method").and_then(Value::as_str).unwrap_or_default();
-    let id = msg.get("id").cloned()?;
+    let Some(id) = msg.get("id").cloned() else {
+        // Only a genuine notification gets silence; any other id-less message
+        // is an invalid request.
+        if method.starts_with("notifications/") {
+            return None;
+        }
+        return Some(err(&Value::Null, -32600, "request has no id"));
+    };
 
     let outcome = match method {
         "initialize" => Ok(json!({

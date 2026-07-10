@@ -36,9 +36,10 @@ pub fn explain(text: &str) -> String {
     format!("{}\n\nKey line:\n{}", lines.join("\n"), excerpt.trim())
 }
 
-pub fn compose(request: &str) -> String {
-    let request = request.trim();
-    let lower = request.to_ascii_lowercase();
+/// The command matching `request`'s keywords, or `None` — a miss is explicit,
+/// so callers never mistake the user's own words for a suggestion.
+pub fn compose_match(request: &str) -> Option<String> {
+    let lower = request.trim().to_ascii_lowercase();
     let command = if lower.contains("large") && lower.contains("file") {
         "find . -type f -size +100M -print"
     } else if lower.contains("modified") && lower.contains("week") {
@@ -54,9 +55,16 @@ pub fn compose(request: &str) -> String {
     } else if lower.contains("test") && lower.contains("bun") {
         "bun test"
     } else {
-        request
+        return None;
     };
-    command.to_string()
+    Some(command.to_string())
+}
+
+/// Compatibility shape over [`compose_match`] for hosts still expecting text
+/// back: a miss echoes the request. Prefer `compose_match`, which makes the
+/// miss visible instead of disguising it as output.
+pub fn compose(request: &str) -> String {
+    compose_match(request).unwrap_or_else(|| request.trim().to_string())
 }
 
 #[cfg(feature = "candle")]

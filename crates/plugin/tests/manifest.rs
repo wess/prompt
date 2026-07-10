@@ -357,6 +357,40 @@ param = ["sql | string | The SQL | required", "limit | integer | Max rows"]
     }
 
     #[test]
+    fn wasm_module_path_may_not_escape_the_plugin_dir() {
+        for module in ["/etc/passwd", "../../evil.wasm", "ok/../../evil.wasm"] {
+            let src = format!("id = \"w\"\n[runtime]\ntype = \"wasm\"\nwasm = \"{module}\"\n");
+            let (plugin, diags) = parse(path(), &src);
+            assert!(plugin.unwrap().runtime.is_none(), "{module}");
+            assert!(
+                diags.iter().any(|d| d.message.contains("inside the plugin folder")),
+                "{module}: {diags:?}"
+            );
+        }
+        // A nested relative path is fine.
+        let (plugin, diags) =
+            parse(path(), "id = \"w\"\n[runtime]\ntype = \"wasm\"\nwasm = \"dist/plugin.wasm\"\n");
+        assert!(diags.is_empty(), "{diags:?}");
+        assert_eq!(plugin.unwrap().runtime.unwrap().wasm.as_deref(), Some("dist/plugin.wasm"));
+    }
+
+    #[test]
+    fn webview_entry_may_not_escape_the_plugin_dir() {
+        for entry in ["/etc/passwd", "../outside.html"] {
+            let src = format!("id = \"w\"\n[webview]\nentry = \"{entry}\"\n");
+            let (plugin, diags) = parse(path(), &src);
+            assert!(plugin.unwrap().webview.is_none(), "{entry}");
+            assert!(
+                diags.iter().any(|d| d.message.contains("inside the plugin folder")),
+                "{entry}: {diags:?}"
+            );
+        }
+        let (plugin, diags) = parse(path(), "id = \"w\"\n[webview]\nentry = \"ui/index.html\"\n");
+        assert!(diags.is_empty(), "{diags:?}");
+        assert!(plugin.unwrap().webview.is_some());
+    }
+
+    #[test]
     fn process_runtime_is_the_default() {
         let (plugin, _) = parse(path(), "id = \"p\"\n[runtime]\ncommand = \"bun run x.ts\"\n");
         assert_eq!(plugin.unwrap().runtime.unwrap().kind, RuntimeKind::Process);

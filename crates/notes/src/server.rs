@@ -324,6 +324,23 @@ fn deny_msg() -> String {
         .to_string()
 }
 
+/// Run a vault operation on the blocking pool: these do real filesystem work
+/// (up to whole-vault walks) and must not stall the async workers. The mutex
+/// is taken inside the closure, so it is never held across an await.
+async fn with_vault<T, F>(s: &Arc<AppState>, op: F) -> Result<T, String>
+where
+    F: FnOnce(&mut Vault) -> Result<T, String> + Send + 'static,
+    T: Send + 'static,
+{
+    let state = s.clone();
+    tokio::task::spawn_blocking(move || {
+        let mut vault = state.vault.lock().map_err(|e| e.to_string())?;
+        op(&mut vault)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 async fn open_probed(s: &Arc<AppState>, dir: &str, create: bool) -> Response {
     if let Err(e) = probe_dir(dir.to_string(), create).await {
         return err(e);
@@ -388,7 +405,7 @@ async fn recents(State(s): State<Arc<AppState>>) -> Response {
 
 async fn tree(State(s): State<Arc<AppState>>) -> Response {
     touch(&s);
-    match s.vault.lock().map_err(|e| e.to_string()).and_then(|v| v.tree()) {
+    match with_vault(&s, |v| v.tree()).await {
         Ok(nodes) => ok(serde_json::to_value(nodes).unwrap_or(Value::Null)),
         Err(e) => err(e),
     }
@@ -396,8 +413,8 @@ async fn tree(State(s): State<Arc<AppState>>) -> Response {
 
 async fn file_get(State(s): State<Arc<AppState>>, Query(q): Query<HashMap<String, String>>) -> Response {
     touch(&s);
-    let path = q.get("path").map(String::as_str).unwrap_or_default();
-    match s.vault.lock().map_err(|e| e.to_string()).and_then(|v| v.read(path)) {
+    let path = q.get("path").cloned().unwrap_or_default();
+    match with_vault(&s, move |v| v.read(&path)).await {
         Ok(content) => ok(json!({ "content": content })),
         Err(e) => err(e),
     }
@@ -405,10 +422,10 @@ async fn file_get(State(s): State<Arc<AppState>>, Query(q): Query<HashMap<String
 
 async fn file_put(State(s): State<Arc<AppState>>, Json(body): Json<Value>) -> Response {
     touch(&s);
-    let path = body.get("path").and_then(Value::as_str).unwrap_or_default();
-    let content = body.get("content").and_then(Value::as_str).unwrap_or_default();
-    mark_self(&s, path);
-    match s.vault.lock().map_err(|e| e.to_string()).and_then(|v| v.write(path, content)) {
+    let path = body.get("path").and_then(Value::as_str).unwrap_or_default().to_string();
+    let content = body.get("content").and_then(Value::as_str).unwrap_or_default().to_string();
+    mark_self(&s, &path);
+    match with_vault(&s, move |v| v.write(&path, &content)).await {
         Ok(()) => ok(json!({ "ok": true })),
         Err(e) => err(e),
     }
@@ -416,10 +433,10 @@ async fn file_put(State(s): State<Arc<AppState>>, Json(body): Json<Value>) -> Re
 
 async fn file_post(State(s): State<Arc<AppState>>, Json(body): Json<Value>) -> Response {
     touch(&s);
-    let parent = body.get("parent").and_then(Value::as_str).unwrap_or_default();
+    let parent = body.get("parent").and_then(Value::as_str).unwrap_or_default().to_string();
     let kind = body.get("kind").and_then(Value::as_str).unwrap_or("file");
     let kind = if kind == "dir" { "dir" } else { "file" };
-    match s.vault.lock().map_err(|e| e.to_string()).and_then(|v| v.create_file(parent, kind)) {
+    match with_vault(&s, move |v| v.create_file(&parent, kind)).await {
         Ok(path) => {
             broadcast_changed(&s, &path);
             ok(json!({ "path": path }))
@@ -430,10 +447,11 @@ async fn file_post(State(s): State<Arc<AppState>>, Json(body): Json<Value>) -> R
 
 async fn file_delete(State(s): State<Arc<AppState>>, Json(body): Json<Value>) -> Response {
     touch(&s);
-    let path = body.get("path").and_then(Value::as_str).unwrap_or_default();
-    match s.vault.lock().map_err(|e| e.to_string()).and_then(|v| v.remove(path)) {
+    let path = body.get("path").and_then(Value::as_str).unwrap_or_default().to_string();
+    let removed = path.clone();
+    match with_vault(&s, move |v| v.remove(&path)).await {
         Ok(()) => {
-            broadcast_changed(&s, path);
+            broadcast_changed(&s, &removed);
             ok(json!({ "ok": true }))
         }
         Err(e) => err(e),
@@ -442,9 +460,9 @@ async fn file_delete(State(s): State<Arc<AppState>>, Json(body): Json<Value>) ->
 
 async fn file_rename(State(s): State<Arc<AppState>>, Json(body): Json<Value>) -> Response {
     touch(&s);
-    let path = body.get("path").and_then(Value::as_str).unwrap_or_default();
-    let title = body.get("title").and_then(Value::as_str).unwrap_or_default();
-    match s.vault.lock().map_err(|e| e.to_string()).and_then(|v| v.rename(path, title)) {
+    let path = body.get("path").and_then(Value::as_str).unwrap_or_default().to_string();
+    let title = body.get("title").and_then(Value::as_str).unwrap_or_default().to_string();
+    match with_vault(&s, move |v| v.rename(&path, &title)).await {
         Ok(dest) => {
             broadcast_changed(&s, &dest);
             ok(json!({ "path": dest }))
@@ -455,9 +473,9 @@ async fn file_rename(State(s): State<Arc<AppState>>, Json(body): Json<Value>) ->
 
 async fn file_move(State(s): State<Arc<AppState>>, Json(body): Json<Value>) -> Response {
     touch(&s);
-    let from = body.get("from").and_then(Value::as_str).unwrap_or_default();
-    let to = body.get("to").and_then(Value::as_str).unwrap_or_default();
-    match s.vault.lock().map_err(|e| e.to_string()).and_then(|v| v.move_to(from, to)) {
+    let from = body.get("from").and_then(Value::as_str).unwrap_or_default().to_string();
+    let to = body.get("to").and_then(Value::as_str).unwrap_or_default().to_string();
+    match with_vault(&s, move |v| v.move_to(&from, &to)).await {
         Ok(dest) => {
             broadcast_changed(&s, &dest);
             ok(json!({ "path": dest }))
@@ -468,8 +486,8 @@ async fn file_move(State(s): State<Arc<AppState>>, Json(body): Json<Value>) -> R
 
 async fn resolve(State(s): State<Arc<AppState>>, Query(q): Query<HashMap<String, String>>) -> Response {
     touch(&s);
-    let title = q.get("title").map(String::as_str).unwrap_or_default();
-    match s.vault.lock().map_err(|e| e.to_string()).and_then(|v| v.resolve(title)) {
+    let title = q.get("title").cloned().unwrap_or_default();
+    match with_vault(&s, move |v| v.resolve(&title)).await {
         Ok(path) => ok(json!({ "path": path })),
         Err(e) => err(e),
     }

@@ -72,11 +72,3 @@ fn later_overrides_win() {
     let p = build(scheme, &[(42, a), (42, b)]);
     assert_eq!(p.get(42), b);
 }
-
-#[test]
-fn set_mutates() {
-    let mut p = palette();
-    let c = Rgb::new(9, 9, 9);
-    p.set(100, c);
-    assert_eq!(p.get(100), c);
-}

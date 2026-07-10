@@ -49,15 +49,6 @@ pub fn blocks(lines: &[Line]) -> Vec<Block> {
     out
 }
 
-pub fn blocktext(lines: &[Line], start: usize, end: usize) -> String {
-    lines
-        .iter()
-        .filter(|line| line.number >= start && line.number <= end)
-        .map(|line| line.text.as_str())
-        .collect::<Vec<_>>()
-        .join("\n")
-}
-
 pub fn lastblock(lines: &[Line]) -> Option<Block> {
     blocks(lines)
         .into_iter()

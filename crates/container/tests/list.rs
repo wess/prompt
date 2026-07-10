@@ -37,19 +37,6 @@ fn parse_ps_skips_blank_and_malformed() {
 }
 
 #[test]
-fn exec_argv_shape() {
-    assert_eq!(
-        exec_argv(Engine::Docker, "abc123", "bash"),
-        vec!["docker", "exec", "-it", "abc123", "bash"]
-    );
-    // Empty command falls back to sh.
-    assert_eq!(
-        exec_argv(Engine::Podman, "x", "  "),
-        vec!["podman", "exec", "-it", "x", "sh"]
-    );
-}
-
-#[test]
 fn attach_argv_prefers_bash_with_fallback() {
     let argv = attach_argv(Engine::Docker, "abc123");
     assert_eq!(&argv[0..4], &["docker", "exec", "-it", "abc123"]);

@@ -55,16 +55,26 @@ fn hex(bytes: &[u8]) -> String {
 /// never clobbers the live server's token.
 pub fn write_info(port: u16, token: &str) {
     let _ = std::fs::create_dir_all(config_dir());
-    let path = info_path();
     let body =
         serde_json::json!({ "port": port, "pid": std::process::id(), "token": token }).to_string();
-    if std::fs::write(&path, body).is_ok() {
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
-        }
+    let _ = write_private(&info_path(), body.as_bytes());
+}
+
+/// Write `body` at `path` readable only by us. The file is born 0600 (the mode
+/// is set at creation, not chmodded after) so there is no window where another
+/// user can read the token; any existing file is removed first so a stale
+/// wider mode can't carry over.
+fn write_private(path: &std::path::Path, body: &[u8]) -> std::io::Result<()> {
+    use std::io::Write;
+    let _ = std::fs::remove_file(path);
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
     }
+    options.open(path)?.write_all(body)
 }
 
 /// Length-independent comparison so a wrong token leaks no timing signal.
@@ -104,6 +114,22 @@ mod tests {
         assert_eq!(t.len(), 32);
         assert!(t.chars().all(|c| c.is_ascii_hexdigit()));
         assert_ne!(mint(), mint()); // fresh each call
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn write_private_is_owner_only_from_birth() {
+        use std::os::unix::fs::PermissionsExt;
+        let path = std::env::temp_dir().join(format!("sinclairtoken{}", std::process::id()));
+        // Even a stale world-readable file must come out 0600, not chmod-raced.
+        std::fs::write(&path, b"stale").unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+
+        write_private(&path, b"{\"token\":\"t\"}").unwrap();
+        let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600);
+        assert_eq!(std::fs::read(&path).unwrap(), b"{\"token\":\"t\"}");
+        let _ = std::fs::remove_file(&path);
     }
 
     #[test]

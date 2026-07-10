@@ -6188,7 +6188,6 @@ name = "plugin"
 version = "1.26.0"
 dependencies = [
  "serde",
- "sha2",
  "toml 0.8.23",
 ]
 
@@ -6197,7 +6196,6 @@ name = "pluginrt"
 version = "1.26.0"
 dependencies = [
  "anyhow",
- "plugin",
  "serde_json",
  "wasmtime",
  "wasmtime-wasi",
@@ -6899,7 +6897,6 @@ dependencies = [
  "serde_json",
  "sqlx",
  "tokio",
- "tokio-stream",
  "toml 0.8.23",
  "tracing",
  "tracing-subscriber",

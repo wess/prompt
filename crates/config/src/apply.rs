@@ -4,15 +4,15 @@ use crate::options::{ClipboardAccess, CursorStyle, FontStyle, OptionAsAlt, Optio
 use crate::value;
 
 /// Apply one `key = value` pair to the options. An empty value resets the
-/// key to its default. Returns an error message for unknown keys or
+/// key to its default, read from the caller-built `d` (one default set per
+/// parse, not one per line). Returns an error message for unknown keys or
 /// unparseable values.
-pub fn apply(opts: &mut Options, key: &str, val: &str) -> Result<(), String> {
-    let d = Options::default();
+pub fn apply(opts: &mut Options, d: &Options, key: &str, val: &str) -> Result<(), String> {
     let empty = val.is_empty();
     match key {
         "font-family" => {
             if empty {
-                opts.font_family = d.font_family;
+                opts.font_family = d.font_family.clone();
             } else {
                 opts.font_family.push(val.to_string());
             }
@@ -33,7 +33,7 @@ pub fn apply(opts: &mut Options, key: &str, val: &str) -> Result<(), String> {
         }
         "font-feature" => {
             if empty {
-                opts.font_feature = d.font_feature;
+                opts.font_feature = d.font_feature.clone();
             } else {
                 let feature = value::parse_fontfeature(val)
                     .ok_or_else(|| bad("feature tag like `-liga` or `+ss01`", val))?;
@@ -55,13 +55,13 @@ pub fn apply(opts: &mut Options, key: &str, val: &str) -> Result<(), String> {
             };
         }
         "theme" => {
-            opts.theme = if empty { d.theme } else { val.to_string() };
+            opts.theme = if empty { d.theme.clone() } else { val.to_string() };
         }
         "theme-light" => {
-            opts.theme_light = if empty { d.theme_light } else { val.to_string() };
+            opts.theme_light = if empty { d.theme_light.clone() } else { val.to_string() };
         }
         "theme-dark" => {
-            opts.theme_dark = if empty { d.theme_dark } else { val.to_string() };
+            opts.theme_dark = if empty { d.theme_dark.clone() } else { val.to_string() };
         }
         "timestamps" => {
             opts.timestamps = if empty {
@@ -79,7 +79,7 @@ pub fn apply(opts: &mut Options, key: &str, val: &str) -> Result<(), String> {
         }
         "redact" => {
             if empty {
-                opts.redact = d.redact;
+                opts.redact = d.redact.clone();
             } else {
                 opts.redact.push(val.to_string());
             }
@@ -107,41 +107,42 @@ pub fn apply(opts: &mut Options, key: &str, val: &str) -> Result<(), String> {
         }
         "trigger" => {
             if empty {
-                opts.trigger = d.trigger;
+                opts.trigger = d.trigger.clone();
             } else {
                 opts.trigger.push(val.to_string());
             }
         }
         "snippet" => {
             if empty {
-                opts.snippet = d.snippet;
+                opts.snippet = d.snippet.clone();
             } else {
                 opts.snippet.push(val.to_string());
             }
         }
         "background-image" => {
-            opts.background_image = if empty { d.background_image } else { Some(val.to_string()) };
+            opts.background_image =
+                if empty { d.background_image.clone() } else { Some(val.to_string()) };
         }
         "badge" => {
-            opts.badge = if empty { d.badge } else { Some(val.to_string()) };
+            opts.badge = if empty { d.badge.clone() } else { Some(val.to_string()) };
         }
         "profile" => {
             if empty {
-                opts.profile = d.profile;
+                opts.profile = d.profile.clone();
             } else {
                 opts.profile.push(val.to_string());
             }
         }
         "background" => {
             opts.background = if empty {
-                d.background
+                d.background.clone()
             } else {
                 Some(val.to_string())
             };
         }
         "foreground" => {
             opts.foreground = if empty {
-                d.foreground
+                d.foreground.clone()
             } else {
                 Some(val.to_string())
             };
@@ -162,28 +163,28 @@ pub fn apply(opts: &mut Options, key: &str, val: &str) -> Result<(), String> {
         }
         "cursor-color" => {
             opts.cursor_color = if empty {
-                d.cursor_color
+                d.cursor_color.clone()
             } else {
                 Some(color(val)?)
             };
         }
         "cursor-text" => {
             opts.cursor_text = if empty {
-                d.cursor_text
+                d.cursor_text.clone()
             } else {
                 Some(color(val)?)
             };
         }
         "selection-foreground" => {
             opts.selection_foreground = if empty {
-                d.selection_foreground
+                d.selection_foreground.clone()
             } else {
                 Some(color(val)?)
             };
         }
         "selection-background" => {
             opts.selection_background = if empty {
-                d.selection_background
+                d.selection_background.clone()
             } else {
                 Some(color(val)?)
             };
@@ -212,7 +213,7 @@ pub fn apply(opts: &mut Options, key: &str, val: &str) -> Result<(), String> {
         }
         "split-divider-color" => {
             opts.split_divider_color = if empty {
-                d.split_divider_color
+                d.split_divider_color.clone()
             } else {
                 Some(color(val)?)
             };
@@ -248,7 +249,7 @@ pub fn apply(opts: &mut Options, key: &str, val: &str) -> Result<(), String> {
         }
         "title" => {
             opts.title = if empty {
-                d.title
+                d.title.clone()
             } else {
                 Some(val.to_string())
             };
@@ -304,14 +305,14 @@ pub fn apply(opts: &mut Options, key: &str, val: &str) -> Result<(), String> {
         }
         "command" => {
             opts.shell = if empty {
-                d.shell
+                d.shell.clone()
             } else {
                 Some(val.to_string())
             };
         }
         "working-directory" => {
             opts.working_directory = if empty {
-                d.working_directory
+                d.working_directory.clone()
             } else {
                 Some(val.to_string())
             };
@@ -410,7 +411,7 @@ pub fn apply(opts: &mut Options, key: &str, val: &str) -> Result<(), String> {
         }
         "palette" => {
             if empty {
-                opts.palette = d.palette;
+                opts.palette = d.palette.clone();
             } else {
                 let entry = value::parse_palette(val).ok_or_else(|| bad("N=#rrggbb", val))?;
                 opts.palette.push(entry);
@@ -418,21 +419,21 @@ pub fn apply(opts: &mut Options, key: &str, val: &str) -> Result<(), String> {
         }
         "plugin" => {
             if empty {
-                opts.plugin = d.plugin;
+                opts.plugin = d.plugin.clone();
             } else {
                 opts.plugin.push(val.to_string());
             }
         }
         "container" => {
             if empty {
-                opts.container = d.container;
+                opts.container = d.container.clone();
             } else {
                 opts.container.push(val.to_string());
             }
         }
         "container-engine" => {
             opts.container_engine = if empty {
-                d.container_engine
+                d.container_engine.clone()
             } else {
                 Some(val.to_string())
             };
@@ -446,7 +447,7 @@ pub fn apply(opts: &mut Options, key: &str, val: &str) -> Result<(), String> {
         }
         "keybind" => {
             if empty {
-                opts.keybind = d.keybind;
+                opts.keybind = d.keybind.clone();
             } else {
                 opts.keybind.push(val.to_string());
             }
@@ -488,14 +489,14 @@ pub fn apply(opts: &mut Options, key: &str, val: &str) -> Result<(), String> {
         }
         "relay-address" => {
             opts.relay_address = if empty {
-                d.relay_address
+                d.relay_address.clone()
             } else {
                 val.to_string()
             };
         }
         "relay-default-agent" => {
             opts.relay_default_agent = if empty {
-                d.relay_default_agent
+                d.relay_default_agent.clone()
             } else {
                 val.to_string()
             };

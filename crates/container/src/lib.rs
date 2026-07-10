@@ -27,6 +27,6 @@ mod profile;
 mod target;
 
 pub use engine::Engine;
-pub use list::{attach_argv, exec_argv, parse_ps, ps_argv, Running};
+pub use list::{attach_argv, parse_ps, ps_argv, Running};
 pub use profile::{builtin, parse_profile, profiles, Profile};
 pub use target::Target;

@@ -22,6 +22,11 @@ use crate::Error;
 
 pub fn encode<R: Raster>(renderer: &mut Renderer<R>, out: &Path) -> Result<(), Error> {
     let (w, h) = renderer.dimensions();
+    // GIF dimensions are u16; anything bigger would silently wrap in the
+    // `as u16` casts below and corrupt the file.
+    if w > u16::MAX as usize || h > u16::MAX as usize {
+        return Err(Error::TooLarge(w, h));
+    }
     let dt = 1.0 / renderer.fps() as f64;
     let quant = Quantizer::from_colors(renderer.colors());
 
@@ -93,3 +98,7 @@ fn encoding_err(e: gif::EncodingError) -> Error {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "../tests/gifenc.rs"]
+mod tests;

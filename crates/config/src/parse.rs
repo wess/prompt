@@ -18,7 +18,10 @@ pub struct Diagnostic {
 
 /// Parse config text into options plus any diagnostics.
 pub fn parse_str(input: &str) -> (Options, Vec<Diagnostic>) {
-    let mut opts = Options::default();
+    // Built once: `apply` resets emptied keys against this instead of
+    // constructing a fresh default per line.
+    let defaults = Options::default();
+    let mut opts = defaults.clone();
     let mut diags = Vec::new();
 
     for (i, raw) in input.lines().enumerate() {
@@ -45,7 +48,7 @@ pub fn parse_str(input: &str) -> (Options, Vec<Diagnostic>) {
             });
             continue;
         }
-        if let Err(message) = apply(&mut opts, key, val) {
+        if let Err(message) = apply(&mut opts, &defaults, key, val) {
             diags.push(Diagnostic {
                 line: lineno,
                 key: key.to_string(),

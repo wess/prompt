@@ -35,6 +35,8 @@ pub enum Error {
     UnknownFormat(String),
     /// The recording has no output to render.
     Empty,
+    /// Frame pixel dimensions exceed what the GIF format can hold (u16).
+    TooLarge(usize, usize),
     /// A video format was requested but ffmpeg is not on `PATH`.
     FfmpegMissing,
     /// ffmpeg ran but failed; carries its trailing log output.
@@ -52,6 +54,12 @@ impl fmt::Display for Error {
                 )
             }
             Error::Empty => write!(f, "recording has no output to render"),
+            Error::TooLarge(w, h) => {
+                write!(
+                    f,
+                    "{w}x{h} px is larger than a GIF can hold (65535 max); reduce cols/rows or the font size"
+                )
+            }
             Error::FfmpegMissing => {
                 write!(
                     f,

@@ -65,9 +65,4 @@ impl Format {
             _ => None,
         }
     }
-
-    /// Whether this format is produced by shelling out to ffmpeg.
-    pub fn needs_ffmpeg(self) -> bool {
-        !matches!(self, Format::Gif)
-    }
 }

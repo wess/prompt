@@ -15,10 +15,6 @@ impl Palette {
     pub fn get(&self, index: u8) -> Rgb {
         self.colors[index as usize]
     }
-
-    pub fn set(&mut self, index: u8, color: Rgb) {
-        self.colors[index as usize] = color;
-    }
 }
 
 /// Standard 256-color palette for indices 16..=255 (cube + grayscale ramp).

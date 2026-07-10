@@ -138,6 +138,18 @@ fn selection_colors_come_from_scheme() {
 }
 
 #[test]
+fn selection_overrides_apply() {
+    let opts = config::Options {
+        selection_foreground: Some("#111111".to_string()),
+        selection_background: Some("#eeeeee".to_string()),
+        ..Default::default()
+    };
+    let c = from_config(&opts, true);
+    assert_eq!(c.selection_fg, Rgb::new(0x11, 0x11, 0x11));
+    assert_eq!(c.selection_bg, Rgb::new(0xee, 0xee, 0xee));
+}
+
+#[test]
 fn bad_config_colors_fall_back() {
     let opts = config::Options {
         foreground: Some("nonsense".to_string()),
