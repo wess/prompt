@@ -19,7 +19,6 @@ members = [
     "crates/theme",
     "crates/updater",
     "crates/vt",
-    "crates/workspace",
 ]
 # vendor/guise is its own cargo workspace (a submodule); exclude it so its
 # crates inherit from guise's [workspace.package], not ours. We depend on

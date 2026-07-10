@@ -50,8 +50,8 @@ mod tests;
 Add a new test file the same way (and create the `#[path]` stub in the source
 file). Genuine integration tests that exercise only the public API are declared
 explicitly as `[[test]]` targets (see `crates/vt` and `crates/terminal`). The
-`vt`, `config`, and `workspace` crates carry the bulk of the coverage and are
-pure logic — prefer adding there.
+`vt` and `config` crates carry the bulk of the coverage and are pure logic —
+prefer adding there.
 
 ## gpui dependency
 
@@ -76,9 +76,6 @@ The workspace is layered bottom-up; each crate depends only on those below it.
 - **`cast`** — asciinema v2 `.cast` recording: a `Recorder` writes a header line
   plus timestamped output events as bytes arrive (output only; UTF-8 split
   across reads is carried over). Used by `terminal` for session capture.
-- **`workspace`** — pure pane-tree + tab model: recursive splits, ratios,
-  focus, directional navigation. Generic over content via opaque `PaneId`s; the
-  host maps ids to terminals.
 - **`input`** — keyboard/mouse encoding to terminal byte sequences (CSI, kitty
   keyboard protocol, mouse reporting, bracketed paste).
 - **`config`** — `key = value` config: parse → diagnostics →
@@ -102,7 +99,7 @@ The workspace is layered bottom-up; each crate depends only on those below it.
   Transport/framing only; the caller supplies the tool list and handler. Knows
   nothing about terminals.
 - **`assist`** — local, offline terminal assistance (command ranking,
-  suggestions, paste-risk safety checks). Optional `candle` feature (on by
+  suggestions, paste-risk safety checks). Optional `candle` feature (off by
   default) for the candle-core backend; code is gated with
   `#[cfg(feature = "candle")]` and has a non-candle fallback.
 - **`updater`** — self-update mechanics, gpui-free (Zed's `auto_update`

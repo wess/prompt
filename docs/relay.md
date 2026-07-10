@@ -264,6 +264,19 @@ button that checks it's reachable (CLI `--version`, or the Ollama API port).
   *Broadcast* and *channel* history is still not replayed: a new agent only sees
   those sent after it registers, so start workers before broadcasting, or
   re-register (the same name keeps its read cursor).
+- **Delivery.** At-least-once: `wait` returns messages without consuming them,
+  and the read cursor advances only once delivery is acknowledged — the MCP
+  plane acks after the response is written to the stream; a non-MCP bridge
+  using `/control/wait` **must** carry `ack: <last message id>` in its next
+  call or it will re-receive the same batch. Rare duplicates after a dropped
+  connection are possible; silent loss is not. The feed keeps the last 10k
+  messages, but a registered reader's unread backlog is preserved up to a 50k
+  hard cap (past that its cursor is force-bumped and the gap logged in
+  `server.log`). When `wait` capacity is saturated, calls queue briefly and
+  then return an explicit backoff error instead of an instant empty result.
+- **Feed streaming.** `relay feed --follow` consumes a server-sent event
+  stream (`/control/feed/live`) instead of polling; one-shot `relay feed`
+  still reads `/control/feed`.
 - **MCP servers.** A launched agent loads your project `.mcp.json` and your
   global MCP servers *alongside* the relay server — relay's `--mcp-config` is
   additive, not exclusive. For a hermetic worker that sees only relay, launch it

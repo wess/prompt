@@ -289,7 +289,6 @@ dependencies = [
  "theme",
  "updater",
  "vt",
- "workspace",
  "x11rb",
 ]
 
@@ -10719,10 +10718,6 @@ dependencies = [
  "thiserror 1.0.69",
  "wast 35.0.2",
 ]
-
-[[package]]
-name = "workspace"
-version = "1.26.0"
 
 [[package]]
 name = "writeable"

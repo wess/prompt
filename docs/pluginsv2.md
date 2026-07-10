@@ -386,9 +386,9 @@ model with capability-consent enforcement and checksum verification are all in.
    Replaces "a folder exists = enabled, capabilities self-attested." Consent is
    *enforced*, not just recorded: `effective_capabilities` intersects declared
    with granted, and the WASM host links only the granted interfaces — an
-   ungranted capability fails instantiation. `plugin::registry` (`Registry`,
-   `verify_sha256`) provides checksum verification off a single index; an unpinned
-   entry is accepted, a mismatch rejected.
+   ungranted capability fails instantiation. (A checksum-verified registry
+   module shipped here originally but was removed as dead code — catalog
+   installs are unverified until a real pinned index lands.)
 
 Each stage is independently shippable and leaves the tree green.
 
