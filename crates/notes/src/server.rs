@@ -273,9 +273,40 @@ fn spawn_reaper(state: Arc<AppState>) {
 
 // --- handlers --------------------------------------------------------------
 
-async fn health(State(s): State<Arc<AppState>>) -> Response {
+async fn health(
+    State(s): State<Arc<AppState>>,
+    Query(q): Query<HashMap<String, String>>,
+) -> Response {
     touch(&s);
-    ok(json!({ "server": "sinclair-notes", "port": s.port }))
+    let mut resp = ok(json!({ "server": "sinclair-notes", "port": s.port }));
+    // Sidecar readiness handshake: the host sends a nonce and only this
+    // process knows the session token, so answering hex(sha256(token‖nonce))
+    // proves the listener is the child the host spawned — a port squatter
+    // cannot fake it. Legacy hosts that send no challenge get plain health.
+    if let Some(proof) = q.get("challenge").and_then(|c| ready_proof(&s.token, c)) {
+        if let Ok(value) = proof.parse() {
+            resp.headers_mut().insert("x-sinclair-proof", value);
+        }
+    }
+    resp
+}
+
+/// The readiness proof for `challenge`: hex(sha256(token bytes ‖ challenge
+/// bytes)), or `None` for an empty or oversized challenge.
+pub(crate) fn ready_proof(token: &str, challenge: &str) -> Option<String> {
+    use sha2::{Digest, Sha256};
+    if challenge.is_empty() || challenge.len() > 128 {
+        return None;
+    }
+    let mut h = Sha256::new();
+    h.update(token.as_bytes());
+    h.update(challenge.as_bytes());
+    let out = h.finalize();
+    Some(out.iter().fold(String::with_capacity(64), |mut s, b| {
+        use std::fmt::Write;
+        let _ = write!(s, "{b:02x}");
+        s
+    }))
 }
 
 async fn get_vault(State(s): State<Arc<AppState>>) -> Response {
@@ -590,7 +621,18 @@ async fn pick_folder() -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::probe_dir;
+    use super::{probe_dir, ready_proof};
+
+    #[test]
+    fn ready_proof_is_deterministic_and_bounded() {
+        let a = ready_proof("tok", "nonce").unwrap();
+        assert_eq!(a, ready_proof("tok", "nonce").unwrap());
+        assert_eq!(a.len(), 64);
+        assert_ne!(a, ready_proof("other", "nonce").unwrap());
+        assert_ne!(a, ready_proof("tok", "other").unwrap());
+        assert_eq!(ready_proof("tok", ""), None);
+        assert_eq!(ready_proof("tok", &"x".repeat(129)), None);
+    }
 
     #[tokio::test]
     async fn probe_accepts_a_real_folder() {

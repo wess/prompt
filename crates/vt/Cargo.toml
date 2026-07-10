@@ -8,7 +8,7 @@ license.workspace = true
 [dependencies]
 bitflags = "2"
 unicode-width = "0.2"
-vte = "0.13"
+vte = "0.15"
 
 # Integration tests (the moved unit tests are compiled in-crate via #[path],
 # so auto-discovery is off; declare the real integration tests explicitly).

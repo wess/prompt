@@ -5,7 +5,12 @@
 //! drop the listener just before spawning), mints the session token, and hands
 //! both to the child via `SINCLAIR_SERVICE_PORT` / `SINCLAIR_SERVICE_TOKEN`.
 //! The child binds exactly that port; readiness is the port accepting
-//! connections (bounded wait), not a descriptor file.
+//! connections (bounded wait), not a descriptor file. Before the port is
+//! trusted, the host challenges it: `GET /health?challenge=<nonce>` should
+//! answer `x-sinclair-proof: hex(sha256(token ‖ nonce))` (the bundled `notes`
+//! does), proving the listener knows the session token; sidecars that answer
+//! no proof fall back to a weaker child-survives-settle heuristic, and a
+//! wrong proof fails the boot.
 //!
 //! Every spawned child stays a tracked child of the app. Services are keyed by
 //! surface id and refcounted per live surface: a second window or tab reuses
@@ -39,6 +44,8 @@ const READY: Duration = Duration::from_secs(5);
 /// our child died" within this window and the boot fails instead of handing
 /// the session URL — and the bridge-injected webview — to an unknown server.
 const SETTLE: Duration = Duration::from_millis(600);
+/// Per-socket-operation bound on the readiness handshake probe.
+const READY_PROBE: Duration = Duration::from_millis(500);
 /// SIGTERM-to-SIGKILL grace when reaping a closed service.
 const GRACE: Duration = Duration::from_secs(2);
 /// SIGTERM-to-SIGKILL grace at app quit (gpui gives quit observers ~200ms).
@@ -157,7 +164,7 @@ fn start(command: &str, dir: &Path) -> Result<(Child, u16, String), String> {
     let mut child = cmd
         .spawn()
         .map_err(|e| format!("spawn `{program}`: {e}"))?;
-    wait_ready(&mut child, port)?;
+    wait_ready(&mut child, port, &token)?;
     Ok((child, port, token))
 }
 
@@ -169,14 +176,19 @@ fn reserve_port() -> Result<std::net::TcpListener, String> {
 }
 
 /// Wait (bounded) for the child to accept connections on its assigned port,
-/// then verify the listener really is our child: the sidecar contract says a
-/// hosted child binds exactly the assigned port or exits, so if the port
-/// answers while the child dies within the settle window, something else owns
-/// the port and the boot must fail rather than trust it (the page URL carries
-/// the session token, and the webview injects the native bridge into whatever
-/// it loads). An early exit is reported as such; a timeout reaps the
-/// half-started child.
-fn wait_ready(child: &mut Child, port: u16) -> Result<(), String> {
+/// then verify the listener really is our child before anything trusts it
+/// (the page URL carries the session token, and the webview injects the
+/// native bridge into whatever it loads).
+///
+/// Verification is a challenge–response: `GET /health?challenge=<nonce>` must
+/// answer with `x-sinclair-proof: hex(sha256(token ‖ nonce))` — only the
+/// spawned child knows the token, so a port squatter cannot produce the
+/// proof. A sidecar that answers with no proof header is treated as legacy
+/// and falls back to the weaker settle heuristic: the contract says a hosted
+/// child binds exactly the assigned port or exits, so if the port answers
+/// while the child dies within the settle window, something else owns the
+/// port and the boot fails. A *wrong* proof always fails the boot.
+fn wait_ready(child: &mut Child, port: u16, token: &str) -> Result<(), String> {
     let deadline = Instant::now() + READY;
     loop {
         if let Ok(Some(status)) = child.try_wait() {
@@ -191,9 +203,21 @@ fn wait_ready(child: &mut Child, port: u16) -> Result<(), String> {
         }
         std::thread::sleep(POLL);
     }
-    // The port answers; require the child to outlive the settle window. A
-    // child that lost the bind race to a squatter exits here and fails the
-    // boot instead of the squatter being handed the session.
+    let nonce = mint_token();
+    match probe_proof(port, &nonce) {
+        Some(proof) if proof == expected_proof(token, &nonce) => return Ok(()),
+        Some(_) => {
+            terminate(child);
+            return Err(format!(
+                "the listener on port {port} failed the readiness handshake — \
+                 something else may be listening there"
+            ));
+        }
+        None => {}
+    }
+    // Legacy sidecar (no proof header). Require the child to outlive the
+    // settle window: a child that lost the bind race to a squatter exits here
+    // and fails the boot instead of the squatter being handed the session.
     let settle = Instant::now() + SETTLE;
     while Instant::now() < settle {
         if let Ok(Some(status)) = child.try_wait() {
@@ -205,6 +229,60 @@ fn wait_ready(child: &mut Child, port: u16) -> Result<(), String> {
         std::thread::sleep(POLL);
     }
     Ok(())
+}
+
+/// The proof a genuine sidecar answers for `nonce`: hex(sha256(token ‖ nonce)).
+fn expected_proof(token: &str, nonce: &str) -> String {
+    use sha2::{Digest, Sha256};
+    let mut h = Sha256::new();
+    h.update(token.as_bytes());
+    h.update(nonce.as_bytes());
+    h.finalize().iter().fold(String::with_capacity(64), |mut s, b| {
+        use std::fmt::Write;
+        let _ = write!(s, "{b:02x}");
+        s
+    })
+}
+
+/// One plain HTTP/1.1 GET of `/health?challenge=<nonce>`; returns the
+/// `x-sinclair-proof` header value if the listener sent one. `None` covers
+/// every legacy shape: connection refused, not HTTP, no proof header.
+fn probe_proof(port: u16, nonce: &str) -> Option<String> {
+    use std::io::{Read, Write};
+    let addr = std::net::SocketAddr::from(([127, 0, 0, 1], port));
+    let mut stream = std::net::TcpStream::connect_timeout(&addr, READY_PROBE).ok()?;
+    stream.set_read_timeout(Some(READY_PROBE)).ok()?;
+    stream.set_write_timeout(Some(READY_PROBE)).ok()?;
+    stream
+        .write_all(
+            format!(
+                "GET /health?challenge={nonce} HTTP/1.1\r\n\
+                 Host: 127.0.0.1:{port}\r\nConnection: close\r\n\r\n"
+            )
+            .as_bytes(),
+        )
+        .ok()?;
+    let mut buf = Vec::new();
+    let mut chunk = [0u8; 4096];
+    while buf.len() < 64 * 1024 {
+        match stream.read(&mut chunk) {
+            Ok(0) | Err(_) => break,
+            Ok(n) => {
+                buf.extend_from_slice(&chunk[..n]);
+                if buf.windows(4).any(|w| w == b"\r\n\r\n") {
+                    break;
+                }
+            }
+        }
+    }
+    let head = buf.windows(4).position(|w| w == b"\r\n\r\n").map(|i| &buf[..i])?;
+    let head = std::str::from_utf8(head).ok()?;
+    head.lines().find_map(|line| {
+        let (name, value) = line.split_once(':')?;
+        name.trim()
+            .eq_ignore_ascii_case("x-sinclair-proof")
+            .then(|| value.trim().to_string())
+    })
 }
 
 /// SIGTERM, wait out [`GRACE`], then SIGKILL.

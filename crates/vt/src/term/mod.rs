@@ -158,11 +158,10 @@ impl Terminal {
         }
     }
 
-    /// Drive the parser with bytes read from the pty.
+    /// Drive the parser with bytes read from the pty. vte batch-scans
+    /// plain-text runs, so this is not a per-byte state machine walk.
     pub fn feed(&mut self, bytes: &[u8]) {
-        for &byte in bytes {
-            self.parser.advance(&mut self.inner, byte);
-        }
+        self.parser.advance(&mut self.inner, bytes);
     }
 
     /// Simple resize; clamps cursors, resets scroll regions, and drops any

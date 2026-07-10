@@ -411,13 +411,12 @@ deliver, plus debt v2 didn't cover. This section is the v2.1 worklist.
   (`pluginwebview.rs:425,445`). Bind races are "resolved" by the loser exiting
   silently (`server.rs:103`). Two descriptor files are maintained for one
   server (`server.json` + `.service.json`).
-- **Consent (§9 stage 7 "Consent is enforced, not just recorded").** The
-  enforcement code exists but is unreachable: `Installed::record`,
-  `set_enabled`, and `save` have no non-test callers — catalog install
-  (`catalog.rs:33`) never records, the manager never toggles, so every plugin
-  is "untracked" and `effective_capabilities` (`install.rs:88`) returns the
-  full declared set with no consent step. `registry.rs` checksum verification
-  is likewise unwired.
+- **Consent (§9 stage 7 "Consent is enforced, not just recorded").**
+  *Closed 2026-07-09:* catalog install records declared capabilities as
+  granted, the manager has Enable/Disable wired to `set_enabled` + `save`,
+  and `effective_capabilities` narrowing engages. The unwired `registry.rs`
+  was deleted; catalog installs stay checksum-unverified until a pinned
+  index ships.
 - **Two-way bridge (§9 stage 5 "the bridge is symmetric").** `post_to_page` /
   `__sinclairDeliver` exist but nothing calls them (`pluginwebview.rs:355`).
 - **Triggers `invoke` on wasm.** Routed through `pluginhost::invoke`, which
@@ -443,23 +442,25 @@ deliver, plus debt v2 didn't cover. This section is the v2.1 worklist.
   (`wit/plugin.wit:6`), `window.Prompt` bridge alias
   (`pluginwebview.rs:142`), legacy `prompt` config-dir fallbacks
   (`load.rs:12`, `paths.rs:14`), `<config>/prompt/data/<id>` naming in §9.
-- **Dead code to collect:** `WarmPlugins::evict` (`warmhost.rs:97`),
-  `Runtime::evict` (`pluginrt/lib.rs:314`), `Placement::Tab` falling back to
-  a window (`pluginpanel.rs:127`), the duplicated Notes fallback boot
-  (`app/src/notes.rs:29` rebuilds `from_plugin`'s template verbatim).
+- **Dead code to collect:** `Runtime::evict` (`pluginrt/lib.rs:314`),
+  `Placement::Tab` falling back to a window (`pluginpanel.rs:127`).
+  (`WarmPlugins::evict` and the duplicated Notes fallback boot were removed
+  2026-07-09.)
 
 **v2.1 order (each independently shippable):**
 
-1. **Host-owned lifecycle + handoff** — track sidecar children; host binds
-   `127.0.0.1:0` and hands the listener/port + token to the child at spawn;
-   kill on last-surface-close and app exit; delete the self-reaper, the
-   descriptor polling, `.service.json`, and the fixed port.
+1. **Host-owned lifecycle + handoff** — *shipped* (`app/src/sidecar.rs`):
+   tracked, refcounted children; host-assigned port + token via env; reaped
+   on last-surface-close and app quit; no descriptor files. Readiness is now
+   verified with a token challenge (`GET /health?challenge=` →
+   `x-sinclair-proof`), so a port squatter cannot be handed the session.
 2. **Host services** — `pick-folder`/`notify`/`clipboard` as gated host calls
    on both tiers; move the Notes picker to it; fill or fence the
    `fetch`/`clipboard` stubs.
-3. **Wire consent** — `Installed::record` at catalog install + manager
-   consent sheet; `set_enabled` from the manager; broker-check capabilities
-   on native-tier dispatches (today they are display-only outside wasm).
+3. **Wire consent** — *mostly shipped:* `record` at catalog install and
+   Enable/Disable in the manager landed 2026-07-09. Remaining: a consent
+   sheet at install and broker-checking capabilities on native-tier
+   dispatches (still display-only outside wasm).
 4. **Bridge + triggers** — call `post_to_page` or delete it; route wasm
    `invoke` triggers to `on-event`; retire `docs/plugins-wasm.md`.
 5. **Rename hygiene** — `sinclair:plugin@2` WIT package with a load-time
