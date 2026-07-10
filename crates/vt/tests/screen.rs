@@ -30,6 +30,20 @@ fn new_screen_region_is_full() {
 }
 
 #[test]
+fn resize_preserves_custom_tab_stops() {
+    let mut s = Screen::new(20, 4, 0);
+    s.clear_all_tabs();
+    s.set_tab(5);
+    s.resize(30, 4);
+    assert_eq!(s.next_tab(0), 5);
+    // Columns past the old width fall back to the every-8 default.
+    assert_eq!(s.next_tab(5), 24);
+    s.resize(10, 4);
+    assert_eq!(s.next_tab(0), 5);
+    assert_eq!(s.tabs.len(), 10);
+}
+
+#[test]
 fn resize_clamps_cursor_and_resets_region() {
     let mut s = Screen::new(10, 5, 0);
     s.cursor.row = 4;

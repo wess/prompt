@@ -45,9 +45,14 @@ impl Row {
         self.prompt = false;
     }
 
-    /// Truncate or pad with `blank` to `cols` cells.
+    /// Truncate or pad with `blank` to `cols` cells. A truncation that
+    /// slices a wide pair leaves its stranded head blanked.
     pub fn resize(&mut self, cols: usize, blank: Cell) {
+        let shrunk = cols < self.cells.len();
         self.cells.resize(cols, blank);
+        if shrunk && self.cells.last().is_some_and(|c| c.is_wide()) {
+            self.cells[cols - 1] = blank;
+        }
     }
 
     /// Overwrite this row's contents with `src`, reusing the existing cell
@@ -67,7 +72,8 @@ impl Row {
         for c in self.cells.iter().filter(|c| !c.is_wide_spacer()) {
             c.write_grapheme(&mut s);
         }
-        s.trim_end().to_string()
+        s.truncate(s.trim_end().len());
+        s
     }
 }
 

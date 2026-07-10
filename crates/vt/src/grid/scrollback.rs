@@ -14,8 +14,10 @@ pub const DEFAULT_SCROLLBACK: usize = 10_000;
 pub struct Scrollback {
     rows: VecDeque<Row>,
     limit: usize,
-    /// Monotonic count of rows ever pushed (survives eviction). Lets the host
-    /// map a scrollback index to a stable line number for timestamps.
+    /// Count of rows committed to scrollback (survives eviction). Lets the
+    /// host map a scrollback index to a stable line number for timestamps;
+    /// it rolls back when a resize pulls rows out of the ring so the
+    /// remaining rows keep their numbers.
     pushed: u64,
 }
 
@@ -32,7 +34,8 @@ impl Scrollback {
         self.limit
     }
 
-    /// Total rows ever pushed into scrollback (monotonic).
+    /// Rows committed to scrollback (survives eviction); the stable line
+    /// number of the next row to enter is `committed()`.
     pub fn committed(&self) -> u64 {
         self.pushed
     }
@@ -78,6 +81,28 @@ impl Scrollback {
             self.rows.push_back(row.clone());
         }
         self.pushed += 1;
+    }
+
+    /// Remove and return the newest row (a resize pulling history back into
+    /// the live grid). Rolls the pushed counter back so the stable line
+    /// numbers of the remaining rows stay aligned.
+    pub(crate) fn pop_newest(&mut self) -> Option<Row> {
+        let row = self.rows.pop_back()?;
+        self.pushed -= 1;
+        Some(row)
+    }
+
+    /// Move all rows out, leaving the ring empty; the pushed counter is
+    /// untouched. Reflow drains the ring this way and rebuilds it.
+    pub(crate) fn take_rows(&mut self) -> VecDeque<Row> {
+        std::mem::take(&mut self.rows)
+    }
+
+    /// Overwrite the pushed counter. Reflow re-pushes every row it drained,
+    /// so it must restore the counter afterwards, adjusted only by the net
+    /// rows that genuinely entered or left scrollback.
+    pub(crate) fn set_committed(&mut self, pushed: u64) {
+        self.pushed = pushed;
     }
 
     /// Row by age: index 0 is the oldest stored row.

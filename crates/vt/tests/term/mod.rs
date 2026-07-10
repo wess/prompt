@@ -113,13 +113,16 @@ fn mouse_mode_tracks_decset() {
 }
 
 #[test]
-fn alternate_scroll_defaults_off_and_tracks_1007() {
+fn alternate_scroll_defaults_on_and_tracks_1007() {
     let mut t = Terminal::new(10, 3, 0);
-    assert!(!t.alternate_scroll()); // default
-    t.feed(b"\x1b[?1007h");
-    assert!(t.alternate_scroll());
+    assert!(t.alternate_scroll()); // default on, like alacritty/kitty/iTerm2
     t.feed(b"\x1b[?1007l");
     assert!(!t.alternate_scroll());
+    t.feed(b"\x1b[?1007h");
+    assert!(t.alternate_scroll());
+    // RIS returns to the default.
+    t.feed(b"\x1b[?1007l\x1bc");
+    assert!(t.alternate_scroll());
 }
 
 #[test]
@@ -380,6 +383,29 @@ fn command_finished_reports_exit_code_once() {
     assert_eq!(t.take_command_finished(), Some(None));
     t.feed(b"\x1b]133;A\x07"); // prompt-start mark is not a finish
     assert_eq!(t.take_command_finished(), None);
+}
+
+#[test]
+fn input_mark_shifts_with_scrolling() {
+    let mut t = Terminal::new(10, 3, 10);
+    t.feed(b"one\r\n\x1b]133;B\x07ls"); // input mark at (1, 0)
+    assert_eq!(t.current_input().as_deref(), Some("ls"));
+    t.feed(b"\x1b[3;1H\n"); // cursor to the bottom row; LF scrolls once
+    assert_eq!(t.current_input().as_deref(), Some("ls")); // mark rode along
+    t.feed(b"\n"); // the input row scrolls off the top
+    assert_eq!(t.current_input(), None);
+}
+
+#[test]
+fn input_mark_cleared_on_alt_entry_and_reset() {
+    let mut t = Terminal::new(20, 3, 10);
+    t.feed(b"\x1b]133;B\x07ls");
+    assert!(t.current_input().is_some());
+    t.feed(b"\x1b[?1049h");
+    assert_eq!(t.current_input(), None);
+    let mut t = Terminal::new(20, 3, 10);
+    t.feed(b"\x1b]133;B\x07ls\x1bc");
+    assert_eq!(t.current_input(), None);
 }
 
 #[test]

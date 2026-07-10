@@ -19,7 +19,7 @@ pub mod url;
 
 pub use cell::{Cell, CellFlags};
 pub use charset::{Charset, Charsets};
-pub use color::{Color, NamedColor};
+pub use color::Color;
 pub use cursor::{Cursor, CursorStyle, SavedCursor};
 pub use grid::damage::{Damage, DamageTracker};
 pub use grid::row::Row;

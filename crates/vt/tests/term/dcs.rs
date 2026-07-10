@@ -90,3 +90,33 @@ fn non_xtgettcap_dcs_ignored() {
     assert!(t.take_output().is_empty());
     assert_eq!(t.row_text(0), "ok");
 }
+
+#[test]
+fn decrqss_is_not_treated_as_sixel() {
+    let mut t = Terminal::new(10, 3, 0);
+    // DCS $ q m ST (DECRQSS for SGR): the payload must not reach the sixel
+    // decoder ('m' is a paintable sixel byte) and gets no reply.
+    t.feed(b"\x1bP$qm\x1b\\");
+    assert!(t.images().is_empty());
+    assert!(t.take_output().is_empty());
+    assert_eq!(t.cursor_pos(), (0, 0)); // no rows were reserved
+}
+
+#[test]
+fn xtgettcap_skips_empty_cap_names() {
+    let mut t = Terminal::new(10, 3, 0);
+    // Bare separators must not amplify into replies.
+    t.feed(b"\x1bP+q;;;;\x1b\\");
+    assert!(t.take_output().is_empty());
+}
+
+#[test]
+fn xtgettcap_caps_replies_per_query() {
+    let mut t = Terminal::new(10, 3, 0);
+    // 20 copies of "Co" (436f): only the first 16 are answered.
+    let caps = vec!["436f"; 20].join(";");
+    t.feed(format!("\x1bP+q{caps}\x1b\\").as_bytes());
+    let out = t.take_output();
+    let replies = out.windows(2).filter(|w| w == b"+r").count();
+    assert_eq!(replies, 16);
+}

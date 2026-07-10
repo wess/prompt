@@ -92,8 +92,6 @@ pub(crate) struct Inner {
     pub(crate) hyperlinks: Hyperlinks,
     /// In-progress device control string (XTGETTCAP or sixel), if any.
     pub(crate) dcs: dcs::Dcs,
-    /// Decoded sixel images anchored to the grid, oldest first.
-    pub(crate) images: Vec<crate::sixel::Placement>,
     /// Monotonic id for the next image placement.
     pub(crate) image_seq: u64,
     /// Cell size in pixels `(w, h)`, set by the host; sixel uses it to reserve
@@ -154,7 +152,6 @@ impl Terminal {
                 report_colors: None,
                 hyperlinks: Hyperlinks::default(),
                 dcs: dcs::Dcs::None,
-                images: Vec::new(),
                 image_seq: 0,
                 cell_px: (8, 16),
             },
@@ -199,10 +196,11 @@ impl Terminal {
         &self.inner.screen().grid
     }
 
-    /// Sixel images anchored to the buffer, oldest first. Lines follow the
-    /// [`crate::selection`] scheme: 0 is the top live row, negative scrollback.
+    /// Sixel images anchored to the active screen's buffer, oldest first.
+    /// Lines follow the [`crate::selection`] scheme: 0 is the top live row,
+    /// negative scrollback.
     pub fn images(&self) -> &[crate::sixel::Placement] {
-        &self.inner.images
+        &self.inner.screen().images
     }
 
     /// Tell the emulator the cell size in pixels so sixel can reserve rows.
@@ -267,13 +265,14 @@ impl Terminal {
         lines.join("\n")
     }
 
-    /// How far the view is scrolled back into history (0 = live bottom).
-    /// Total rows ever pushed into scrollback (monotonic; survives eviction).
+    /// Rows committed to scrollback (survives eviction; only moves for rows
+    /// genuinely entering or leaving history, so resizes don't inflate it).
     /// Used by the host to stamp scrollback lines with a time.
     pub fn committed_lines(&self) -> u64 {
         self.inner.screen().grid.scrollback().committed()
     }
 
+    /// How far the view is scrolled back into history (0 = live bottom).
     pub fn display_offset(&self) -> usize {
         self.inner.display_offset
     }
@@ -426,7 +425,7 @@ impl Terminal {
     }
 
     /// Alternate scroll (?1007): wheel sends arrow keys on the alternate
-    /// screen. Defaults off.
+    /// screen. Defaults on.
     pub fn alternate_scroll(&self) -> bool {
         self.inner.modes.contains(Modes::ALT_SCROLL)
     }
@@ -508,16 +507,10 @@ impl Terminal {
         let grid = &self.inner.screen().grid;
         let sb = grid.scrollback();
         let mut out = Vec::new();
-        let row_matches = |row: &Row, line: usize, out: &mut Vec<crate::search::Match>| {
-            let mut chars = Vec::with_capacity(row.cells.len());
-            let mut col_of = Vec::with_capacity(row.cells.len());
-            for (c, cell) in row.cells.iter().enumerate() {
-                if cell.is_wide_spacer() {
-                    continue;
-                }
-                chars.push(cell.ch);
-                col_of.push(c);
-            }
+        let mut chars = Vec::new();
+        let mut col_of = Vec::new();
+        let mut row_matches = |row: &Row, line: usize, out: &mut Vec<crate::search::Match>| {
+            row_chars(&row.cells, &mut chars, &mut col_of);
             out.extend(crate::search::in_row(
                 &needle,
                 &chars,
@@ -582,15 +575,9 @@ impl Terminal {
             }
         }
         // Auto-detected URL in the row text (skip wide-cell spacers).
-        let mut chars: Vec<char> = Vec::with_capacity(cells.len());
-        let mut col_of: Vec<usize> = Vec::with_capacity(cells.len());
-        for (c, cell) in cells.iter().enumerate() {
-            if cell.is_wide_spacer() {
-                continue;
-            }
-            chars.push(cell.ch);
-            col_of.push(c);
-        }
+        let mut chars = Vec::new();
+        let mut col_of = Vec::new();
+        row_chars(cells, &mut chars, &mut col_of);
         for (start, end) in crate::url::find(&chars) {
             let start_col = col_of[start];
             let last = col_of[end - 1];
@@ -606,49 +593,16 @@ impl Terminal {
         None
     }
 
-    /// The URL under viewport row/col, if the text there is a detectable
-    /// URL (used for click-to-open when there is no OSC 8 hyperlink).
-    pub fn visible_url_at(&self, row: usize, col: usize) -> Option<String> {
-        if row >= self.rows() {
-            return None;
-        }
-        let cells = &self.visible_row(row).cells;
-        let mut chars: Vec<char> = Vec::with_capacity(cells.len());
-        let mut col_of: Vec<usize> = Vec::with_capacity(cells.len());
-        for (c, cell) in cells.iter().enumerate() {
-            if cell.is_wide_spacer() {
-                continue;
-            }
-            chars.push(cell.ch);
-            col_of.push(c);
-        }
-        for (start, end) in crate::url::find(&chars) {
-            let start_col = col_of[start];
-            let last = col_of[end - 1];
-            let end_col = last + if cells[last].is_wide() { 1 } else { 0 };
-            if col >= start_col && col <= end_col {
-                return Some(chars[start..end].iter().collect());
-            }
-        }
-        None
-    }
-
     /// Every detectable URL in the visible viewport, as `(row, start_col,
     /// end_col_inclusive, text)`, for hint-mode labelling. Wide cells extend
     /// the end column by their spacer.
     pub fn visible_links(&self) -> Vec<(usize, usize, usize, String)> {
         let mut out = Vec::new();
+        let mut chars = Vec::new();
+        let mut col_of = Vec::new();
         for row in 0..self.rows() {
             let cells = &self.visible_row(row).cells;
-            let mut chars: Vec<char> = Vec::with_capacity(cells.len());
-            let mut col_of: Vec<usize> = Vec::with_capacity(cells.len());
-            for (c, cell) in cells.iter().enumerate() {
-                if cell.is_wide_spacer() {
-                    continue;
-                }
-                chars.push(cell.ch);
-                col_of.push(c);
-            }
+            row_chars(cells, &mut chars, &mut col_of);
             for (start, end) in crate::url::find(&chars) {
                 let start_col = col_of[start];
                 let last = col_of[end - 1];
@@ -679,6 +633,20 @@ impl Terminal {
             }
         }
         lines
+    }
+}
+
+/// Fill `chars`/`col_of` with a row's characters and their cell columns,
+/// skipping wide spacers, reusing the buffers across rows.
+fn row_chars(cells: &[Cell], chars: &mut Vec<char>, col_of: &mut Vec<usize>) {
+    chars.clear();
+    col_of.clear();
+    for (c, cell) in cells.iter().enumerate() {
+        if cell.is_wide_spacer() {
+            continue;
+        }
+        chars.push(cell.ch);
+        col_of.push(c);
     }
 }
 

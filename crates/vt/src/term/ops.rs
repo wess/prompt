@@ -12,6 +12,10 @@ use crate::screen::Screen;
 
 use super::Inner;
 
+/// Retained decoded-image budget per screen; the oldest placements are
+/// evicted beyond it (a single image can be ~32 MiB of RGBA).
+const MAX_IMAGE_BYTES: usize = 128 * 1024 * 1024;
+
 impl Inner {
 
     /// Write one already-charset-mapped character at the cursor.
@@ -112,7 +116,14 @@ impl Inner {
             col: self.screen().cursor.col,
             image,
         };
-        self.images.push(placement);
+        let scr = self.screen_mut();
+        let start = scr.cursor.row;
+        let end = (start + rows).min(scr.grid.rows());
+        for r in start..end {
+            scr.grid.damage_row(r);
+        }
+        scr.images.push(placement);
+        enforce_image_budget(&mut scr.images);
         self.carriage_return();
         for _ in 0..rows {
             self.linefeed();
@@ -124,11 +135,11 @@ impl Inner {
     fn shift_images_up(&mut self, pushed: usize, scrollback_len: usize) {
         let cell_h = self.cell_px.1.max(1) as usize;
         let oldest = -(scrollback_len as isize);
-        for img in &mut self.images {
+        let images = &mut self.screen_mut().images;
+        for img in images.iter_mut() {
             img.line -= pushed as isize;
         }
-        self.images
-            .retain(|img| img.line + img.image.image_rows(cell_h) as isize > oldest);
+        images.retain(|img| img.line + img.image.image_rows(cell_h) as isize > oldest);
     }
 
     /// REP: repeat the last printed character.
@@ -185,6 +196,13 @@ impl Inner {
         scr.grid.scroll_up(top, bottom, n, save, blank);
         if pushed == 0 {
             return;
+        }
+        // The input mark tracks its row like the selection does: shift it
+        // with the scrolled content, clear it once its row leaves the region.
+        if let Some((row, col)) = self.input_start {
+            if (top..=bottom).contains(&row) {
+                self.input_start = (row >= top + pushed).then(|| (row - pushed, col));
+            }
         }
         if save {
             let len = self.screen().grid.scrollback().len();
@@ -317,8 +335,8 @@ impl Inner {
             _ => {}
         }
         match mode {
-            2 => self.images.retain(|i| i.line < 0),
-            3 => self.images.retain(|i| i.line >= 0),
+            2 => self.screen_mut().images.retain(|i| i.line < 0),
+            3 => self.screen_mut().images.retain(|i| i.line >= 0),
             _ => {}
         }
         let scr = self.screen_mut();
@@ -327,6 +345,7 @@ impl Inner {
         let (crow, ccol) = (scr.cursor.row, scr.cursor.col);
         match mode {
             0 => {
+                split_wide_at(scr, crow, ccol);
                 for c in ccol..cols {
                     *scr.grid.cell_mut(crow, c) = blank;
                 }
@@ -336,6 +355,7 @@ impl Inner {
                 }
             }
             1 => {
+                split_wide_at(scr, crow, ccol + 1);
                 for r in 0..crow {
                     scr.grid.row_mut(r).fill(blank);
                 }
@@ -369,6 +389,8 @@ impl Inner {
             2 => 0..cols,
             _ => return,
         };
+        split_wide_at(scr, crow, range.start);
+        split_wide_at(scr, crow, range.end);
         for c in range.clone() {
             *scr.grid.cell_mut(crow, c) = blank;
         }
@@ -390,12 +412,17 @@ impl Inner {
         if n == 0 {
             return;
         }
+        split_wide_at(scr, crow, ccol);
         let row = scr.grid.row_mut(crow);
         row.cells[ccol..].rotate_right(n);
         for c in ccol..ccol + n {
             row.cells[c] = blank;
         }
         row.wrapped = false;
+        // The shift can strand a wide head in the last column.
+        if row.cells[cols - 1].is_wide() {
+            row.cells[cols - 1] = blank;
+        }
     }
 
     /// DCH: delete `n` cells at the cursor, shifting the rest left. The
@@ -411,6 +438,8 @@ impl Inner {
         if n == 0 {
             return;
         }
+        split_wide_at(scr, crow, ccol);
+        split_wide_at(scr, crow, ccol + n);
         let row = scr.grid.row_mut(crow);
         row.cells[ccol..].rotate_left(n);
         for c in cols - n..cols {
@@ -429,6 +458,8 @@ impl Inner {
         let cols = scr.grid.cols();
         let ccol = scr.cursor.col;
         let end = (ccol + n).min(cols);
+        split_wide_at(scr, crow, ccol);
+        split_wide_at(scr, crow, end);
         for c in ccol..end {
             *scr.grid.cell_mut(crow, c) = blank;
         }
@@ -487,13 +518,20 @@ impl Inner {
         });
     }
 
-    /// DECRC; defaults to home/defaults when nothing was saved.
+    /// DECRC; defaults to home/defaults when nothing was saved. When origin
+    /// mode is restored, the cursor re-clamps into the current scroll region
+    /// (the margins may have moved since DECSC).
     pub(crate) fn restore_cursor(&mut self) {
         let saved = self.screen().saved.unwrap_or_default();
         self.charsets = saved.charsets;
         self.modes.set(Modes::ORIGIN, saved.origin);
         let scr = self.screen_mut();
-        scr.cursor.row = saved.row.min(scr.grid.rows() - 1);
+        let (top, bottom) = if saved.origin {
+            (scr.scroll_top, scr.scroll_bottom)
+        } else {
+            (0, scr.grid.rows() - 1)
+        };
+        scr.cursor.row = saved.row.clamp(top, bottom);
         scr.cursor.col = saved.col.min(scr.grid.cols() - 1);
         scr.cursor.pen = saved.pen;
         scr.cursor.pending_wrap = saved.pending_wrap;
@@ -533,7 +571,7 @@ impl Inner {
         self.selection = None;
         self.hyperlinks.clear();
         self.dcs = super::dcs::Dcs::None;
-        self.images.clear();
+        self.input_start = None;
         self.full_damage = true;
     }
 
@@ -573,13 +611,16 @@ impl Inner {
         self.modes.insert(Modes::ALT_SCREEN);
         self.display_offset = 0;
         self.selection = None;
-        self.images.clear();
+        self.input_start = None;
+        // Images are per-screen: the alt starts clean, primary's are kept.
+        self.alt.images.clear();
         self.full_damage = true;
     }
 
     pub(crate) fn exit_alt(&mut self) {
         if self.modes.contains(Modes::ALT_SCREEN) {
             self.selection = None;
+            self.alt.images.clear();
             self.full_damage = true;
         }
         self.modes.remove(Modes::ALT_SCREEN);
@@ -591,12 +632,39 @@ impl Inner {
         let origin = self.modes.contains(Modes::ORIGIN);
         let scr = self.screen();
         let row = if origin {
-            scr.cursor.row - scr.scroll_top
+            scr.cursor.row.saturating_sub(scr.scroll_top)
         } else {
             scr.cursor.row
         };
         let col = scr.cursor.col;
         let _ = write!(self.output, "\x1b[{};{}R", row + 1, col + 1);
+    }
+}
+
+/// Blank both halves of a wide pair split at column boundary `b` - head at
+/// `b - 1`, spacer at `b` - before an edit tears them apart (erase spans,
+/// ICH/DCH shifts). No-op when the boundary doesn't slice a pair.
+fn split_wide_at(scr: &mut Screen, row: usize, b: usize) {
+    if b == 0 || b >= scr.grid.cols() {
+        return;
+    }
+    if scr.grid.cell(row, b).is_wide_spacer() && scr.grid.cell(row, b - 1).is_wide() {
+        *scr.grid.cell_mut(row, b - 1) = Cell::default();
+        *scr.grid.cell_mut(row, b) = Cell::default();
+    }
+}
+
+/// Evict the oldest image placements once the retained bytes exceed the
+/// budget, so a stream of sixels can't hold unbounded memory.
+fn enforce_image_budget(images: &mut Vec<crate::sixel::Placement>) {
+    let mut total: usize = images.iter().map(|p| p.image.rgba.len()).sum();
+    let mut drop = 0;
+    while drop < images.len() && total > MAX_IMAGE_BYTES {
+        total -= images[drop].image.rgba.len();
+        drop += 1;
+    }
+    if drop > 0 {
+        images.drain(..drop);
     }
 }
 

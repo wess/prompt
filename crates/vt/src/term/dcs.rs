@@ -17,17 +17,15 @@ pub(crate) enum Dcs {
     Sixel(Vec<u8>),
 }
 
-/// Begin a DCS. XTGETTCAP is `DCS + q ...` (intermediate `+`, final `q`);
-/// sixel is `DCS <params> q ...` (final `q`, no `+`).
+/// Begin a DCS, dispatching on the intermediate byte. XTGETTCAP is
+/// `DCS + q ...`; sixel is `DCS <params> q ...` with no intermediate.
+/// `DCS $ q` (DECRQSS) and anything else with a `q` final is deliberately
+/// ignored - feeding it to the sixel decoder would draw garbage.
 pub(crate) fn hook(inner: &mut Inner, intermediates: &[u8], action: char) {
-    inner.dcs = if action == 'q' {
-        if intermediates == [b'+'] {
-            Dcs::XtGetTcap(Vec::new())
-        } else {
-            Dcs::Sixel(Vec::new())
-        }
-    } else {
-        Dcs::None
+    inner.dcs = match (action, intermediates) {
+        ('q', [b'+']) => Dcs::XtGetTcap(Vec::new()),
+        ('q', []) => Dcs::Sixel(Vec::new()),
+        _ => Dcs::None,
     };
 }
 
@@ -48,11 +46,19 @@ pub(crate) fn put(inner: &mut Inner, byte: u8) {
     }
 }
 
+/// Most capabilities answered per XTGETTCAP query; a query is a handful of
+/// names, and an unbounded list would amplify a large payload into output.
+const MAX_TCAP_CAPS: usize = 16;
+
 /// Finish the DCS and act on the payload.
 pub(crate) fn unhook(inner: &mut Inner) {
     match std::mem::take(&mut inner.dcs) {
         Dcs::XtGetTcap(buf) => {
-            for cap in buf.split(|&b| b == b';') {
+            for cap in buf
+                .split(|&b| b == b';')
+                .filter(|cap| !cap.is_empty())
+                .take(MAX_TCAP_CAPS)
+            {
                 reply_cap(inner, cap);
             }
         }

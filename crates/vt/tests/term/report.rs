@@ -7,26 +7,11 @@ fn rgb_widens_by_replication() {
 }
 
 #[test]
-fn base64_roundtrips() {
-    for s in [
-        "",
-        "f",
-        "fo",
-        "foo",
-        "foob",
-        "fooba",
-        "foobar",
-        "hello, world",
-    ] {
-        let enc = base64_encode(s.as_bytes());
-        assert_eq!(base64_decode(enc.as_bytes()).unwrap(), s.as_bytes(), "{s}");
-    }
-}
-
-#[test]
 fn base64_known_vectors() {
-    assert_eq!(base64_encode(b"foobar"), "Zm9vYmFy");
     assert_eq!(base64_decode(b"Zm9vYmFy").unwrap(), b"foobar");
+    assert_eq!(base64_decode(b"Zg==").unwrap(), b"f");
+    assert_eq!(base64_decode(b"Zm8=").unwrap(), b"fo");
+    assert_eq!(base64_decode(b"").unwrap(), b"");
     // Whitespace is tolerated.
     assert_eq!(base64_decode(b"Zm9v\nYmFy").unwrap(), b"foobar");
 }

@@ -19,6 +19,8 @@ pub struct Screen {
     pub saved: Option<SavedCursor>,
     /// Kitty keyboard enhancement stack (per-screen, per the protocol).
     pub kitty: KittyKeyboard,
+    /// Decoded sixel images anchored to this screen's grid, oldest first.
+    pub images: Vec<crate::sixel::Placement>,
 }
 
 impl Screen {
@@ -33,6 +35,7 @@ impl Screen {
             tabs: default_tabs(cols),
             saved: None,
             kitty: KittyKeyboard::default(),
+            images: Vec::new(),
         }
     }
 
@@ -64,9 +67,9 @@ impl Screen {
     }
 
     /// Resize the screen: reflow content (primary) or truncate/pad (alt),
-    /// follow the cursor to its new position, reset the scroll region to the
-    /// full screen, and rebuild default tab stops.
-    /// TODO: preserve custom tab stops.
+    /// follow the cursor to its new position, and reset the scroll region to
+    /// the full screen. Tab stops on surviving columns are kept; columns
+    /// beyond the old width get the default every-8 pattern.
     pub fn resize(&mut self, cols: usize, rows: usize) {
         let (row, col) = self.grid.resize(cols, rows, (self.cursor.row, self.cursor.col));
         self.cursor.row = row;
@@ -74,12 +77,19 @@ impl Screen {
         self.cursor.pending_wrap = false;
         self.scroll_top = 0;
         self.scroll_bottom = self.grid.rows() - 1;
-        self.tabs = default_tabs(self.grid.cols());
+        let old = std::mem::take(&mut self.tabs);
+        self.tabs = (0..self.grid.cols())
+            .map(|c| old.get(c).copied().unwrap_or_else(|| default_tab(c)))
+            .collect();
     }
 }
 
+fn default_tab(col: usize) -> bool {
+    col != 0 && col.is_multiple_of(8)
+}
+
 fn default_tabs(cols: usize) -> Vec<bool> {
-    (0..cols).map(|c| c != 0 && c % 8 == 0).collect()
+    (0..cols).map(default_tab).collect()
 }
 
 #[cfg(test)]

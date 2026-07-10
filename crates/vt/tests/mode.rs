@@ -5,6 +5,7 @@ fn defaults_have_autowrap_and_visible_cursor() {
     let m = Modes::default();
     assert!(m.contains(Modes::AUTOWRAP));
     assert!(m.contains(Modes::CURSOR_VISIBLE));
+    assert!(m.contains(Modes::ALT_SCROLL));
     assert!(!m.contains(Modes::ORIGIN));
     assert!(!m.contains(Modes::ALT_SCREEN));
     assert!(!m.contains(Modes::INSERT));

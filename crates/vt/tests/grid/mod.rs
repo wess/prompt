@@ -79,6 +79,91 @@ fn resize_grows_and_shrinks() {
 }
 
 #[test]
+fn height_shrink_rotates_top_rows_into_scrollback() {
+    let mut g = grid_with_letters(4);
+    let cursor = g.resize(4, 2, (3, 0));
+    assert_eq!(g.rows(), 2);
+    assert_eq!(g.row(0).text(), "c");
+    assert_eq!(g.row(1).text(), "d");
+    assert_eq!(g.scrollback().len(), 2);
+    assert_eq!(g.scrollback().get(0).unwrap().text(), "a");
+    assert_eq!(g.scrollback().get(1).unwrap().text(), "b");
+    assert_eq!(cursor, (1, 0));
+}
+
+#[test]
+fn height_shrink_drops_blank_rows_below_cursor_first() {
+    let mut g = Grid::new(4, 4, 100);
+    g.cell_mut(0, 0).ch = 'a';
+    g.cell_mut(1, 0).ch = 'b'; // rows 2 and 3 stay blank, cursor on row 1
+    let cursor = g.resize(4, 2, (1, 0));
+    assert_eq!(g.row(0).text(), "a");
+    assert_eq!(g.row(1).text(), "b");
+    assert!(g.scrollback().is_empty());
+    assert_eq!(cursor, (1, 0));
+}
+
+#[test]
+fn height_grow_pulls_rows_back_from_scrollback() {
+    let mut g = grid_with_letters(4);
+    g.resize(4, 2, (3, 0)); // "a" and "b" rotate out
+    let cursor = g.resize(4, 4, (1, 0));
+    assert!(g.scrollback().is_empty());
+    assert_eq!(g.row(0).text(), "a");
+    assert_eq!(g.row(1).text(), "b");
+    assert_eq!(g.row(2).text(), "c");
+    assert_eq!(g.row(3).text(), "d");
+    assert_eq!(cursor, (3, 0));
+}
+
+#[test]
+fn alt_screen_height_shrink_truncates_bottom() {
+    // No scrollback (the alternate screen): plain truncation, as before.
+    let mut g = Grid::new(4, 4, 0);
+    for r in 0..4 {
+        g.cell_mut(r, 0).ch = (b'a' + r as u8) as char;
+    }
+    g.resize(4, 2, (0, 0));
+    assert_eq!(g.row(0).text(), "a");
+    assert_eq!(g.row(1).text(), "b");
+    assert_eq!(g.scrollback().len(), 0);
+}
+
+#[test]
+fn width_resize_preserves_committed_counter() {
+    let mut g = Grid::new(4, 2, 100);
+    for ch in ['a', 'b', 'c', 'd'] {
+        g.cell_mut(0, 0).ch = ch;
+        g.scroll_up(0, 1, 1, true, Cell::default());
+    }
+    g.cell_mut(0, 0).ch = 'e';
+    g.cell_mut(1, 0).ch = 'f';
+    assert_eq!(g.scrollback().committed(), 4);
+    g.resize(6, 2, (1, 0)); // width change reflows through scrollback
+    assert_eq!(g.scrollback().len(), 4);
+    assert_eq!(g.scrollback().committed(), 4); // not inflated by the rebuild
+    assert_eq!(g.row(0).text(), "e");
+    assert_eq!(g.row(1).text(), "f");
+}
+
+#[test]
+fn reflow_keeps_wide_pairs_together() {
+    use crate::cell::CellFlags;
+    let mut g = Grid::new(4, 2, 100);
+    g.cell_mut(0, 0).ch = 'a';
+    g.cell_mut(0, 1).ch = 'b';
+    g.cell_mut(0, 2).ch = '\u{6f22}';
+    g.cell_mut(0, 2).flags.insert(CellFlags::WIDE);
+    g.cell_mut(0, 3).flags.insert(CellFlags::WIDE_SPACER);
+    g.resize(3, 2, (0, 0));
+    // The pair would straddle the 3-column boundary; the break backs off.
+    assert_eq!(g.row(0).text(), "ab");
+    assert!(g.row(0).wrapped);
+    assert!(g.row(1).cells[0].is_wide());
+    assert!(g.row(1).cells[1].is_wide_spacer());
+}
+
+#[test]
 fn reflow_rejoins_and_rewraps_wrapped_line() {
     // Two rows forming one logical line "abcdef" wrapped at width 3.
     let mut g = Grid::new(3, 4, 100);

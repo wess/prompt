@@ -65,3 +65,18 @@ fn carriage_return_overlays_same_band() {
     assert_eq!(img.width, 1);
     assert_eq!(px(&img, 0, 0), [0, 255, 0, 255]);
 }
+
+#[test]
+fn pathological_growth_completes_quickly() {
+    // Many bands, then thousands of one-column strips with no raster
+    // attributes: every column used to recopy the entire tall buffer
+    // (quadratic); geometric growth keeps the decode amortized linear.
+    let mut data = vec![b'-'; 133];
+    data.extend(std::iter::repeat_n(b'@', 8000));
+    let start = std::time::Instant::now();
+    let img = decode(&data).unwrap();
+    assert_eq!(img.width, 8000);
+    assert_eq!(img.height, 804);
+    assert_eq!(px(&img, 0, 798), [0, 0, 0, 255]); // painted in the last band
+    assert!(start.elapsed() < std::time::Duration::from_secs(5));
+}

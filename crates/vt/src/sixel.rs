@@ -69,6 +69,11 @@ pub fn decode(data: &[u8]) -> Option<Image> {
         .map(|i| DEFAULT_PALETTE[i % 16])
         .collect();
     let mut pixels: Vec<Option<Rgb>> = Vec::new();
+    // Logical extents vs. buffer layout: the buffer keeps `stride` slots per
+    // row and doubles on width growth, so a payload that widens one column
+    // at a time (no raster attributes) restrides amortized-linearly instead
+    // of copying the whole buffer per column.
+    let mut stride = 0usize;
     let mut width = 0usize;
     let mut height = 0usize;
     let mut x = 0usize;
@@ -76,6 +81,7 @@ pub fn decode(data: &[u8]) -> Option<Image> {
     let mut color = 0usize;
 
     let ensure = |pixels: &mut Vec<Option<Rgb>>,
+                      stride: &mut usize,
                       width: &mut usize,
                       height: &mut usize,
                       max_x: usize,
@@ -86,16 +92,21 @@ pub fn decode(data: &[u8]) -> Option<Image> {
         if w > MAX_DIM || h > MAX_DIM || w.saturating_mul(h) > MAX_AREA {
             return false;
         }
-        if w != *width || h != *height {
-            let mut grown = vec![None; w * h];
+        if w > *stride {
+            let new_stride = (*stride * 2).max(w).min(MAX_DIM);
+            let mut grown = vec![None; new_stride * *height];
             for row in 0..*height {
-                let (src, dst) = (row * *width, row * w);
+                let (src, dst) = (row * *stride, row * new_stride);
                 grown[dst..dst + *width].copy_from_slice(&pixels[src..src + *width]);
             }
             *pixels = grown;
-            *width = w;
-            *height = h;
+            *stride = new_stride;
         }
+        if pixels.len() < *stride * h {
+            pixels.resize(*stride * h, None);
+        }
+        *width = w;
+        *height = h;
         true
     };
 
@@ -107,7 +118,14 @@ pub fn decode(data: &[u8]) -> Option<Image> {
                 let (params, next) = read_params(data, i + 1);
                 i = next;
                 if let (Some(&ph), Some(&pv)) = (params.get(2), params.get(3)) {
-                    if !ensure(&mut pixels, &mut width, &mut height, ph as usize, pv as usize) {
+                    if !ensure(
+                        &mut pixels,
+                        &mut stride,
+                        &mut width,
+                        &mut height,
+                        ph as usize,
+                        pv as usize,
+                    ) {
                         return None;
                     }
                 }
@@ -132,11 +150,18 @@ pub fn decode(data: &[u8]) -> Option<Image> {
                 if let Some(&s) = data.get(i) {
                     if (0x3f..=0x7e).contains(&s) {
                         let max_x = x + n;
-                        if !ensure(&mut pixels, &mut width, &mut height, max_x, (band + 1) * 6) {
+                        if !ensure(
+                            &mut pixels,
+                            &mut stride,
+                            &mut width,
+                            &mut height,
+                            max_x,
+                            (band + 1) * 6,
+                        ) {
                             return None;
                         }
                         for _ in 0..n {
-                            paint_sixel(&mut pixels, width, x, band, s, palette[color]);
+                            paint_sixel(&mut pixels, stride, x, band, s, palette[color]);
                             x += 1;
                         }
                         i += 1;
@@ -154,10 +179,17 @@ pub fn decode(data: &[u8]) -> Option<Image> {
                 i += 1;
             }
             0x3f..=0x7e => {
-                if !ensure(&mut pixels, &mut width, &mut height, x + 1, (band + 1) * 6) {
+                if !ensure(
+                    &mut pixels,
+                    &mut stride,
+                    &mut width,
+                    &mut height,
+                    x + 1,
+                    (band + 1) * 6,
+                ) {
                     return None;
                 }
-                paint_sixel(&mut pixels, width, x, band, b, palette[color]);
+                paint_sixel(&mut pixels, stride, x, band, b, palette[color]);
                 x += 1;
                 i += 1;
             }
@@ -169,10 +201,12 @@ pub fn decode(data: &[u8]) -> Option<Image> {
         return None;
     }
     let mut rgba = Vec::with_capacity(width * height * 4);
-    for p in &pixels {
-        match p {
-            Some(Rgb(r, g, b)) => rgba.extend_from_slice(&[*r, *g, *b, 255]),
-            None => rgba.extend_from_slice(&[0, 0, 0, 0]),
+    for y in 0..height {
+        for p in &pixels[y * stride..y * stride + width] {
+            match p {
+                Some(Rgb(r, g, b)) => rgba.extend_from_slice(&[*r, *g, *b, 255]),
+                None => rgba.extend_from_slice(&[0, 0, 0, 0]),
+            }
         }
     }
     Some(Image {
@@ -183,13 +217,14 @@ pub fn decode(data: &[u8]) -> Option<Image> {
 }
 
 /// Paint the six vertical pixels a sixel byte encodes at column `x`, starting
-/// at `band * 6`. Bit 0 is the topmost pixel.
-fn paint_sixel(pixels: &mut [Option<Rgb>], width: usize, x: usize, band: usize, byte: u8, color: Rgb) {
+/// at `band * 6`. Bit 0 is the topmost pixel. `stride` is the buffer's slots
+/// per row (at least the image width).
+fn paint_sixel(pixels: &mut [Option<Rgb>], stride: usize, x: usize, band: usize, byte: u8, color: Rgb) {
     let bits = byte - 0x3f;
     for row in 0..6 {
         if bits & (1 << row) != 0 {
             let y = band * 6 + row;
-            let idx = y * width + x;
+            let idx = y * stride + x;
             if idx < pixels.len() {
                 pixels[idx] = Some(color);
             }

@@ -67,32 +67,6 @@ pub fn base64_decode(input: &[u8]) -> Option<Vec<u8>> {
     Some(out)
 }
 
-/// Encode bytes as standard base64 with padding. Used to answer OSC 52
-/// clipboard queries.
-pub fn base64_encode(input: &[u8]) -> String {
-    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    let mut out = String::with_capacity(input.len().div_ceil(3) * 4);
-    for chunk in input.chunks(3) {
-        let b0 = chunk[0] as u32;
-        let b1 = *chunk.get(1).unwrap_or(&0) as u32;
-        let b2 = *chunk.get(2).unwrap_or(&0) as u32;
-        let n = (b0 << 16) | (b1 << 8) | b2;
-        out.push(ALPHABET[(n >> 18) as usize & 0x3f] as char);
-        out.push(ALPHABET[(n >> 12) as usize & 0x3f] as char);
-        out.push(if chunk.len() > 1 {
-            ALPHABET[(n >> 6) as usize & 0x3f] as char
-        } else {
-            '='
-        });
-        out.push(if chunk.len() > 2 {
-            ALPHABET[n as usize & 0x3f] as char
-        } else {
-            '='
-        });
-    }
-    out
-}
-
 /// Decode a hex string (even length, ASCII hex digits) to bytes. Used for
 /// XTGETTCAP capability names. `None` on bad length or non-hex.
 pub fn hex_decode(input: &[u8]) -> Option<Vec<u8>> {

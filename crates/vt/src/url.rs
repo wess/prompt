@@ -21,14 +21,14 @@ pub fn find(chars: &[char]) -> Vec<(usize, usize)> {
 
 /// If a URL starts at the front of `s`, return its length in chars.
 fn match_at(s: &[char]) -> Option<usize> {
+    // Schemes are static ASCII, so bytes and chars line up one-to-one.
     let scheme_len = SCHEMES.iter().find_map(|scheme| {
-        let sl: Vec<char> = scheme.chars().collect();
-        (s.len() > sl.len()
-            && s[..sl.len()]
-                .iter()
-                .zip(&sl)
-                .all(|(a, b)| a.to_ascii_lowercase() == *b))
-        .then_some(sl.len())
+        (s.len() > scheme.len()
+            && scheme
+                .bytes()
+                .zip(s)
+                .all(|(b, c)| c.to_ascii_lowercase() == b as char))
+        .then_some(scheme.len())
     })?;
 
     let mut len = scheme_len;
