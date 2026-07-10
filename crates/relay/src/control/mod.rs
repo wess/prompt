@@ -19,6 +19,7 @@ pub fn routes() -> Router<App> {
         .route("/control/state", get(state))
         .route("/control/events", get(events))
         .route("/control/feed", get(feed))
+        .route("/control/feed/live", get(feed_live))
         .route("/control/spawn", post(spawn_worker))
         .route("/control/stop", post(stop_worker))
         .route("/control/register", post(register))
@@ -50,12 +51,29 @@ struct WaitReq {
     name: String,
     #[serde(default)]
     block: bool,
+    /// Highest message id the client finished processing from its previous
+    /// batch. The read cursor only advances on this handshake, so a batch whose
+    /// response was lost in flight is redelivered — at-least-once, see the
+    /// delivery contract in [`crate::bus`].
+    #[serde(default)]
+    ack: i64,
 }
 
 async fn wait(State(app): State<App>, Json(r): Json<WaitReq>) -> Json<Value> {
-    let msgs =
-        crate::bus::await_messages(&app, &r.name, r.block, std::time::Duration::from_secs(25)).await;
-    Json(json!({ "messages": msgs }))
+    if r.ack > 0 {
+        if let Err(e) = crate::bus::ack(&app, &r.name, r.ack).await {
+            return Json(json!({ "ok": false, "error": e.to_string(), "messages": [] }));
+        }
+    }
+    match crate::bus::await_messages(&app, &r.name, r.block, std::time::Duration::from_secs(25))
+        .await
+    {
+        Ok(msgs) => {
+            let last = msgs.last().map(|m| m.id).unwrap_or(0);
+            Json(json!({ "ok": true, "messages": msgs, "last": last }))
+        }
+        Err(e) => Json(json!({ "ok": false, "error": e.to_string(), "messages": [] })),
+    }
 }
 
 #[derive(Deserialize)]
@@ -141,6 +159,38 @@ async fn feed(State(app): State<App>, Query(q): Query<Since>) -> Json<Value> {
     Json(json!({ "messages": msgs, "last": last }))
 }
 
+/// SSE tail of the message bus: one `feed` event with the backlog after
+/// `since`, then a fresh batch each time `deliver` bumps the feed tip. This is
+/// what `relay feed --follow` consumes — pushed, not polled.
+async fn feed_live(State(app): State<App>, Query(q): Query<Since>) -> Response {
+    let mut rx = app.feed_tip.subscribe();
+    let stream = async_stream::stream! {
+        let mut since = q.since;
+        loop {
+            match db::since(&app.db, since, 200).await {
+                Ok(msgs) if !msgs.is_empty() => {
+                    since = msgs.last().map(|m| m.id).unwrap_or(since);
+                    let data = serde_json::to_string(&json!({ "messages": msgs, "last": since }))
+                        .unwrap_or_default();
+                    yield Ok::<Event, Infallible>(Event::default().event("feed").data(data));
+                }
+                Ok(_) => {}
+                Err(_) => break,
+            }
+            if rx.changed().await.is_err() {
+                break;
+            }
+        }
+    };
+    Sse::new(stream)
+        .keep_alive(
+            KeepAlive::new()
+                .interval(Duration::from_secs(15))
+                .text("keepalive"),
+        )
+        .into_response()
+}
+
 #[derive(Deserialize)]
 struct SpawnReq {
     name: String,
@@ -188,8 +238,8 @@ struct StopReq {
 }
 
 async fn stop_worker(State(app): State<App>, Json(req): Json<StopReq>) -> Json<Value> {
-    let ok = spawn::stop(&app, &req.name).await;
-    // Explicit stop (relay kill): forget it so a restart doesn't resurrect it.
-    let _ = db::delete_worker(&app.db, &req.name).await;
+    // Explicit stop (relay kill): the shared helper forgets the persisted row
+    // exactly when the MCP `stop_worker` tool would.
+    let ok = spawn::stop_and_forget(&app, &req.name).await;
     Json(json!({ "ok": ok }))
 }

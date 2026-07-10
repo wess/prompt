@@ -1,11 +1,14 @@
 //! Reusable agent roles: a name + brief (+ optional defaults) that `launch`
 //! injects into the harness. Resolved highest-priority-first from the project
-//! (`./.relay/roles`), the user dir, then built-ins embedded in the binary.
+//! layer (the state dir's `roles/`), the user dir, then built-ins embedded in
+//! the binary — see [`super::layered`].
 
+use super::layered::{self, Source};
 use super::RoleCmd;
 use anyhow::{anyhow, bail, Result};
 use serde::Deserialize;
-use std::path::{Path, PathBuf};
+
+const KIND: &str = "roles";
 
 /// Built-in role templates, embedded at build time.
 const BUILTINS: &[(&str, &str)] = &[
@@ -17,23 +20,6 @@ const BUILTINS: &[(&str, &str)] = &[
     ("devops", include_str!("../../roles/devops.toml")),
     ("qa", include_str!("../../roles/qa.toml")),
 ];
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum Source {
-    Project,
-    User,
-    Builtin,
-}
-
-impl Source {
-    fn label(self) -> &'static str {
-        match self {
-            Source::Project => "project",
-            Source::User => "user",
-            Source::Builtin => "built-in",
-        }
-    }
-}
 
 /// The TOML schema of a role file. Unknown fields (e.g. `name`) are ignored.
 #[derive(Deserialize, Default)]
@@ -83,64 +69,27 @@ fn parse(name: &str, text: &str, source: Source) -> Result<Role> {
     })
 }
 
-fn valid(name: &str) -> bool {
-    !name.is_empty()
-        && name
-            .bytes()
-            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-' || b == b'.')
-}
-
-fn project_dir() -> PathBuf {
-    PathBuf::from(".relay").join("roles")
-}
-
-fn user_dir() -> PathBuf {
-    let base = std::env::var_os("XDG_CONFIG_HOME")
-        .map(PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config")))
-        .unwrap_or_else(|| PathBuf::from("."));
-    base.join("relay").join("roles")
-}
-
-fn dir(user: bool) -> PathBuf {
-    if user {
-        user_dir()
-    } else {
-        project_dir()
-    }
-}
-
-fn file_in(dir: &Path, name: &str) -> PathBuf {
-    dir.join(format!("{name}.toml"))
-}
-
-fn builtin(name: &str) -> Option<&'static str> {
-    BUILTINS.iter().find(|(n, _)| *n == name).map(|(_, t)| *t)
-}
-
-/// Resolve a role by name, project → user → built-in.
+/// Resolve a role by name, project → user → built-in, with the project layer
+/// in the ambient working directory (CLI use).
 pub fn resolve(name: &str) -> Option<Role> {
-    let p = file_in(&project_dir(), name);
-    if let Ok(text) = std::fs::read_to_string(&p) {
-        return parse(name, &text, Source::Project).ok();
-    }
-    let u = file_in(&user_dir(), name);
-    if let Ok(text) = std::fs::read_to_string(&u) {
-        return parse(name, &text, Source::User).ok();
-    }
-    builtin(name).and_then(|text| parse(name, text, Source::Builtin).ok())
+    resolve_in(None, name)
 }
 
-/// Editor command: $VISUAL, then $EDITOR, then `vi`.
-fn editor() -> String {
-    for var in ["VISUAL", "EDITOR"] {
-        if let Ok(v) = std::env::var(var) {
-            if !v.trim().is_empty() {
-                return v;
-            }
+/// Resolve with an explicit project root — the worker's cwd, passed through
+/// `build::Options::role_root`. The daemon must always supply one: its own cwd
+/// is meaningless (a Finder-launched app leaves it at `/`), and resolving there
+/// silently hid every project-layer role.
+pub fn resolve_in(root: Option<&std::path::Path>, name: &str) -> Option<Role> {
+    let project = match root {
+        Some(r) => layered::project_dir_in(r, KIND),
+        None => layered::project_dir(KIND),
+    };
+    for (d, src) in [(project, Source::Project), (layered::user_dir(KIND), Source::User)] {
+        if let Ok(text) = std::fs::read_to_string(layered::file_in(&d, name)) {
+            return parse(name, &text, src).ok();
         }
     }
-    "vi".to_string()
+    layered::builtin(BUILTINS, name).and_then(|text| parse(name, text, Source::Builtin).ok())
 }
 
 pub fn run(action: RoleCmd) -> Result<()> {
@@ -154,23 +103,7 @@ pub fn run(action: RoleCmd) -> Result<()> {
 }
 
 fn list(as_json: bool) -> Result<()> {
-    use std::collections::BTreeMap;
-    let mut seen: BTreeMap<String, Source> = BTreeMap::new();
-    for (n, _) in BUILTINS {
-        seen.insert((*n).to_string(), Source::Builtin);
-    }
-    for (d, src) in [(user_dir(), Source::User), (project_dir(), Source::Project)] {
-        if let Ok(entries) = std::fs::read_dir(&d) {
-            for e in entries.flatten() {
-                let path = e.path();
-                if path.extension().and_then(|x| x.to_str()) == Some("toml") {
-                    if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
-                        seen.insert(stem.to_string(), src);
-                    }
-                }
-            }
-        }
-    }
+    let seen = layered::scan(KIND, BUILTINS);
     if as_json {
         let arr: Vec<_> = seen
             .iter()
@@ -206,7 +139,7 @@ fn info(name: &str) -> Result<()> {
 }
 
 fn scaffold(name: &str) -> String {
-    if let Some(text) = builtin(name) {
+    if let Some(text) = layered::builtin(BUILTINS, name) {
         return text.to_string();
     }
     format!(
@@ -222,30 +155,34 @@ fn scaffold(name: &str) -> String {
     )
 }
 
+fn check(name: &str, text: &str) -> Result<()> {
+    parse(name, text, Source::Project).map(|_| ())
+}
+
 fn create(name: &str, user: bool) -> Result<()> {
-    if !valid(name) {
+    if !layered::valid(name) {
         bail!("role name must be lowercase letters, digits, `.` or `-`");
     }
-    let path = file_in(&dir(user), name);
+    let path = layered::file_in(&layered::dir(KIND, user), name);
     if path.exists() {
         bail!("role `{name}` already exists at {} — use `edit`", path.display());
     }
-    open_editor(&path, scaffold(name))
+    layered::open_editor(&path, scaffold(name), &check)
 }
 
 fn edit(name: &str, user: bool) -> Result<()> {
-    let target = file_in(&dir(user), name);
+    let target = layered::file_in(&layered::dir(KIND, user), name);
     let seed = std::fs::read_to_string(&target)
         .ok()
         .or_else(|| resolve(name).map(serialize))
         .unwrap_or_else(|| scaffold(name));
-    open_editor(&target, seed)
+    layered::open_editor(&target, seed, &check)
 }
 
 fn delete(name: &str, user: bool) -> Result<()> {
-    let path = file_in(&dir(user), name);
+    let path = layered::file_in(&layered::dir(KIND, user), name);
     if !path.exists() {
-        if builtin(name).is_some() {
+        if layered::builtin(BUILTINS, name).is_some() {
             bail!("`{name}` is a built-in role; create an override to change it");
         }
         bail!("no {} role named `{name}`", if user { "user" } else { "project" });
@@ -289,29 +226,43 @@ fn serialize(role: Role) -> String {
     out
 }
 
-/// Open `$EDITOR` on a temp seed, validate it parses, then move it into place.
-fn open_editor(target: &PathBuf, seed: String) -> Result<()> {
-    if let Some(parent) = target.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-    let tmp = target.with_extension("toml.tmp");
-    std::fs::write(&tmp, seed)?;
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-    let status = std::process::Command::new(editor()).arg(&tmp).status()?;
-    if !status.success() {
-        let _ = std::fs::remove_file(&tmp);
-        bail!("editor exited without saving");
+    /// The daemon used to resolve project roles against its own cwd (`/` when
+    /// Finder-launched), so they silently never resolved. The launch pipeline
+    /// passes the worker's root explicitly instead.
+    #[test]
+    fn resolve_in_uses_the_explicit_project_root() {
+        let root = std::env::temp_dir().join(format!("relay-role-root-{}", std::process::id()));
+        let dir = root.join(".relay").join("roles");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("shipit.toml"),
+            "description = \"\"\"\nShip it.\n\"\"\"\n",
+        )
+        .unwrap();
+        let role = resolve_in(Some(&root), "shipit").expect("project role under the given root");
+        assert!(matches!(role.source, Source::Project));
+        assert_eq!(role.description, "Ship it.");
+        // Without the root, the ambient cwd has no such role.
+        assert!(resolve("shipit").is_none());
+        let _ = std::fs::remove_dir_all(&root);
     }
 
-    let text = std::fs::read_to_string(&tmp)?;
-    let name = target
-        .file_stem()
-        .and_then(|s| s.to_str())
-        .unwrap_or("role");
-    if let Err(e) = parse(name, &text, Source::Project) {
-        bail!("{e}\nleft your draft at {}", tmp.display());
+    /// A serialized role must survive the round trip: `edit` seeds from the
+    /// fully resolved layer, so what it writes has to parse back identically.
+    #[test]
+    fn serialize_round_trips_a_builtin() {
+        let text = layered::builtin(BUILTINS, "supervisor").unwrap();
+        let role = parse("supervisor", text, Source::Builtin).unwrap();
+        let (driver, channels, tools) = (role.driver, role.channels.clone(), role.tools.clone());
+        let desc = role.description.clone();
+        let re = parse("supervisor", &serialize(role), Source::Project).unwrap();
+        assert_eq!(re.driver, driver);
+        assert_eq!(re.channels, channels);
+        assert_eq!(re.tools, tools);
+        assert_eq!(re.description, desc);
     }
-    std::fs::rename(&tmp, target)?;
-    println!("saved {}", target.display());
-    Ok(())
 }

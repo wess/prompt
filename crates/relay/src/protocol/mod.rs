@@ -17,7 +17,6 @@ pub struct Message {
 /// Incoming JSON-RPC request (or notification when `id` is absent).
 #[derive(Debug, Deserialize)]
 pub struct RpcRequest {
-    #[allow(dead_code)]
     pub jsonrpc: Option<String>,
     pub id: Option<Value>,
     pub method: String,

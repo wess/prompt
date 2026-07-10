@@ -1,12 +1,14 @@
 //! Teams: a named layout plus a roster of members (name + role). Relay owns the
 //! definition; Sinclair reads it (via `--json`) to open a tiled set of agents.
-//! Resolved project → user → built-in, like roles.
+//! Resolved project → user → built-in, like roles — see [`super::layered`].
 
+use super::layered::{self, Source};
 use super::TeamCmd;
 use anyhow::{anyhow, bail, Result};
 use serde::Deserialize;
 use serde_json::json;
-use std::path::{Path, PathBuf};
+
+const KIND: &str = "teams";
 
 const BUILTINS: &[(&str, &str)] = &[
     ("web", include_str!("../../teams/web.toml")),
@@ -15,23 +17,6 @@ const BUILTINS: &[(&str, &str)] = &[
 
 /// Layout shapes Sinclair's tile engine understands.
 const SHAPES: &[&str] = &["columns", "rows", "grid", "main-bottom", "main-right"];
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum Source {
-    Project,
-    User,
-    Builtin,
-}
-
-impl Source {
-    fn label(self) -> &'static str {
-        match self {
-            Source::Project => "project",
-            Source::User => "user",
-            Source::Builtin => "built-in",
-        }
-    }
-}
 
 #[derive(Deserialize, Default)]
 struct TeamFile {
@@ -73,59 +58,16 @@ fn parse(name: &str, text: &str, source: Source) -> Result<Team> {
     })
 }
 
-fn valid(name: &str) -> bool {
-    !name.is_empty()
-        && name
-            .bytes()
-            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-' || b == b'.')
-}
-
-fn project_dir() -> PathBuf {
-    PathBuf::from(".relay").join("teams")
-}
-
-fn user_dir() -> PathBuf {
-    let base = std::env::var_os("XDG_CONFIG_HOME")
-        .map(PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config")))
-        .unwrap_or_else(|| PathBuf::from("."));
-    base.join("relay").join("teams")
-}
-
-fn dir(user: bool) -> PathBuf {
-    if user {
-        user_dir()
-    } else {
-        project_dir()
-    }
-}
-
-fn file_in(dir: &Path, name: &str) -> PathBuf {
-    dir.join(format!("{name}.toml"))
-}
-
-fn builtin(name: &str) -> Option<&'static str> {
-    BUILTINS.iter().find(|(n, _)| *n == name).map(|(_, t)| *t)
-}
-
 pub fn resolve(name: &str) -> Option<Team> {
-    for (d, src) in [(project_dir(), Source::Project), (user_dir(), Source::User)] {
-        if let Ok(text) = std::fs::read_to_string(file_in(&d, name)) {
+    for (d, src) in [
+        (layered::project_dir(KIND), Source::Project),
+        (layered::user_dir(KIND), Source::User),
+    ] {
+        if let Ok(text) = std::fs::read_to_string(layered::file_in(&d, name)) {
             return parse(name, &text, src).ok();
         }
     }
-    builtin(name).and_then(|text| parse(name, text, Source::Builtin).ok())
-}
-
-fn editor() -> String {
-    for var in ["VISUAL", "EDITOR"] {
-        if let Ok(v) = std::env::var(var) {
-            if !v.trim().is_empty() {
-                return v;
-            }
-        }
-    }
-    "vi".to_string()
+    layered::builtin(BUILTINS, name).and_then(|text| parse(name, text, Source::Builtin).ok())
 }
 
 pub fn run(action: TeamCmd) -> Result<()> {
@@ -166,7 +108,7 @@ fn save(user: bool) -> Result<()> {
     std::io::Read::read_to_string(&mut std::io::stdin(), &mut raw)?;
     let spec: SaveSpec = serde_json::from_str(&raw).map_err(|e| anyhow!("bad team JSON: {e}"))?;
     let name = spec.name.trim();
-    if !valid(name) {
+    if !layered::valid(name) {
         bail!("team name must be lowercase letters, digits, `.` or `-`");
     }
     let members: Vec<SaveMember> = spec
@@ -182,7 +124,7 @@ fn save(user: bool) -> Result<()> {
     let toml = render_toml(name, layout, &members);
     // Validate what we're about to write with the same parser `resolve` uses.
     parse(name, &toml, Source::User)?;
-    let path = file_in(&dir(user), name);
+    let path = layered::file_in(&layered::dir(KIND, user), name);
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
@@ -207,28 +149,8 @@ fn render_toml(name: &str, layout: &str, members: &[SaveMember]) -> String {
     out
 }
 
-fn all_names() -> std::collections::BTreeMap<String, Source> {
-    let mut seen = std::collections::BTreeMap::new();
-    for (n, _) in BUILTINS {
-        seen.insert((*n).to_string(), Source::Builtin);
-    }
-    for (d, src) in [(user_dir(), Source::User), (project_dir(), Source::Project)] {
-        if let Ok(entries) = std::fs::read_dir(&d) {
-            for e in entries.flatten() {
-                let path = e.path();
-                if path.extension().and_then(|x| x.to_str()) == Some("toml") {
-                    if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
-                        seen.insert(stem.to_string(), src);
-                    }
-                }
-            }
-        }
-    }
-    seen
-}
-
 fn list(as_json: bool) -> Result<()> {
-    let names = all_names();
+    let names = layered::scan(KIND, BUILTINS);
     if as_json {
         let arr: Vec<_> = names
             .iter()
@@ -273,7 +195,7 @@ fn info(name: &str, as_json: bool) -> Result<()> {
 }
 
 fn scaffold(name: &str) -> String {
-    if let Some(text) = builtin(name) {
+    if let Some(text) = layered::builtin(BUILTINS, name) {
         return text.to_string();
     }
     format!(
@@ -289,30 +211,37 @@ fn scaffold(name: &str) -> String {
     )
 }
 
+fn check(name: &str, text: &str) -> Result<()> {
+    parse(name, text, Source::Project).map(|_| ())
+}
+
 fn create(name: &str, user: bool) -> Result<()> {
-    if !valid(name) {
+    if !layered::valid(name) {
         bail!("team name must be lowercase letters, digits, `.` or `-`");
     }
-    let path = file_in(&dir(user), name);
+    let path = layered::file_in(&layered::dir(KIND, user), name);
     if path.exists() {
         bail!("team `{name}` already exists at {} — use `edit`", path.display());
     }
-    open_editor(&path, scaffold(name))
+    layered::open_editor(&path, scaffold(name), &check)
 }
 
 fn edit(name: &str, user: bool) -> Result<()> {
-    let target = file_in(&dir(user), name);
+    let target = layered::file_in(&layered::dir(KIND, user), name);
+    // Seed from the fully resolved team (project → user → built-in), the same
+    // copy-on-write `role edit` does, so editing an overridden team starts from
+    // what is actually in effect rather than the pristine built-in.
     let seed = std::fs::read_to_string(&target)
         .ok()
-        .or_else(|| builtin(name).map(str::to_string))
+        .or_else(|| resolve(name).map(serialize))
         .unwrap_or_else(|| scaffold(name));
-    open_editor(&target, seed)
+    layered::open_editor(&target, seed, &check)
 }
 
 fn delete(name: &str, user: bool) -> Result<()> {
-    let path = file_in(&dir(user), name);
+    let path = layered::file_in(&layered::dir(KIND, user), name);
     if !path.exists() {
-        if builtin(name).is_some() {
+        if layered::builtin(BUILTINS, name).is_some() {
             bail!("`{name}` is a built-in team; create an override to change it");
         }
         bail!("no {} team named `{name}`", if user { "user" } else { "project" });
@@ -322,23 +251,43 @@ fn delete(name: &str, user: bool) -> Result<()> {
     Ok(())
 }
 
-fn open_editor(target: &PathBuf, seed: String) -> Result<()> {
-    if let Some(parent) = target.parent() {
-        std::fs::create_dir_all(parent)?;
+/// Re-emit a resolved team as a TOML file body (seeds copy-on-write edits).
+fn serialize(team: Team) -> String {
+    let members: Vec<SaveMember> = team
+        .members
+        .into_iter()
+        .map(|m| SaveMember {
+            name: m.name,
+            role: m.role,
+            agent: m.agent,
+        })
+        .collect();
+    render_toml(&team.name, &team.layout, &members)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The `edit` seed must round-trip: a resolved team serialized back to TOML
+    /// has to parse to the same roster and layout.
+    #[test]
+    fn serialize_round_trips_a_builtin() {
+        let text = layered::builtin(BUILTINS, "web").unwrap();
+        let team = parse("web", text, Source::Builtin).unwrap();
+        let layout = team.layout.clone();
+        let roster: Vec<(String, Option<String>)> = team
+            .members
+            .iter()
+            .map(|m| (m.name.clone(), m.role.clone()))
+            .collect();
+        let re = parse("web", &serialize(team), Source::Project).unwrap();
+        assert_eq!(re.layout, layout);
+        let re_roster: Vec<(String, Option<String>)> = re
+            .members
+            .iter()
+            .map(|m| (m.name.clone(), m.role.clone()))
+            .collect();
+        assert_eq!(re_roster, roster);
     }
-    let tmp = target.with_extension("toml.tmp");
-    std::fs::write(&tmp, seed)?;
-    let status = std::process::Command::new(editor()).arg(&tmp).status()?;
-    if !status.success() {
-        let _ = std::fs::remove_file(&tmp);
-        bail!("editor exited without saving");
-    }
-    let text = std::fs::read_to_string(&tmp)?;
-    let name = target.file_stem().and_then(|s| s.to_str()).unwrap_or("team");
-    if let Err(e) = parse(name, &text, Source::Project) {
-        bail!("{e}\nleft your draft at {}", tmp.display());
-    }
-    std::fs::rename(&tmp, target)?;
-    println!("saved {}", target.display());
-    Ok(())
 }

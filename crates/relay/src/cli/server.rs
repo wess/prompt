@@ -14,17 +14,18 @@ use axum::Router;
 use std::process::{Command, Stdio};
 use std::time::Duration;
 
+/// Bind address and DB path from flags alone — relay reads no environment
+/// variables; the app passes `--addr`/`--db` explicitly. The DB defaults into
+/// the state dir (`--home`), resolved absolute so a daemon whose cwd is `/`
+/// still lands in the right place.
 fn resolve(args: &ServeArgs) -> (String, String) {
-    let addr = args
-        .addr
-        .clone()
-        .or_else(|| std::env::var("RELAY_ADDR").ok())
-        .unwrap_or_else(|| "127.0.0.1:7777".into());
-    let db = args
-        .db
-        .clone()
-        .or_else(|| std::env::var("RELAY_DB").ok())
-        .unwrap_or_else(|| ".relay/relay.db".into());
+    let addr = args.addr.clone().unwrap_or_else(|| "127.0.0.1:7777".into());
+    let db = args.db.clone().unwrap_or_else(|| {
+        paths::abs_dir()
+            .join("relay.db")
+            .to_string_lossy()
+            .into_owned()
+    });
     (addr, db)
 }
 
@@ -45,23 +46,35 @@ pub async fn serve(args: ServeArgs) -> Result<()> {
     let token = gen_token();
     let app = App::new(pool, paths::endpoint(&addr), token.clone());
 
-    // Presence sweep: periodically re-emit the roster so the app's liveness dot
-    // (computed from `last_seen` + the parked set) ages a quiet or crashed agent
-    // out even when nothing else bumps the event stream (issue #9).
+    // Presence sweep: re-emit the roster exactly when the next agent's activity
+    // window lapses, so the app's liveness dot (computed from `last_seen` + the
+    // parked set) ages a quiet or crashed agent out (issue #9) — without a
+    // blind fixed tick that keeps waking idle subscribers forever.
     {
         let app = app.clone();
         tokio::spawn(async move {
-            let mut tick = tokio::time::interval(Duration::from_secs(20));
-            tick.tick().await; // discard the immediate first tick
+            let window = crate::state::ACTIVE_WINDOW_SECS;
             loop {
-                tick.tick().await;
-                app.bump();
+                let horizon = crate::protocol::now() - window;
+                match db::next_expiry(&app.db, horizon).await {
+                    Ok(Some(seen)) => {
+                        // Sleep until just past that agent's expiry, then bump
+                        // once: the roster flips at most one snapshot per lapse.
+                        let due = seen + window + 1;
+                        let wait = (due - crate::protocol::now()).max(1) as u64;
+                        tokio::time::sleep(Duration::from_secs(wait)).await;
+                        app.bump();
+                    }
+                    // Nothing inside the window (or a read hiccup): idle until
+                    // it is worth re-checking; no bump, so subscribers sleep too.
+                    _ => tokio::time::sleep(Duration::from_secs(window as u64)).await,
+                }
             }
         });
     }
 
     let guarded = Router::new()
-        .route("/mcp", post(transport::handle))
+        .route("/mcp", post(transport::handle).delete(transport::end))
         .merge(control::routes())
         .layer(axum::middleware::from_fn_with_state(app.clone(), auth))
         .with_state(app.clone());

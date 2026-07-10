@@ -1,8 +1,10 @@
 pub mod agent;
 pub mod bridge;
+pub mod build;
 pub mod feed;
 pub mod http;
 pub mod launch;
+pub mod layered;
 pub mod paths;
 pub mod ps;
 pub mod role;

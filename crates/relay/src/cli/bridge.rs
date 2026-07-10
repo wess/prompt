@@ -23,11 +23,16 @@ pub fn run(a: AgentArgs) -> Result<()> {
         a.name, a.model, a.ollama
     );
 
+    // Delivery ack handshake: the next `wait` carries the highest id this loop
+    // finished processing, and only then does the server advance the read
+    // cursor — a batch lost in flight (or a crash mid-batch) is redelivered
+    // instead of silently dropped. See the delivery contract in `crate::bus`.
+    let mut acked = 0i64;
     loop {
         let resp = http::post(
             &relay,
             "/control/wait",
-            &json!({ "name": a.name, "block": true }).to_string(),
+            &json!({ "name": a.name, "block": true, "ack": acked }).to_string(),
         )?;
         let v: Value = serde_json::from_str(&resp).unwrap_or(Value::Null);
         for m in v["messages"].as_array().cloned().unwrap_or_default() {
@@ -36,6 +41,9 @@ pub fn run(a: AgentArgs) -> Result<()> {
             if let Err(e) = turn(&a, &relay, &ollama, &sender, &body) {
                 eprintln!("relay: ollama turn failed: {e}");
             }
+        }
+        if let Some(last) = v["last"].as_i64().filter(|l| *l > 0) {
+            acked = last;
         }
     }
 }
@@ -65,12 +73,16 @@ fn turn(a: &AgentArgs, relay: &str, ollama: &str, sender: &str, body: &str) -> R
         if calls.is_empty() {
             let content = msg["content"].as_str().unwrap_or("").trim().to_string();
             if !content.is_empty() {
-                let _ = http::post(
-                    relay,
-                    "/control/send",
-                    &json!({ "from": a.name, "kind": "direct", "target": sender, "body": content })
-                        .to_string(),
-                );
+                let payload =
+                    json!({ "from": a.name, "kind": "direct", "target": sender, "body": content })
+                        .to_string();
+                // The model's final answer is the whole point of the turn: one
+                // retry, then surface the failure like any other turn error
+                // instead of dropping the reply on the floor.
+                if http::post(relay, "/control/send", &payload).is_err() {
+                    http::post(relay, "/control/send", &payload)
+                        .map_err(|e| anyhow!("reply to {sender} was not delivered: {e}"))?;
+                }
             }
             return Ok(());
         }

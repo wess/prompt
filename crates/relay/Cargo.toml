@@ -17,7 +17,6 @@ toml = "0.8"
 sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "sqlite", "macros"] }
 uuid = { version = "1", features = ["v4"] }
 async-stream = "0.3"
-tokio-stream = "0.1"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 anyhow = "1"

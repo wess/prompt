@@ -3,9 +3,15 @@ use anyhow::Result;
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
 use sqlx::SqlitePool;
 
-/// Cap on retained messages. Readers track a cursor by id, so dropping the
-/// oldest already-delivered rows keeps the on-disk file from growing forever.
+/// Messages kept for the dashboard feed once every registered reader has
+/// consumed them.
 const MESSAGE_RETENTION: i64 = 10_000;
+
+/// Absolute backlog bound. A lagging reader's unread messages are preserved
+/// past `MESSAGE_RETENTION`, but never beyond this: past it the prune floor
+/// moves anyway and the lagging cursor is bumped to the floor (see
+/// [`prune_floor`]).
+const MAX_BACKLOG: i64 = 50_000;
 
 pub async fn open(path: &str) -> Result<SqlitePool> {
     let opts = SqliteConnectOptions::new()
@@ -210,25 +216,55 @@ pub async fn insert_message(
     Ok(res.last_insert_rowid())
 }
 
-/// Trim the table to the most recent `MESSAGE_RETENTION` rows.
+/// Trim delivered history. Normally nothing above the slowest registered
+/// reader's cursor is touched (unread messages survive past the feed
+/// retention), but `MAX_BACKLOG` is a hard bound: when it forces the floor past
+/// a cursor, that cursor is bumped to the floor so the reader's next drain sees
+/// a consistent (if gappy) stream, and the gap is logged.
 async fn prune_messages(pool: &SqlitePool) -> Result<()> {
-    sqlx::query("DELETE FROM messages WHERE id <= (SELECT MAX(id) FROM messages) - ?1")
-        .bind(MESSAGE_RETENTION)
+    let max = max_message_id(pool).await?;
+    if max <= MESSAGE_RETENTION {
+        return Ok(());
+    }
+    let row: (Option<i64>,) = sqlx::query_as("SELECT MIN(cursor) FROM agents WHERE online = 1")
+        .fetch_one(pool)
+        .await?;
+    let floor = prune_floor(max, row.0);
+    if floor <= 0 {
+        return Ok(());
+    }
+    let bumped = sqlx::query("UPDATE agents SET cursor = ?1 WHERE cursor < ?1")
+        .bind(floor)
+        .execute(pool)
+        .await?;
+    if bumped.rows_affected() > 0 {
+        tracing::warn!(
+            "relay: prune floor {floor} passed {} reader cursor(s); their older messages were dropped undelivered",
+            bumped.rows_affected()
+        );
+    }
+    sqlx::query("DELETE FROM messages WHERE id <= ?1")
+        .bind(floor)
         .execute(pool)
         .await?;
     Ok(())
 }
 
-pub async fn cursor_of(pool: &SqlitePool, name: &str) -> Result<i64> {
-    let row: Option<(i64,)> = sqlx::query_as("SELECT cursor FROM agents WHERE name = ?1")
-        .bind(name)
-        .fetch_optional(pool)
-        .await?;
-    Ok(row.map(|r| r.0).unwrap_or(0))
+/// Highest message id safe to delete: everything the slowest registered reader
+/// has consumed, keeping at least `MESSAGE_RETENTION` rows for the feed, but
+/// never letting the backlog exceed `MAX_BACKLOG`.
+fn prune_floor(max_id: i64, min_cursor: Option<i64>) -> i64 {
+    let retention = max_id - MESSAGE_RETENTION;
+    let soft = min_cursor.map_or(retention, |c| retention.min(c));
+    soft.max(max_id - MAX_BACKLOG)
 }
 
-pub async fn advance_cursor(pool: &SqlitePool, name: &str, id: i64) -> Result<()> {
-    sqlx::query("UPDATE agents SET cursor = ?2, last_seen = ?3 WHERE name = ?1")
+/// Confirm delivery of everything up to `id`: advance the read cursor
+/// monotonically (a stale ack can never rewind it) and refresh liveness. This
+/// is the only writer of the cursor outside pruning — see the delivery
+/// contract in [`crate::bus`].
+pub async fn ack_delivered(pool: &SqlitePool, name: &str, id: i64) -> Result<()> {
+    sqlx::query("UPDATE agents SET cursor = MAX(cursor, ?2), last_seen = ?3 WHERE name = ?1")
         .bind(name)
         .bind(id)
         .bind(now())
@@ -237,13 +273,16 @@ pub async fn advance_cursor(pool: &SqlitePool, name: &str, id: i64) -> Result<()
     Ok(())
 }
 
-/// Messages addressed to `name` with id greater than `cursor`.
-pub async fn pending_for(pool: &SqlitePool, name: &str, cursor: i64) -> Result<Vec<Message>> {
+/// Messages addressed to `name` beyond its read cursor. Reads the cursor and
+/// scans in one statement, so a concurrent [`ack_delivered`] cannot interleave
+/// between them; because the cursor only moves on ack, an unacknowledged
+/// delivery is simply read again here.
+pub async fn pending_for(pool: &SqlitePool, name: &str) -> Result<Vec<Message>> {
     let rows = sqlx::query_as::<_, Message>(
         r#"
         SELECT id, sender, kind, target, body, created
         FROM messages
-        WHERE id > ?2
+        WHERE id > COALESCE((SELECT cursor FROM agents WHERE name = ?1), 0)
           AND sender != ?1
           AND (
                 (kind = 'direct'    AND target = ?1)
@@ -254,7 +293,6 @@ pub async fn pending_for(pool: &SqlitePool, name: &str, cursor: i64) -> Result<V
         "#,
     )
     .bind(name)
-    .bind(cursor)
     .fetch_all(pool)
     .await?;
     Ok(rows)
@@ -266,12 +304,25 @@ pub async fn since(pool: &SqlitePool, since: i64, limit: i64) -> Result<Vec<Mess
         return recent(pool, limit).await;
     }
     let rows = sqlx::query_as::<_, Message>(
-        "SELECT id, sender, kind, target, body, created FROM messages WHERE id > ?1 ORDER BY id ASC LIMIT 1000",
+        "SELECT id, sender, kind, target, body, created FROM messages WHERE id > ?1 ORDER BY id ASC LIMIT ?2",
     )
     .bind(since)
+    .bind(limit)
     .fetch_all(pool)
     .await?;
     Ok(rows)
+}
+
+/// Earliest `last_seen` among agents still inside the liveness window (i.e.
+/// counted online by recency), or `None` when every agent is already outside
+/// it. `horizon` is `now - ACTIVE_WINDOW`; the caller sleeps until the returned
+/// agent's window lapses and re-emits the roster then.
+pub async fn next_expiry(pool: &SqlitePool, horizon: i64) -> Result<Option<i64>> {
+    let row: (Option<i64>,) = sqlx::query_as("SELECT MIN(last_seen) FROM agents WHERE last_seen > ?1")
+        .bind(horizon)
+        .fetch_one(pool)
+        .await?;
+    Ok(row.0)
 }
 
 /// Most recent messages (ascending), for the dashboard feed.
@@ -418,4 +469,118 @@ pub async fn list_channels(pool: &SqlitePool) -> Result<Vec<(String, i64)>> {
             .fetch_all(pool)
             .await?;
     Ok(rows)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    async fn pool() -> (SqlitePool, std::path::PathBuf) {
+        static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let n = N.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let path = std::env::temp_dir().join(format!("relay-db-{}-{n}.db", std::process::id()));
+        (open(path.to_str().unwrap()).await.unwrap(), path)
+    }
+
+    fn cleanup(path: &std::path::Path) {
+        let _ = std::fs::remove_file(path);
+        let _ = std::fs::remove_file(path.with_extension("db-wal"));
+        let _ = std::fs::remove_file(path.with_extension("db-shm"));
+    }
+
+    async fn insert_with_id(pool: &SqlitePool, id: i64) {
+        sqlx::query(
+            "INSERT INTO messages (id, sender, kind, target, body, created) VALUES (?1, 's', 'broadcast', NULL, 'm', 0)",
+        )
+        .bind(id)
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    async fn cursor(pool: &SqlitePool, name: &str) -> i64 {
+        let row: (i64,) = sqlx::query_as("SELECT cursor FROM agents WHERE name = ?1")
+            .bind(name)
+            .fetch_one(pool)
+            .await
+            .unwrap();
+        row.0
+    }
+
+    async fn ids(pool: &SqlitePool) -> Vec<i64> {
+        let rows: Vec<(i64,)> = sqlx::query_as("SELECT id FROM messages ORDER BY id")
+            .fetch_all(pool)
+            .await
+            .unwrap();
+        rows.into_iter().map(|r| r.0).collect()
+    }
+
+    /// `since` once hardcoded LIMIT 1000 and ignored the caller's limit.
+    #[tokio::test]
+    async fn since_binds_the_limit() {
+        let (pool, path) = pool().await;
+        for _ in 0..5 {
+            insert_message(&pool, "s", "broadcast", None, "m").await.unwrap();
+        }
+        let first = ids(&pool).await[0];
+        let msgs = since(&pool, first, 2).await.unwrap();
+        assert_eq!(msgs.len(), 2, "the limit parameter must apply on the since>0 branch");
+        cleanup(&path);
+    }
+
+    /// The floor math: unread messages hold pruning below the feed retention,
+    /// and the hard backlog cap wins over a hopeless straggler.
+    #[test]
+    fn prune_floor_respects_cursors_up_to_the_hard_cap() {
+        // Everyone caught up: the feed retention rules.
+        assert_eq!(prune_floor(20_000, Some(20_000)), 20_000 - MESSAGE_RETENTION);
+        // No registered readers: same.
+        assert_eq!(prune_floor(20_000, None), 20_000 - MESSAGE_RETENTION);
+        // A lagging reader holds the floor at its cursor.
+        assert_eq!(prune_floor(20_000, Some(5)), 5);
+        // ...but never past the absolute backlog bound.
+        assert_eq!(prune_floor(100_000, Some(5)), 100_000 - MAX_BACKLOG);
+    }
+
+    /// Pruning once deleted below MAX(id)-retention regardless of reader
+    /// cursors — a parked agent more than a retention behind lost its backlog.
+    /// Its unread messages must survive now.
+    #[tokio::test]
+    async fn prune_preserves_a_lagging_readers_backlog() {
+        let (pool, path) = pool().await;
+        upsert_agent(&pool, "slow", "worker", "").await.unwrap();
+        // upsert seeds the cursor at the current tip (0 here).
+        for id in [1, 2, 3] {
+            insert_with_id(&pool, id).await;
+        }
+        ack_delivered(&pool, "slow", 2).await.unwrap();
+        // Jump the tip far past the retention window, then insert normally so
+        // pruning runs.
+        insert_with_id(&pool, MESSAGE_RETENTION + 10).await;
+        insert_message(&pool, "s", "broadcast", None, "tip").await.unwrap();
+        let remaining = ids(&pool).await;
+        assert!(
+            remaining.contains(&3),
+            "message 3 is unread by 'slow' and inside the backlog bound — it must survive"
+        );
+        assert!(!remaining.contains(&1), "consumed history below the cursor is pruned");
+        assert_eq!(cursor(&pool, "slow").await, 2, "a preserved backlog leaves the cursor alone");
+        cleanup(&path);
+    }
+
+    /// When the hard backlog cap forces the floor past a cursor, the cursor is
+    /// bumped to the floor so the reader's next drain is consistent (gappy, not
+    /// silently rewound or replayed).
+    #[tokio::test]
+    async fn hard_cap_bumps_a_hopelessly_lagging_cursor() {
+        let (pool, path) = pool().await;
+        upsert_agent(&pool, "slow", "worker", "").await.unwrap();
+        insert_with_id(&pool, 1).await;
+        insert_with_id(&pool, MAX_BACKLOG + 100).await;
+        insert_message(&pool, "s", "broadcast", None, "tip").await.unwrap();
+        let floor = prune_floor(MAX_BACKLOG + 101, Some(0));
+        assert_eq!(cursor(&pool, "slow").await, floor, "the straggler's cursor moves to the floor");
+        assert!(!ids(&pool).await.contains(&1), "its lost backlog is actually pruned");
+        cleanup(&path);
+    }
 }

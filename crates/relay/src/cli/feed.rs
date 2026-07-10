@@ -1,26 +1,46 @@
 use super::{http, paths};
 use anyhow::Result;
 use serde_json::Value;
-use std::time::Duration;
+use std::io::BufRead;
 
+/// Print the message bus. `--follow` holds an SSE stream open on
+/// `/control/feed/live` and prints batches as the server pushes them — no
+/// polling; an idle mesh costs nothing. Exits when the server goes away, like
+/// the one-shot path does.
 pub fn feed(follow: bool) -> Result<()> {
     let info = paths::read_info()?;
-    let mut since = 0i64;
-    loop {
-        let resp = http::get(&info.addr, &format!("/control/feed?since={since}"))?;
+    if !follow {
+        let resp = http::get(&info.addr, "/control/feed?since=0")?;
         let v: Value = serde_json::from_str(&resp)?;
-        if let Some(arr) = v["messages"].as_array() {
-            for m in arr {
-                print_msg(m);
+        print_batch(&v);
+        return Ok(());
+    }
+
+    let mut reader = http::open_stream(&info.addr, "/control/feed/live?since=0")?;
+    let mut line = String::new();
+    loop {
+        line.clear();
+        if reader.read_line(&mut line)? == 0 {
+            return Ok(());
+        }
+        if let Some(rest) = line.strip_prefix("data:") {
+            let payload = rest.trim();
+            if payload.is_empty() {
+                continue;
+            }
+            if let Ok(v) = serde_json::from_str::<Value>(payload) {
+                print_batch(&v);
             }
         }
-        since = v["last"].as_i64().unwrap_or(since);
-        if !follow {
-            break;
-        }
-        std::thread::sleep(Duration::from_millis(600));
     }
-    Ok(())
+}
+
+fn print_batch(v: &Value) {
+    if let Some(arr) = v["messages"].as_array() {
+        for m in arr {
+            print_msg(m);
+        }
+    }
 }
 
 fn print_msg(m: &Value) {
