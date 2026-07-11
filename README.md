@@ -132,59 +132,62 @@ tagged releases are cut.
 
 ## Configure
 
-Prefer a UI? Press **⌘,** for an in-app settings panel — flip themes, font
-size and style, cursor, padding, scrollback, and copy-on-select with a click,
-and type directly into fields for your font family, shell, and foreground /
-background colors. Changes are written straight back to your config file, so
-the file stays the single source of truth.
+Prefer a UI? Press **⌘,** for the settings window — a search bar, categories
+in the sidebar, and one control per option (switches, sliders, dropdowns,
+text fields). Every setting shows a short description, a *modified* marker
+when your file overrides the default, and a per-row reset. Changes are
+written straight back to your settings file, so the file stays the single
+source of truth — and `Edit in settings.json` in the sidebar opens it
+directly.
 
-Under the hood it's a simple `key = value` file at `~/.config/sinclair/config`
-(or `$XDG_CONFIG_HOME/sinclair/config`) that **reloads the moment you save** —
-fonts, theme, padding, cursor, and keybindings all update live.
+Under the hood it's `settings.json` — JSON with comments — at
+`~/.config/sinclair/settings.json` (or `$XDG_CONFIG_HOME/sinclair/…`) that
+**reloads the moment you save** — fonts, theme, padding, cursor, and
+keybindings all update live. The file only lists what you change; every
+other key keeps its built-in default. (A pre-existing `key = value` config
+is migrated automatically on first launch.)
 
-```ini
-# Fonts — repeat font-family to add fallbacks (the first is primary)
-font-family = JetBrains Mono
-font-family = Apple Color Emoji
-font-size = 14
-font-feature = +liga
-font-feature = +ss01
+```jsonc
+// Sinclair settings — every key is optional.
+{
+  // Fonts — the first family is primary, the rest are fallbacks
+  "font-family": ["JetBrains Mono", "Apple Color Emoji"],
+  "font-size": 14,
+  "font-feature": ["+liga", "+ss01"],
 
-# Look
-theme = catppuccin-mocha
-background = #1e1e2e
-cursor-style = bar
-window-padding-x = 8
-window-padding-y = 8
+  // Look
+  "theme": "catppuccin-mocha",
+  "background": "#1e1e2e",
+  "cursor-style": "bar",
+  "window-padding-x": 8,
+  "window-padding-y": 8,
 
-# Behavior
-shell = /bin/zsh
-scrollback-limit = 100000
-copy-on-select = true
-# Confirm before sending a risky paste (off by default)
-clipboard-paste-protection = false
-# Warn on quit if a process is still running in a pane
-confirm-quit = true
-# OSC 133/7 hooks for jump-to-prompt + cwd inheritance (zsh/bash/fish)
-shell-integration = true
-# Reopen the previous window's tabs/splits/cwds on launch (off by default)
-session-restore = false
-# Keep the leading user@host: in tab titles (off by default; tabs show just the path)
-tab-title-show-host = false
+  // Behavior
+  "command": "/bin/zsh",
+  "scrollback-limit": 100000,
+  "copy-on-select": true,
+  "clipboard-paste-protection": false, // confirm before a risky paste
+  "confirm-quit": true,                // warn if a process is still running
+  "shell-integration": true,           // OSC 133/7 prompt-jump + cwd hooks
+  "session-restore": false,            // reopen tabs/splits on launch
+  "tab-title-show-host": false,        // keep user@host: in tab titles
 
-# AI — opt-in (also editable in Settings → AI); see docs/relay.md
-ai-enabled = true
-relay-enabled = true
-relay-address = 127.0.0.1:7777
-relay-default-agent = claude
+  // AI — opt-in (also editable in Settings → AI); see docs/relay.md
+  "ai-enabled": true,
+  "relay-enabled": true,
+  "relay-address": "127.0.0.1:7777",
+  "relay-default-agent": "claude",
 
-# Keybindings — trigger = action[:param]; use `unbind` to remove a default
-keybind = cmd+shift+c=copy_to_clipboard
-keybind = ctrl+shift+page_up=scroll_page_up
+  // Keybindings — trigger=action[:param]; use =unbind to remove a default
+  "keybind": [
+    "cmd+shift+c=copy_to_clipboard",
+    "ctrl+shift+page_up=scroll_page_up"
+  ]
+}
 ```
 
-Mistakes are reported as friendly diagnostics on launch — a bad line never
-stops the rest of your config from loading.
+Mistakes are reported as friendly diagnostics on launch — a bad value falls
+back to its default and never stops the rest of your settings from loading.
 
 ## Plugins
 
@@ -192,9 +195,9 @@ Sinclair loads plugins from `~/.config/sinclair/plugins/*/plugin.toml` (or
 `$XDG_CONFIG_HOME/sinclair/plugins/*/plugin.toml`). You can also point at a
 plugin directory or manifest directly:
 
-```ini
-plugin = ~/dev/sinclairtools
-keybind = cmd+ctrl+l=plugin_command:tools/logs
+```jsonc
+"plugin": ["~/dev/sinclairtools"],
+"keybind": ["cmd+ctrl+l=plugin_command:tools/logs"]
 ```
 
 A plugin manifest contributes commands:

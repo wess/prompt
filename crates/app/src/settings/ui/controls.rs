@@ -1,6 +1,9 @@
-use super::*;
-use super::super::model::{Bool, Choice, Num};
+//! The per-type controls: switch, slider, choice dropdown, and text field,
+//! plus the shared row/panel chrome.
+
+use super::super::schema::{Choice, Setting, Slider};
 use super::super::{EditTarget, SettingsView};
+use super::*;
 use gpui::{
     canvas, div, px, relative, AnyElement, Context, DragMoveEvent, Empty, MouseButton,
     MouseDownEvent, SharedString,
@@ -8,7 +11,7 @@ use gpui::{
 
 /// Drag payload identifying which slider a scrub belongs to, so the shared
 /// `on_drag_move` listener only acts on the track the drag started on.
-struct SliderDrag(Num);
+struct SliderDrag(&'static str);
 
 impl SettingsView {
     pub(crate) fn icon(&self, glyph: &str, color: theme::Rgb, size: gpui::Pixels) -> impl IntoElement {
@@ -24,6 +27,8 @@ impl SettingsView {
             .child(SharedString::from(glyph.to_string()))
     }
 
+    /// A plain label/control row, for the hand-built groups (macros, relay
+    /// status, agent tools).
     pub(crate) fn row(
         &self,
         icon: impl IntoElement,
@@ -144,8 +149,13 @@ impl SettingsView {
         field
     }
 
-    pub(crate) fn switch(&self, b: Bool, cx: &mut Context<Self>) -> impl IntoElement {
-        let on = b.get(&self.opts);
+    pub(crate) fn switch(
+        &self,
+        s: &'static Setting,
+        get: fn(&config::Options) -> bool,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let on = get(&self.opts);
         let knob_x = if on { px(19.0) } else { px(2.0) };
         div()
             .w(px(45.0))
@@ -166,7 +176,7 @@ impl SettingsView {
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(move |this, _ev, _window, cx| {
-                    this.toggle(b, cx);
+                    this.toggle(s, cx);
                     cx.stop_propagation();
                 }),
             )
@@ -175,8 +185,14 @@ impl SettingsView {
     /// A draggable value track for a numeric option. Press anywhere on the
     /// track to jump to that value; press and drag to scrub — the drag follows
     /// the pointer anywhere in the window (like a real slider), not just while
-    /// it stays over the track. The row's accent colors the fill and knob.
-    pub(crate) fn slider(&self, n: Num, accent: theme::Rgb, cx: &mut Context<Self>) -> impl IntoElement {
+    /// it stays over the track. The section's accent colors the fill and knob.
+    pub(crate) fn slider(
+        &self,
+        s: &'static Setting,
+        n: Slider,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let accent = s.section.accent();
         let frac = n.fraction(&self.opts);
 
         let bar = div()
@@ -211,7 +227,7 @@ impl SettingsView {
 
         // Invisible probe that records the track's window-space bounds each
         // frame, so a mouse-down (position only, no bounds) maps to a value.
-        let key = n.key();
+        let key = s.key;
         let entity = cx.entity();
         let probe = canvas(
             move |bounds, _window, cx| {
@@ -225,7 +241,7 @@ impl SettingsView {
         .size_full();
 
         let track = div()
-            .id(n.key())
+            .id(s.key)
             .relative()
             .w(px(150.0))
             .h(px(20.0))
@@ -237,28 +253,28 @@ impl SettingsView {
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(move |this, event: &MouseDownEvent, _window, cx| {
-                    if let Some(b) = this.slider_bounds.get(n.key()).copied() {
+                    if let Some(b) = this.slider_bounds.get(s.key).copied() {
                         let width = f32::from(b.size.width);
                         if width > 0.0 {
                             let frac = (f32::from(event.position.x - b.left()) / width).clamp(0.0, 1.0);
-                            this.slide_to(n, frac, cx);
+                            this.slide_to(s, frac, cx);
                         }
                     }
                 }),
             )
-            .on_drag(SliderDrag(n), |_drag, _offset, _window, cx| cx.new(|_| Empty))
+            .on_drag(SliderDrag(s.key), |_drag, _offset, _window, cx| cx.new(|_| Empty))
             .on_drag_move::<SliderDrag>(cx.listener(
                 move |this, event: &DragMoveEvent<SliderDrag>, _window, cx| {
                     // Every track's listener fires for any slider drag; act only
                     // on the one the drag started on, using this track's bounds.
-                    if event.drag(cx).0.key() != n.key() {
+                    if event.drag(cx).0 != s.key {
                         return;
                     }
                     let b = event.bounds;
                     let width = f32::from(b.size.width);
                     if width > 0.0 {
                         let frac = (f32::from(event.event.position.x - b.left()) / width).clamp(0.0, 1.0);
-                        this.slide_to(n, frac, cx);
+                        this.slide_to(s, frac, cx);
                     }
                 },
             ));
@@ -278,36 +294,73 @@ impl SettingsView {
             )
     }
 
-    pub(crate) fn cycle_control(&self, c: Choice, cx: &mut Context<Self>) -> impl IntoElement {
-        div()
-            .flex()
-            .items_center()
-            .gap_1()
-            .child(self.cycle_button("\u{2039}", c, -1, cx))
-            .child(
-                div()
-                    .w(px(132.0))
-                    .flex()
-                    .justify_center()
-                    .text_color(hsla(TEXT))
-                    .child(SharedString::from(c.display(&self.opts))),
-            )
-            .child(self.cycle_button("\u{203a}", c, 1, cx))
-    }
-
-    fn cycle_button(
+    /// The closed dropdown: current value plus a chevron; click to expand.
+    pub(crate) fn choice_button(
         &self,
-        glyph: &str,
+        s: &'static Setting,
         c: Choice,
-        dir: i32,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        button_box(glyph).on_mouse_down(
-            MouseButton::Left,
-            cx.listener(move |this, _ev, _window, cx| {
-                this.cycle(c, dir, cx);
-                cx.stop_propagation();
-            }),
-        )
+        let open = self.open_choice == Some(s.key);
+        let glyph = if open { "\u{2303}" } else { "\u{2304}" };
+        button_box(SharedString::from(format!("{}  {glyph}", (c.get)(&self.opts))))
+            .min_w(px(120.0))
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(move |this, _ev, _window, cx| {
+                    this.toggle_choice(s.key, cx);
+                    cx.stop_propagation();
+                }),
+            )
+    }
+
+    /// The expanded variant list under a Choice row.
+    pub(crate) fn choice_panel(
+        &self,
+        s: &'static Setting,
+        c: Choice,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let current = (c.get)(&self.opts);
+        let mut items: Vec<(String, bool)> = Vec::new();
+        if let Some(unset) = c.unset {
+            items.push((unset.to_string(), true));
+        }
+        items.extend((c.variants)().into_iter().map(|v| (v, false)));
+
+        let mut panel = div()
+            .id(s.key)
+            .mx_3()
+            .mb_2()
+            .max_h(px(220.0))
+            .overflow_y_scroll()
+            .rounded(px(8.0))
+            .border_1()
+            .border_color(hsla(FIELD_BORDER))
+            .bg(hsla(FIELD_BG))
+            .flex()
+            .flex_col();
+        for (value, unset) in items {
+            let selected = value == current;
+            let mut item = div()
+                .px_3()
+                .h(px(28.0))
+                .flex()
+                .items_center()
+                .justify_between()
+                .text_color(hsla(if selected { BLUE_TEXT } else { TEXT }))
+                .child(SharedString::from(value.clone()));
+            if selected {
+                item = item.child(SharedString::from("\u{2713}"));
+            }
+            panel = panel.child(item.on_mouse_down(
+                MouseButton::Left,
+                cx.listener(move |this, _ev, _window, cx| {
+                    this.choose(s, value.clone(), unset, cx);
+                    cx.stop_propagation();
+                }),
+            ));
+        }
+        panel
     }
 }

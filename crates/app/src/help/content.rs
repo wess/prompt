@@ -61,9 +61,9 @@ pub(crate) const ARTICLES: &[Article] = &[
             Block::Key("Close pane", "\u{2318} W"),
             Block::Heading("Preferences"),
             Block::Para(
-                "Open Settings to change the theme, font, padding, and scrollback. \
-                 Settings write back to your config file, which also reloads live when \
-                 edited by hand.",
+                "Open Settings and search for any option — theme, font, padding, \
+                 scrollback. Every control writes one key to settings.json, which also \
+                 reloads live when edited by hand.",
             ),
             Block::Key("Open settings", "\u{2318} ,"),
         ],
@@ -199,11 +199,15 @@ pub(crate) const ARTICLES: &[Article] = &[
         title: "Configuration",
         icon: "\u{2699}",
         accent: theme::Rgb::new(142, 142, 147),
-        summary: "Customize Sinclair with a plain-text config file.",
+        summary: "Customize Sinclair in Settings or its settings.json file.",
         blocks: &[
             Block::Para(
-                "Sinclair reads a simple config file: one `key = value` per line. \
-                 Edits apply live — saving the file reloads appearance without restarting.",
+                "Sinclair reads settings.json — JSON with comments — from its config \
+                 directory. The file only lists what you change; everything else keeps \
+                 its built-in default, and an invalid value falls back to the default \
+                 with a warning. Edits apply live — saving the file reloads appearance \
+                 without restarting. The Settings window edits the same file, or open \
+                 it directly from the window's sidebar.",
             ),
             Block::Heading("Common keys"),
             Block::Bullet("theme — a built-in theme name, e.g. catppuccin-mocha"),
@@ -224,8 +228,8 @@ pub(crate) const ARTICLES: &[Article] = &[
             Block::Bullet("confirm-quit — warn on quit if a process is still running (on)"),
             Block::Heading("Keybindings"),
             Block::Para(
-                "Bind keys with `keybind = trigger=action`, for example \
-                 `keybind = cmd+shift+d=new_split:down`. Use `unbind` to drop a default.",
+                "Bind keys with a `keybind` array of trigger=action strings, for \
+                 example \"cmd+shift+d=new_split:down\". Use =unbind to drop a default.",
             ),
         ],
     },

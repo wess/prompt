@@ -1,42 +1,39 @@
-use super::*;
-use super::super::model::{Bool, Field, Section};
+//! The AI section: schema rows for the switches and relay options, plus the
+//! hand-built Agent-tools group (Test buttons need live probe state) and the
+//! relay status rows.
+
+use super::super::schema::{self, Control, Section, Setting, TOOL_KEYS};
 use super::super::{SettingsView, ToolTest};
+use super::*;
 use gpui::{div, px, AnyElement, Context, MouseButton, SharedString};
 
 impl SettingsView {
-    pub(crate) fn ai_rows(&self, cx: &mut Context<Self>) -> Vec<AnyElement> {
-        let a = Section::Ai.accent();
-        let mut rows = vec![self.toggle_row(Bool::AiEnabled, "\u{2728}", a, cx)];
-        if self.opts.ai_enabled {
-            rows.push(self.toggle_row(
-                Bool::OptimizeTokens,
-                "\u{26a1}",
-                theme::Rgb::new(255, 214, 10),
-                cx,
-            ));
+    /// The whole AI section: generic rows (minus the tool keys the tools
+    /// group lays out itself), relay status when running, then the tools.
+    pub(crate) fn ai_content(&self, cx: &mut Context<Self>) -> Vec<AnyElement> {
+        let mut rows: Vec<AnyElement> = Vec::new();
+        let mut groups: Vec<AnyElement> = Vec::new();
+        for s in schema::in_section(Section::Ai) {
+            if TOOL_KEYS.contains(&s.key) {
+                continue;
+            }
+            // Token optimization only matters with AI on; hide it otherwise.
+            if s.key == "ai-optimize-tokens" && !self.opts.ai_enabled {
+                continue;
+            }
+            match &s.control {
+                Control::List(kind) => groups.push(self.list_group(s, *kind, cx).into_any_element()),
+                _ => rows.push(self.setting_row(s, cx)),
+            }
         }
-        rows.extend([
-            self.toggle_row(Bool::McpServer, "M", theme::Rgb::new(10, 132, 255), cx),
-            self.toggle_row(Bool::RelayEnabled, "R", theme::Rgb::new(52, 199, 89), cx),
-            self.toggle_row(
-                Bool::RelayStartOnLaunch,
-                "\u{21aa}",
-                theme::Rgb::new(255, 159, 10),
-                cx,
-            ),
-            self.field_row(Field::RelayAddress, "@", theme::Rgb::new(90, 200, 250), cx),
-            self.field_row(
-                Field::RelayDefaultAgent,
-                "\u{2318}",
-                theme::Rgb::new(94, 92, 230),
-                cx,
-            ),
-        ]);
         if self.opts.relay_enabled {
             rows.push(self.relay_status_row());
             rows.push(self.relay_log_row());
         }
-        rows
+        let mut out: Vec<AnyElement> = vec![self.list(rows).into_any_element()];
+        out.push(self.tools_group(cx).into_any_element());
+        out.extend(groups);
+        out
     }
 
     /// A live green/red dot for whether the relay server is listening.
@@ -61,29 +58,37 @@ impl SettingsView {
     }
 
     /// The "Agent tools" group: each known tool with a Test button + toggle,
-    /// and an explicit-path field for the CLI tools (so a non-PATH install is
-    /// found). Ollama is reached over its API port, so it has no path.
-    pub(crate) fn tools_group(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let accent = Section::Ai.accent();
+    /// and the explicit path/flags fields for the CLI tools (so a non-PATH
+    /// install is found). Ollama is reached over its API port, so it has no
+    /// path.
+    fn tools_group(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let mut rows: Vec<AnyElement> = Vec::new();
+        for &key in TOOL_KEYS {
+            let Some(s) = schema::find(key) else {
+                continue;
+            };
+            match &s.control {
+                Control::Toggle(get) => {
+                    let tool: &'static str = key.strip_prefix("agent-").unwrap_or(key);
+                    rows.push(self.tool_row(s, *get, tool, cx));
+                }
+                _ => rows.push(self.setting_row(s, cx)),
+            }
+        }
         div()
             .flex()
             .flex_col()
             .child(self.heading("Agent tools"))
-            .child(self.list(vec![
-                self.tool_row(Bool::ToolClaude, "claude", cx),
-                self.field_row(Field::ClaudePath, "\u{2026}", accent, cx),
-                self.field_row(Field::ClaudeArgs, "\u{2691}", accent, cx),
-                self.tool_row(Bool::ToolCodex, "codex", cx),
-                self.field_row(Field::CodexPath, "\u{2026}", accent, cx),
-                self.field_row(Field::CodexArgs, "\u{2691}", accent, cx),
-                self.tool_row(Bool::ToolOllama, "ollama", cx),
-                self.tool_row(Bool::ToolGemini, "gemini", cx),
-                self.field_row(Field::GeminiPath, "\u{2026}", accent, cx),
-                self.field_row(Field::GeminiArgs, "\u{2691}", accent, cx),
-            ]))
+            .child(self.list(rows))
     }
 
-    fn tool_row(&self, b: Bool, tool: &'static str, cx: &mut Context<Self>) -> AnyElement {
+    fn tool_row(
+        &self,
+        s: &'static Setting,
+        get: fn(&config::Options) -> bool,
+        tool: &'static str,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         let test = button_box("Test").on_mouse_down(
             MouseButton::Left,
             cx.listener(move |this, _ev, _window, cx| {
@@ -97,8 +102,8 @@ impl SettingsView {
             .gap_2()
             .child(self.test_result(tool))
             .child(test)
-            .child(self.switch(b, cx));
-        self.row(self.icon("\u{25cb}", Section::Ai.accent(), px(22.0)), b.label(), control)
+            .child(self.switch(s, get, cx));
+        self.row(self.icon("\u{25cb}", Section::Ai.accent(), px(22.0)), s.label, control)
             .into_any_element()
     }
 

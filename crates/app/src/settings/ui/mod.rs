@@ -1,11 +1,11 @@
-//! Rendering for the settings window: the sidebar, hero, reusable controls,
-//! and the per-section row builders.
+//! Rendering for the settings window: the search bar, category sidebar,
+//! reusable controls, and the schema-driven rows.
 
 use gpui::prelude::*;
-use gpui::{div, px, AnyElement, Div, MouseButton, SharedString, Window, WindowControlArea};
+use gpui::{div, px, Div, MouseButton, SharedString, Window, WindowControlArea};
 use gpui::{Context, Hsla};
 
-use super::model::{ListKind, Section};
+use super::schema::Section;
 use super::SettingsView;
 use crate::colors;
 
@@ -18,7 +18,7 @@ const SIDEBAR: f32 = 226.0;
 
 impl SettingsView {
     fn sidebar_item(&self, section: Section, cx: &mut Context<Self>) -> impl IntoElement {
-        let selected = self.section == section;
+        let selected = self.section == section && self.search().is_empty();
         let mut bg = hsla(if selected { BLUE } else { SIDEBAR_BG });
         bg.a = if selected { 1.0 } else { 0.0 };
         div()
@@ -43,7 +43,10 @@ impl SettingsView {
 
     fn sidebar(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let mut bar = div()
+            .flex()
+            .flex_col()
             .w(px(SIDEBAR))
+            .flex_none()
             .h_full()
             .px_3()
             .pt(px(58.0))
@@ -53,7 +56,28 @@ impl SettingsView {
         for section in Section::ALL {
             bar = bar.child(self.sidebar_item(section, cx));
         }
-        bar
+        bar.child(div().flex_1()).child(self.file_link(cx))
+    }
+
+    /// The escape hatch: open the backing settings.json in an editor.
+    fn file_link(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        div()
+            .flex()
+            .items_center()
+            .gap_2()
+            .h(px(32.0))
+            .px_2()
+            .rounded(px(7.0))
+            .text_color(hsla(MUTED))
+            .child(self.icon("{}", theme::Rgb::new(99, 99, 102), px(20.0)))
+            .child(SharedString::from("Edit in settings.json"))
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|_this, _ev, _window, cx| {
+                    super::open_settings_file();
+                    cx.stop_propagation();
+                }),
+            )
     }
 
     fn identity(&self) -> impl IntoElement {
@@ -82,81 +106,139 @@ impl SettingsView {
                     .child(
                         div()
                             .text_color(hsla(MUTED))
-                            .child(SharedString::from("Preferences")),
+                            .child(SharedString::from("Settings")),
                     ),
             )
     }
 
-    fn hero(&self) -> impl IntoElement {
+    /// The always-live search box. It has no click-to-focus state: whenever
+    /// no field editor is active, typing lands here.
+    fn search_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let idle = self.editing.is_some();
+        let text = self.query.text();
+        let mut border = hsla(if idle { FIELD_BORDER } else { BLUE });
+        border.a = if idle { 0.75 } else { 1.0 };
+        let mut field = div()
+            .flex_1()
+            .h(px(30.0))
+            .px_2()
+            .rounded(px(7.0))
+            .border_1()
+            .border_color(border)
+            .bg(hsla(FIELD_BG))
+            .flex()
+            .items_center()
+            .gap_1()
+            .overflow_hidden()
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|this, _ev, window, cx| {
+                    // Commit any field edit; keys then flow to the search box.
+                    this.commit_edit(cx);
+                    window.focus(&this.focus, cx);
+                    cx.stop_propagation();
+                }),
+            );
+        if text.is_empty() && idle {
+            field = field
+                .text_color(hsla(MUTED))
+                .child(SharedString::from("Search settings"));
+        } else if idle {
+            field = field.text_color(hsla(TEXT)).child(SharedString::from(text));
+        } else {
+            // Live: draw the caret (and selection) like the field editors do.
+            field = field.text_color(hsla(TEXT));
+            if let Some((before, selected, after)) = self.query.split_selection() {
+                let mut sel_bg = hsla(BLUE);
+                sel_bg.a = 0.35;
+                field = field
+                    .child(SharedString::from(before))
+                    .child(div().bg(sel_bg).rounded(px(2.0)).child(SharedString::from(selected)))
+                    .child(SharedString::from(after));
+            } else {
+                let (before, after) = self.query.split();
+                if before.is_empty() && after.is_empty() {
+                    field = field
+                        .child(div().w(px(1.0)).h(px(16.0)).bg(hsla(TEXT)))
+                        .child(
+                            div()
+                                .text_color(hsla(MUTED))
+                                .child(SharedString::from("Search settings")),
+                        );
+                } else {
+                    field = field
+                        .child(SharedString::from(before))
+                        .child(div().w(px(1.0)).h(px(16.0)).bg(hsla(TEXT)))
+                        .child(SharedString::from(after));
+                }
+            }
+        }
+        let mut bar = div().flex().items_center().gap_2().pb_3().child(field);
+        if !self.query.is_empty() {
+            bar = bar.child(
+                button_box("\u{2715}")
+                    .text_color(hsla(MUTED))
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|this, _ev, _window, cx| {
+                            this.query = guise::TextEdit::new("");
+                            cx.notify();
+                            cx.stop_propagation();
+                        }),
+                    ),
+            );
+        }
+        bar
+    }
+
+    /// The section header shown when browsing (search empty).
+    fn section_header(&self) -> impl IntoElement {
         div()
-            .h(px(150.0))
-            .rounded(px(10.0))
-            .bg(hsla(PANEL))
+            .pb_2()
             .flex()
             .flex_col()
-            .items_center()
-            .justify_center()
-            .child(self.icon(self.section.icon(), self.section.accent(), px(48.0)))
             .child(
                 div()
-                    .pt_3()
-                    .text_size(px(24.0))
+                    .text_size(px(20.0))
                     .text_color(hsla(TEXT))
                     .child(SharedString::from(self.section.title())),
             )
             .child(
                 div()
-                    .w(px(420.0))
-                    .pt_1()
                     .text_color(hsla(MUTED))
                     .child(SharedString::from(self.section.subtitle())),
             )
     }
 
     fn content(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let mut content = div()
+        let searching = !self.search().is_empty();
+        let mut body = div()
             .id("settings-content")
+            .flex_1()
+            .min_h(px(0.0))
+            .pb(px(40.0))
+            .overflow_y_scroll();
+        if searching {
+            for group in self.search_results(cx) {
+                body = body.child(group);
+            }
+        } else {
+            body = body.child(self.section_header());
+            for group in self.section_content(cx) {
+                body = body.child(group);
+            }
+        }
+        div()
+            .flex()
+            .flex_col()
             .flex_1()
             .min_w(px(0.0))
             .h_full()
             .px_5()
-            .pt(px(52.0))
-            .pb(px(40.0))
+            .pt(px(50.0))
             .bg(hsla(CONTENT_BG))
-            .overflow_y_scroll()
-            .child(self.hero())
-            .child(div().h(px(12.0)));
-        for group in self.section_groups(cx) {
-            content = content.child(group);
-        }
-        content
-    }
-
-    fn section_groups(&self, cx: &mut Context<Self>) -> Vec<AnyElement> {
-        match self.section {
-            Section::General => vec![self.list(self.general_rows(cx)).into_any_element()],
-            Section::Appearance => vec![
-                self.list(self.appearance_rows(cx)).into_any_element(),
-                self.list_group(ListKind::FontFamily, cx).into_any_element(),
-                self.list_group(ListKind::FontFeature, cx).into_any_element(),
-                self.list_group(ListKind::Palette, cx).into_any_element(),
-            ],
-            Section::Terminal => vec![
-                self.list(self.terminal_rows(cx)).into_any_element(),
-                self.list_group(ListKind::Redact, cx).into_any_element(),
-                self.list_group(ListKind::Trigger, cx).into_any_element(),
-                self.list_group(ListKind::Snippet, cx).into_any_element(),
-                self.list_group(ListKind::Profile, cx).into_any_element(),
-            ],
-            Section::Keyboard => vec![self.keyboard_group(cx).into_any_element()],
-            Section::Macros => vec![self.macros_group(cx).into_any_element()],
-            Section::Plugins => vec![self.list_group(ListKind::Plugin, cx).into_any_element()],
-            Section::Ai => vec![
-                self.list(self.ai_rows(cx)).into_any_element(),
-                self.tools_group(cx).into_any_element(),
-                self.list_group(ListKind::AgentTool, cx).into_any_element(),
-            ],
-        }
+            .child(self.search_bar(cx))
+            .child(body)
     }
 }
 
@@ -183,7 +265,7 @@ fn drag_strip() -> impl IntoElement {
         .absolute()
         .top_0()
         .left(px(lead))
-        .w(px(super::WIDTH - lead))
+        .right_0()
         .h(px(30.0))
         .window_control_area(WindowControlArea::Drag)
         .on_mouse_down(MouseButton::Left, |_, window, _| window.start_window_move())

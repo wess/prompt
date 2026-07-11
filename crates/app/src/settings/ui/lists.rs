@@ -1,13 +1,16 @@
-use super::*;
-use super::super::model::{ListKind, Section};
+//! The repeated-option groups (fonts, palette, keybinds, plugins, …) plus
+//! the Macros section, which manages files rather than settings keys.
+
+use super::super::schema::{ListKind, Section, Setting};
 use super::super::{EditTarget, SettingsView};
+use super::*;
 use gpui::{div, px, AnyElement, Context, MouseButton, SharedString};
 
 impl SettingsView {
     fn list_rows(&self, kind: ListKind, cx: &mut Context<Self>) -> Vec<AnyElement> {
         let width = match kind {
             ListKind::Keybind | ListKind::AgentTool => 420.0,
-            ListKind::Plugin => 380.0,
+            ListKind::Plugin | ListKind::Container => 380.0,
             _ => 320.0,
         };
         let entries = kind.values(&self.opts);
@@ -100,15 +103,47 @@ impl SettingsView {
         row
     }
 
-    pub(crate) fn list_group(&self, kind: ListKind, cx: &mut Context<Self>) -> impl IntoElement {
+    /// A List setting's group: heading (with description and, when the
+    /// user's file sets the key, a reset), then the entries.
+    pub(crate) fn list_group(
+        &self,
+        s: &'static Setting,
+        kind: ListKind,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
         div()
             .flex()
             .flex_col()
-            .child(self.heading(kind.label()))
+            .child(self.group_header(s, cx))
             .child(self.list(self.list_rows(kind, cx)))
     }
 
-    /// The Keybindings list plus a syntax hint and a Restore-defaults button.
+    fn group_header(&self, s: &'static Setting, cx: &mut Context<Self>) -> impl IntoElement {
+        let mut header = div()
+            .flex()
+            .items_end()
+            .justify_between()
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .child(self.heading(s.label))
+                    .child(
+                        div()
+                            .px_1()
+                            .pb_1()
+                            .text_size(px(11.0))
+                            .text_color(hsla(MUTED))
+                            .child(SharedString::from(s.desc)),
+                    ),
+            );
+        if self.modified(s.key) {
+            header = header.child(div().pb_1().child(self.reset_button(s.key, cx)));
+        }
+        header
+    }
+
+    /// The Keybindings group plus a syntax hint and a Restore-defaults button.
     pub(crate) fn keyboard_group(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let hint = div()
             .px_1()

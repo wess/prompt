@@ -1,10 +1,15 @@
-//! System Settings-style preferences window. Every option Sinclair reads from
-//! its config file is shown and edited here; the window never asks the user
-//! to go hand-edit the file. Writes go straight back to the config file and
-//! the live-reload watcher applies them.
+//! The settings window: a searchable, schema-driven editor (search bar,
+//! category sidebar, one control per setting) over the settings.json
+//! backing store. The file stays the source of truth — every control writes
+//! one key through `crate::confwrite`, the live-reload watcher applies it,
+//! and a modified setting shows an accent bar plus a per-row reset that
+//! removes its key. `Edit in settings.json` opens the file itself for
+//! anything the GUI doesn't cover.
 
-mod model;
+mod schema;
 mod ui;
+
+use std::collections::{HashMap, HashSet};
 
 use gpui::prelude::*;
 use gpui::{
@@ -13,16 +18,16 @@ use gpui::{
 };
 
 use guise::TextEdit;
-use model::{Bool, Choice, Field, ListKind, Num, Section};
+use schema::{Control, ListKind, Section, Setting};
 
-const WIDTH: f32 = 725.0;
-const HEIGHT: f32 = 810.0;
+const WIDTH: f32 = 780.0;
+const HEIGHT: f32 = 820.0;
 
 /// What the single active text editor is bound to.
 #[derive(Clone, PartialEq)]
 pub(crate) enum EditTarget {
-    /// A scalar free-text option.
-    Field(Field),
+    /// A free-text setting, by schema key.
+    Field(&'static str),
     /// An existing entry of a repeated option.
     Item(ListKind, usize),
     /// A new, not-yet-saved entry being typed for a repeated option.
@@ -41,22 +46,28 @@ enum ToolTest {
 
 pub struct SettingsView {
     opts: config::Options,
+    /// Keys the user's settings.json sets — the modified indicators.
+    userkeys: HashSet<String>,
+    /// The search box. Receives keys whenever no field editor is active.
+    query: TextEdit,
     section: Section,
     editing: Option<(EditTarget, TextEdit)>,
     /// When true, the next key chord is captured as the edited keybind's
     /// trigger instead of being typed into the field.
     capturing: bool,
+    /// The Choice setting whose variant list is expanded, if any.
+    open_choice: Option<&'static str>,
     /// Saved macros, for the Macros section.
     macros: Vec<macros::Macro>,
     /// When set, the next key chord is captured as the shortcut for this macro.
     capture_macro: Option<String>,
     focus: FocusHandle,
     relay_running: bool,
-    tool_tests: std::collections::HashMap<&'static str, ToolTest>,
+    tool_tests: HashMap<&'static str, ToolTest>,
     /// Each slider track's window-space bounds, captured every frame so a
     /// mouse-down (which carries a position but not the element's bounds) can
-    /// be mapped to a value. Keyed by the option's config key.
-    slider_bounds: std::collections::HashMap<&'static str, Bounds<Pixels>>,
+    /// be mapped to a value. Keyed by the option's settings key.
+    slider_bounds: HashMap<&'static str, Bounds<Pixels>>,
 }
 
 pub fn open(parent: &Window, cx: &mut App) {
@@ -68,7 +79,7 @@ pub fn open(parent: &Window, cx: &mut App) {
     let _ = cx.open_window(
         WindowOptions {
             window_bounds: Some(WindowBounds::Windowed(bounds)),
-            is_resizable: false,
+            is_resizable: true,
             titlebar: Some(TitlebarOptions {
                 title: Some("Settings".into()),
                 appears_transparent: true,
@@ -78,30 +89,70 @@ pub fn open(parent: &Window, cx: &mut App) {
         },
         |window, cx| {
             window.set_window_title("Settings");
-            cx.new(SettingsView::new)
+            let view = cx.new(SettingsView::new);
+            // Focus immediately so typing searches without a click.
+            let focus = view.read(cx).focus.clone();
+            window.focus(&focus, cx);
+            view
         },
     );
+}
+
+/// Open settings.json in the system editor (creating it first if needed).
+pub(crate) fn open_settings_file() {
+    let Some(path) = crate::confwrite::ensure_settings_file() else {
+        return;
+    };
+    #[cfg(target_os = "macos")]
+    let mut cmd = {
+        let mut c = std::process::Command::new("open");
+        c.arg("-t").arg(&path);
+        c
+    };
+    #[cfg(all(unix, not(target_os = "macos")))]
+    let mut cmd = {
+        let mut c = std::process::Command::new("xdg-open");
+        c.arg(&path);
+        c
+    };
+    #[cfg(windows)]
+    let mut cmd = {
+        let mut c = std::process::Command::new("cmd");
+        c.arg("/C").arg("start").arg("").arg(&path);
+        c
+    };
+    if let Err(e) = cmd.spawn() {
+        eprintln!("sinclair: could not open {}: {e}", path.display());
+    }
 }
 
 impl SettingsView {
     fn new(cx: &mut Context<Self>) -> Self {
         let mut view = Self {
             opts: config::Options::default(),
+            userkeys: HashSet::new(),
+            query: TextEdit::new(""),
             section: Section::General,
             editing: None,
             capturing: false,
+            open_choice: None,
             macros: Vec::new(),
             capture_macro: None,
             focus: cx.focus_handle(),
             // Probing the relay blocks (file read + TCP connect); start
             // pessimistic and let the first off-thread poll fill it in.
             relay_running: false,
-            tool_tests: std::collections::HashMap::new(),
-            slider_bounds: std::collections::HashMap::new(),
+            tool_tests: HashMap::new(),
+            slider_bounds: HashMap::new(),
         };
         view.reload();
         view.poll_relay_status(cx);
         view
+    }
+
+    /// The active search query (empty = no filter).
+    fn search(&self) -> String {
+        self.query.text().trim().to_string()
     }
 
     /// Probe a tool off-thread and record the result for the row to show.
@@ -150,23 +201,87 @@ impl SettingsView {
         self.macros = macros::defaultdir().map(|d| macros::load(&d)).unwrap_or_default();
     }
 
-    /// Refresh only the parsed options after a write — the hot path for every
-    /// toggle and slider step. The workspace's config watcher is the single
-    /// *apply* path; this just keeps the settings display in sync. Macros are
-    /// not config-file state, so their directory scan stays out of here.
+    /// Refresh the parsed options and modified-key set after a write — the
+    /// hot path for every toggle and slider step. The workspace's settings
+    /// watcher is the single *apply* path; this just keeps the display in
+    /// sync. Macros are not settings-file state, so their directory scan
+    /// stays out of here.
     fn reload_opts(&mut self) {
         let (opts, diagnostics) = config::load();
         for d in &diagnostics {
-            eprintln!("sinclair: config line {}: {} ({})", d.line, d.message, d.key);
+            eprintln!("sinclair: settings line {}: {} ({})", d.line, d.message, d.key);
         }
         self.opts = opts;
+        self.userkeys = config::default_path()
+            .and_then(|p| std::fs::read_to_string(p).ok())
+            .map(|text| config::settings::user_keys(&text).into_iter().collect())
+            .unwrap_or_default();
+    }
+
+    /// Whether the user's file overrides this key.
+    fn modified(&self, key: &str) -> bool {
+        self.userkeys.contains(key)
     }
 
     fn set_section(&mut self, section: Section, cx: &mut Context<Self>) {
         self.section = section;
+        self.query = TextEdit::new("");
         self.editing = None;
         self.capturing = false;
         self.capture_macro = None;
+        self.open_choice = None;
+        cx.notify();
+    }
+
+    /// Remove a key from settings.json, restoring the built-in default.
+    fn reset(&mut self, key: &'static str, cx: &mut Context<Self>) {
+        if self.editing.as_ref().is_some_and(|(t, _)| *t == EditTarget::Field(key)) {
+            self.editing = None;
+        }
+        crate::confwrite::remove(key);
+        self.reload_opts();
+        cx.notify();
+    }
+
+    fn toggle(&mut self, s: &'static Setting, cx: &mut Context<Self>) {
+        if let Control::Toggle(get) = s.control {
+            write_config(s.key, &(!get(&self.opts)).to_string());
+            self.reload_opts();
+            cx.notify();
+        }
+    }
+
+    /// Persist the value at slider fraction `frac` for `s`, but only when the
+    /// snapped result actually changes — so a drag rewrites the file once per
+    /// step it crosses, not once per pointer tick.
+    fn slide_to(&mut self, s: &'static Setting, frac: f32, cx: &mut Context<Self>) {
+        let Control::Slider(n) = &s.control else {
+            return;
+        };
+        let value = n.value_at_fraction(frac);
+        if (value - (n.get)(&self.opts)).abs() >= f32::EPSILON {
+            write_config(s.key, &n.fmt(value));
+            self.reload_opts();
+            cx.notify();
+        }
+    }
+
+    /// Expand or collapse a Choice setting's variant list.
+    fn toggle_choice(&mut self, key: &'static str, cx: &mut Context<Self>) {
+        self.open_choice = if self.open_choice == Some(key) { None } else { Some(key) };
+        cx.notify();
+    }
+
+    /// Pick one variant of a Choice setting. The unset pseudo-variant
+    /// removes the key instead of writing a value.
+    fn choose(&mut self, s: &'static Setting, value: String, unset: bool, cx: &mut Context<Self>) {
+        if unset {
+            crate::confwrite::remove(s.key);
+        } else {
+            write_config(s.key, &value);
+        }
+        self.open_choice = None;
+        self.reload_opts();
         cx.notify();
     }
 
@@ -237,30 +352,6 @@ impl SettingsView {
         cx.notify();
     }
 
-    fn toggle(&mut self, b: Bool, cx: &mut Context<Self>) {
-        write_config(b.key(), &(!b.get(&self.opts)).to_string());
-        self.reload_opts();
-        cx.notify();
-    }
-
-    /// Persist the value at slider fraction `frac` for `n`, but only when the
-    /// snapped result actually changes — so a drag rewrites the config once per
-    /// step it crosses, not once per pointer tick.
-    fn slide_to(&mut self, n: Num, frac: f32, cx: &mut Context<Self>) {
-        let value = n.value_at_fraction(frac);
-        if (value - n.current(&self.opts)).abs() >= f32::EPSILON {
-            write_config(n.key(), &n.fmt(value));
-            self.reload_opts();
-            cx.notify();
-        }
-    }
-
-    fn cycle(&mut self, c: Choice, dir: i32, cx: &mut Context<Self>) {
-        write_config(c.key(), &c.write_value(&self.opts, dir));
-        self.reload_opts();
-        cx.notify();
-    }
-
     fn begin_edit(&mut self, target: EditTarget, window: &mut Window, cx: &mut Context<Self>) {
         // Save any in-progress edit before switching fields, so a value typed
         // (or pasted) into one field isn't lost by clicking another. Capturing a
@@ -269,7 +360,7 @@ impl SettingsView {
             self.commit_edit(cx);
         }
         match target {
-            EditTarget::Field(f) => self.start_field(f, window, cx),
+            EditTarget::Field(key) => self.start_field(key, window, cx),
             EditTarget::Item(k, i) => self.start_item(k, i, window, cx),
             EditTarget::NewItem(k) => self.start_new_item(k, window, cx),
             EditTarget::MacroName(old) => self.start_macro_rename(old, window, cx),
@@ -319,11 +410,14 @@ impl SettingsView {
         cx.notify();
     }
 
-    fn start_field(&mut self, field: Field, window: &mut Window, cx: &mut Context<Self>) {
-        self.editing = Some((
-            EditTarget::Field(field),
-            TextEdit::new(&field.value(&self.opts)),
-        ));
+    fn start_field(&mut self, key: &'static str, window: &mut Window, cx: &mut Context<Self>) {
+        let value = schema::find(key)
+            .map(|s| match &s.control {
+                Control::Text { get, .. } => get(&self.opts),
+                _ => String::new(),
+            })
+            .unwrap_or_default();
+        self.editing = Some((EditTarget::Field(key), TextEdit::new(&value)));
         self.capturing = false;
         window.focus(&self.focus, cx);
         cx.notify();
@@ -356,7 +450,7 @@ impl SettingsView {
         let mut entries = kind.values(&self.opts);
         if idx < entries.len() {
             entries.remove(idx);
-            self.write_list(kind, &entries);
+            self.write_kind(kind, &entries);
         }
         self.editing = None;
         cx.notify();
@@ -367,7 +461,8 @@ impl SettingsView {
         if let Some((target, edit)) = self.editing.take() {
             let text = edit.text();
             match target {
-                EditTarget::Field(field) => write_config(field.key(), text.trim()),
+                // An emptied field removes its key (back to the default).
+                EditTarget::Field(key) => write_config(key, text.trim()),
                 EditTarget::Item(kind, idx) => {
                     let mut entries = kind.values(&self.opts);
                     if idx < entries.len() {
@@ -376,14 +471,14 @@ impl SettingsView {
                         } else {
                             entries[idx] = text.trim().to_string();
                         }
-                        self.write_list(kind, &entries);
+                        self.write_kind(kind, &entries);
                     }
                 }
                 EditTarget::NewItem(kind) => {
                     if !text.trim().is_empty() {
                         let mut entries = kind.values(&self.opts);
                         entries.push(text.trim().to_string());
-                        self.write_list(kind, &entries);
+                        self.write_kind(kind, &entries);
                     }
                 }
                 EditTarget::MacroName(old) => {
@@ -397,9 +492,8 @@ impl SettingsView {
         cx.notify();
     }
 
-    fn write_list(&self, kind: ListKind, entries: &[String]) {
-        let (key, values) = kind.to_config(entries);
-        write_list(key, &values);
+    fn write_kind(&self, kind: ListKind, entries: &[String]) {
+        write_list(kind.key(), &kind.to_values(entries));
     }
 
     /// Drop every user keybind override, restoring the built-in defaults.
@@ -439,34 +533,43 @@ impl SettingsView {
             cx.stop_propagation();
             return;
         }
-        // Clipboard for the inline field editor (copy/cut/paste a value, e.g. a
-        // binary path). Handled here since the clipboard needs `App` access.
+        // An open variant list closes on escape before anything else sees it.
+        if ks.key == "escape" && self.open_choice.is_some() {
+            self.open_choice = None;
+            cx.notify();
+            cx.stop_propagation();
+            return;
+        }
+        // Clipboard for the active editor — a field being edited, else the
+        // search box. Handled here since the clipboard needs `App` access.
         if ks.modifiers.platform
             && !ks.modifiers.alt
             && !ks.modifiers.control
-            && self.editing.is_some()
             && matches!(ks.key.as_str(), "c" | "x" | "v")
         {
+            let edit = match self.editing.as_mut() {
+                Some((_, edit)) => edit,
+                None => &mut self.query,
+            };
             match ks.key.as_str() {
                 "c" => {
-                    if let Some((_, edit)) = self.editing.as_ref() {
-                        if let Some(t) = edit.selected_text() {
-                            cx.write_to_clipboard(gpui::ClipboardItem::new_string(t));
-                        }
+                    if let Some(t) = edit.selected_text() {
+                        cx.write_to_clipboard(gpui::ClipboardItem::new_string(t));
                     }
                 }
                 "x" => {
-                    if let Some((_, edit)) = self.editing.as_mut() {
-                        if let Some(t) = edit.selected_text() {
-                            cx.write_to_clipboard(gpui::ClipboardItem::new_string(t));
-                            edit.delete_selection();
-                            cx.notify();
-                        }
+                    if let Some(t) = edit.selected_text() {
+                        cx.write_to_clipboard(gpui::ClipboardItem::new_string(t));
+                        edit.delete_selection();
+                        cx.notify();
                     }
                 }
                 "v" => {
-                    let pasted = cx.read_from_clipboard().and_then(|i| i.text());
-                    if let (Some(t), Some((_, edit))) = (pasted, self.editing.as_mut()) {
+                    if let Some(t) = cx.read_from_clipboard().and_then(|i| i.text()) {
+                        let edit = match self.editing.as_mut() {
+                            Some((_, edit)) => edit,
+                            None => &mut self.query,
+                        };
                         edit.insert(&t.replace(['\n', '\r'], " "));
                         cx.notify();
                     }
@@ -476,21 +579,34 @@ impl SettingsView {
             cx.stop_propagation();
             return;
         }
-        let outcome = {
-            let Some((_, edit)) = self.editing.as_mut() else {
-                return;
-            };
-            guise::apply_key(edit, ks)
-        };
-        match outcome {
-            guise::KeyOutcome::Submit => self.commit_edit(cx),
-            guise::KeyOutcome::Cancel => {
-                self.editing = None;
-                self.capturing = false;
-                cx.notify();
+        // Route everything else to the field editor when one is active,
+        // otherwise to the search box (type anywhere to search).
+        match self.editing.as_mut() {
+            Some((_, edit)) => {
+                let outcome = guise::apply_key(edit, ks);
+                match outcome {
+                    guise::KeyOutcome::Submit => self.commit_edit(cx),
+                    guise::KeyOutcome::Cancel => {
+                        self.editing = None;
+                        self.capturing = false;
+                        cx.notify();
+                    }
+                    guise::KeyOutcome::Edited => cx.notify(),
+                    guise::KeyOutcome::Pass => return,
+                }
             }
-            guise::KeyOutcome::Edited => cx.notify(),
-            guise::KeyOutcome::Pass => return,
+            None => {
+                match guise::apply_key(&mut self.query, ks) {
+                    // Enter has nothing to commit; escape clears the filter.
+                    guise::KeyOutcome::Submit => {}
+                    guise::KeyOutcome::Cancel => {
+                        self.query = TextEdit::new("");
+                        cx.notify();
+                    }
+                    guise::KeyOutcome::Edited => cx.notify(),
+                    guise::KeyOutcome::Pass => return,
+                }
+            }
         }
         cx.stop_propagation();
     }
@@ -547,13 +663,13 @@ fn tool_path(opts: &config::Options, tool: &str) -> Option<String> {
     p.clone().filter(|s| !s.trim().is_empty())
 }
 
-/// Write a single `key = value` line to the config file. See `crate::confwrite`
-/// for the read-check + atomic-replace rules.
+/// Write one key to settings.json (an empty value removes it). See
+/// `crate::confwrite` for the read-check + atomic-replace rules.
 fn write_config(key: &str, value: &str) {
     crate::confwrite::upsert(key, value);
 }
 
-/// Replace every line for a repeated `key` with the given values.
+/// Replace a repeated key's entries (empty removes the key).
 fn write_list(key: &str, values: &[String]) {
     crate::confwrite::set_list(key, values);
 }

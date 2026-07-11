@@ -786,7 +786,7 @@ impl WorkspaceView {
     fn reload(&mut self, cx: &mut Context<Self>) {
         let (opts, diagnostics) = config::load();
         for d in &diagnostics {
-            eprintln!("sinclair: config line {}: {} ({})", d.line, d.message, d.key);
+            eprintln!("sinclair: settings line {}: {} ({})", d.line, d.message, d.key);
         }
         let font_changed = opts.font_family != self.opts.font_family
             || opts.font_feature != self.opts.font_feature

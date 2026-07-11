@@ -147,9 +147,13 @@ fn main() {
     // spawned tools (bun/node, agent CLIs, git/docker plugins) are found.
     envpath::fix();
 
+    // One-time upgrade of a pre-JSON `key = value` config into settings.json,
+    // before the first load and before the watcher points at the new file.
+    confwrite::migrate();
+
     let (opts, diagnostics) = config::load();
     for d in &diagnostics {
-        eprintln!("sinclair: config line {}: {} ({})", d.line, d.message, d.key);
+        eprintln!("sinclair: settings line {}: {} ({})", d.line, d.message, d.key);
     }
 
     let app = gpui_platform::application();
@@ -177,7 +181,7 @@ fn main() {
 fn spawn_window(cx: &mut App) {
     let (opts, diagnostics) = config::load();
     for d in &diagnostics {
-        eprintln!("sinclair: config line {}: {} ({})", d.line, d.message, d.key);
+        eprintln!("sinclair: settings line {}: {} ({})", d.line, d.message, d.key);
     }
     open_default_window(opts, cx);
 }

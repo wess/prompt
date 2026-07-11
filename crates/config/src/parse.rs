@@ -1,5 +1,6 @@
-//! `key = value` config parser. Never hard-fails: bad lines become
-//! diagnostics and parsing continues.
+//! Legacy `key = value` config parser, kept so pre-JSON installs load (and
+//! migrate) cleanly. Never hard-fails: bad lines become diagnostics and
+//! parsing continues.
 
 use crate::apply::apply;
 use crate::options::Options;

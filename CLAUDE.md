@@ -78,10 +78,14 @@ The workspace is layered bottom-up; each crate depends only on those below it.
   across reads is carried over). Used by `terminal` for session capture.
 - **`input`** — keyboard/mouse encoding to terminal byte sequences (CSI, kitty
   keyboard protocol, mouse reporting, bracketed paste).
-- **`config`** — `key = value` config: parse → diagnostics →
-  `Options` + keybindings, with live file watching. Bad lines become friendly
-  diagnostics and never abort the load. Default path
-  `$XDG_CONFIG_HOME/sinclair/config` or `~/.config/sinclair/config`.
+- **`config`** — layered settings: compiled-in defaults overridden by the
+  user's `settings.json` (JSON with comments, parsed by `json.rs`), with live
+  file watching. `kind.rs` is the typed key schema; bad values become friendly
+  diagnostics plus the default and never abort the load. `jsonedit.rs` does
+  comment-preserving single-key writes. Default path
+  `$XDG_CONFIG_HOME/sinclair/settings.json` or
+  `~/.config/sinclair/settings.json`; the legacy `key = value` `config` file
+  is still parsed for one-time migration (`app`'s `confwrite::migrate`).
 - **`theme`** — 22 built-in color schemes (`builtin/`) plus per-color overrides.
 - **`plugin`** — parses `plugin.toml` manifests contributing: `[[command]]`
   actions (+ default keybindings), `[runtime]`/`[panel]` IPC block-tree panels,

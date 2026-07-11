@@ -1,108 +1,186 @@
-use super::*;
-use super::super::model::{Bool, Choice, Field, Num, Section};
+//! Schema-driven rendering: every row comes from a [`Setting`] — label,
+//! description, the right control for its type, a modified-from-default
+//! bar, and a per-row reset.
+
+use super::super::schema::{self, Control, Section, Setting};
 use super::super::{EditTarget, SettingsView};
+use super::*;
 use gpui::{px, AnyElement, Context};
 
 impl SettingsView {
-    pub(crate) fn toggle_row(&self, b: Bool, glyph: &str, color: theme::Rgb, cx: &mut Context<Self>) -> AnyElement {
-        self.row(self.icon(glyph, color, px(22.0)), b.label(), self.switch(b, cx))
-            .into_any_element()
+    /// One settings row (plus, for an expanded Choice, its variant list).
+    pub(crate) fn setting_row(&self, s: &'static Setting, cx: &mut Context<Self>) -> AnyElement {
+        let control: AnyElement = match &s.control {
+            Control::Toggle(get) => self.switch(s, *get, cx).into_any_element(),
+            Control::Slider(n) => self.slider(s, *n, cx).into_any_element(),
+            Control::Choice(c) => self.choice_button(s, *c, cx).into_any_element(),
+            Control::Text { get, placeholder } => self
+                .text_input(EditTarget::Field(s.key), get(&self.opts), placeholder, 230.0, cx)
+                .into_any_element(),
+            // List settings render as groups, not rows.
+            Control::List(_) => div().into_any_element(),
+        };
+        let modified = self.modified(s.key);
+        let mut right = div().flex().items_center().gap_2().flex_none();
+        if modified {
+            right = right.child(self.reset_button(s.key, cx));
+        }
+        right = right.child(control);
+
+        let mut row = div()
+            .relative()
+            .w_full()
+            .min_h(px(54.0))
+            .px_3()
+            .py_2()
+            .flex()
+            .items_center()
+            .justify_between()
+            .gap_3()
+            .child(self.row_label(s, modified))
+            .child(right);
+        if modified {
+            row = row.child(
+                div()
+                    .absolute()
+                    .left_0()
+                    .top(px(8.0))
+                    .bottom(px(8.0))
+                    .w(px(3.0))
+                    .rounded(px(2.0))
+                    .bg(hsla(BLUE_TEXT)),
+            );
+        }
+        if let (Control::Choice(c), true) = (&s.control, self.open_choice == Some(s.key)) {
+            return div()
+                .flex()
+                .flex_col()
+                .child(row)
+                .child(self.choice_panel(s, *c, cx))
+                .into_any_element();
+        }
+        row.into_any_element()
     }
 
-    fn slider_row(&self, n: Num, glyph: &str, color: theme::Rgb, cx: &mut Context<Self>) -> AnyElement {
-        self.row(self.icon(glyph, color, px(22.0)), n.label(), self.slider(n, color, cx))
-            .into_any_element()
+    /// The label + description column.
+    fn row_label(&self, s: &'static Setting, modified: bool) -> impl IntoElement {
+        let mut name = div()
+            .flex()
+            .items_center()
+            .gap_2()
+            .text_color(hsla(TEXT))
+            .child(SharedString::from(s.label));
+        if modified {
+            name = name.child(
+                div()
+                    .text_size(px(10.0))
+                    .text_color(hsla(BLUE_TEXT))
+                    .child(SharedString::from("modified")),
+            );
+        }
+        div()
+            .flex()
+            .flex_col()
+            .flex_1()
+            .min_w(px(0.0))
+            .gap(px(2.0))
+            .child(name)
+            .child(
+                div()
+                    .text_size(px(11.0))
+                    .text_color(hsla(MUTED))
+                    .child(SharedString::from(s.desc)),
+            )
     }
 
-    fn cycle_row(&self, c: Choice, glyph: &str, color: theme::Rgb, cx: &mut Context<Self>) -> AnyElement {
-        self.row(self.icon(glyph, color, px(22.0)), c.label(), self.cycle_control(c, cx))
-            .into_any_element()
+    /// The `↺` button that removes a key from settings.json.
+    pub(crate) fn reset_button(&self, key: &'static str, cx: &mut Context<Self>) -> impl IntoElement {
+        button_box("\u{21ba}").text_color(hsla(MUTED)).on_mouse_down(
+            MouseButton::Left,
+            cx.listener(move |this, _ev, _window, cx| {
+                this.reset(key, cx);
+                cx.stop_propagation();
+            }),
+        )
     }
 
-    pub(crate) fn field_row(&self, f: Field, glyph: &str, color: theme::Rgb, cx: &mut Context<Self>) -> AnyElement {
-        let input = self.text_input(
-            EditTarget::Field(f),
-            f.value(&self.opts),
-            f.placeholder(),
-            220.0,
-            cx,
-        );
-        self.row(self.icon(glyph, color, px(22.0)), f.label(), input)
-            .into_any_element()
+    /// The rows and list groups of the selected section (search empty).
+    pub(crate) fn section_content(&self, cx: &mut Context<Self>) -> Vec<AnyElement> {
+        match self.section {
+            Section::Keyboard => vec![self.keyboard_group(cx).into_any_element()],
+            Section::Macros => vec![self.macros_group(cx).into_any_element()],
+            Section::Ai => self.ai_content(cx),
+            section => {
+                let settings: Vec<&'static Setting> = schema::in_section(section).collect();
+                self.rows_and_groups(&settings, cx)
+            }
+        }
     }
 
-    pub(crate) fn general_rows(&self, cx: &mut Context<Self>) -> Vec<AnyElement> {
-        let g = Section::General.accent();
-        vec![
-            self.field_row(Field::Shell, "\u{2318}", g, cx),
-            self.field_row(Field::WorkingDirectory, "\u{1f4c1}", g, cx),
-            self.field_row(Field::Title, "\u{24c9}", g, cx),
-            self.toggle_row(Bool::InheritCwd, "\u{21aa}", theme::Rgb::new(10, 132, 255), cx),
-            self.toggle_row(Bool::QuitLast, "Q", theme::Rgb::new(255, 69, 58), cx),
-            self.toggle_row(Bool::ConfirmClose, "!", theme::Rgb::new(255, 159, 10), cx),
-            self.toggle_row(Bool::ConfirmQuit, "\u{23fb}", theme::Rgb::new(255, 69, 58), cx),
-            self.toggle_row(Bool::PasteProtection, "\u{2335}", theme::Rgb::new(255, 214, 10), cx),
-            self.toggle_row(Bool::ShellIntegration, "\u{276f}", theme::Rgb::new(48, 209, 88), cx),
-            self.toggle_row(Bool::AutoUpdate, "\u{2913}", theme::Rgb::new(10, 132, 255), cx),
-            self.toggle_row(Bool::SessionRestore, "\u{21ba}", theme::Rgb::new(94, 92, 230), cx),
-            self.toggle_row(Bool::TabTitleShowHost, "@", theme::Rgb::new(100, 210, 255), cx),
-            self.toggle_row(Bool::CopyOnSelect, "\u{2713}", theme::Rgb::new(52, 199, 89), cx),
-            self.cycle_row(Choice::OptionAsAlt, "\u{2325}", theme::Rgb::new(88, 86, 214), cx),
-            self.cycle_row(Choice::ClipboardRead, "R", theme::Rgb::new(90, 200, 250), cx),
-            self.cycle_row(Choice::ClipboardWrite, "W", theme::Rgb::new(94, 92, 230), cx),
-        ]
+    /// Scalar settings collect into one panel; each List setting renders as
+    /// its own group below, in declaration order.
+    pub(crate) fn rows_and_groups(
+        &self,
+        settings: &[&'static Setting],
+        cx: &mut Context<Self>,
+    ) -> Vec<AnyElement> {
+        let mut rows: Vec<AnyElement> = Vec::new();
+        let mut groups: Vec<AnyElement> = Vec::new();
+        for s in settings {
+            match &s.control {
+                Control::List(kind) => groups.push(self.list_group(s, *kind, cx).into_any_element()),
+                _ => rows.push(self.setting_row(s, cx)),
+            }
+        }
+        let mut out: Vec<AnyElement> = Vec::new();
+        if !rows.is_empty() {
+            out.push(self.list(rows).into_any_element());
+        }
+        out.extend(groups);
+        out
     }
 
-    pub(crate) fn appearance_rows(&self, cx: &mut Context<Self>) -> Vec<AnyElement> {
-        vec![
-            self.cycle_row(Choice::Theme, "\u{25d0}", Section::Appearance.accent(), cx),
-            self.field_row(Field::ThemeLight, "\u{2600}", theme::Rgb::new(255, 214, 10), cx),
-            self.field_row(Field::ThemeDark, "\u{263e}", theme::Rgb::new(94, 92, 230), cx),
-            self.cycle_row(Choice::FontStyle, "B", theme::Rgb::new(255, 159, 10), cx),
-            self.cycle_row(Choice::CursorStyle, "C", theme::Rgb::new(255, 69, 58), cx),
-            self.toggle_row(Bool::CursorBlink, "\u{2737}", theme::Rgb::new(255, 214, 10), cx),
-            self.field_row(Field::Foreground, "\u{25a0}", theme::Rgb::new(94, 92, 230), cx),
-            self.field_row(Field::Background, "\u{25a1}", theme::Rgb::new(99, 99, 102), cx),
-            self.field_row(Field::CursorColor, "I", theme::Rgb::new(255, 69, 58), cx),
-            self.field_row(Field::CursorText, "T", theme::Rgb::new(255, 149, 0), cx),
-            self.field_row(Field::SelectionForeground, "S", theme::Rgb::new(10, 132, 255), cx),
-            self.field_row(Field::SelectionBackground, "S", theme::Rgb::new(48, 209, 88), cx),
-            self.toggle_row(Bool::BoldIsBright, "\u{2600}", theme::Rgb::new(255, 214, 10), cx),
-            self.slider_row(Num::MinContrast, "\u{25d1}", theme::Rgb::new(142, 142, 147), cx),
-        ]
+    /// Search mode: every matching setting, grouped under section headings.
+    pub(crate) fn search_results(&self, cx: &mut Context<Self>) -> Vec<AnyElement> {
+        let query = self.search();
+        let mut out: Vec<AnyElement> = Vec::new();
+        for section in Section::ALL {
+            let mut matched: Vec<&'static Setting> =
+                schema::in_section(section).filter(|s| s.matches(&query)).collect();
+            // The Macros section has no schema entries; match it by name.
+            let macros_hit = section == Section::Macros && word_match(&query, "macros replay shortcut");
+            if matched.is_empty() && !macros_hit {
+                continue;
+            }
+            out.push(self.heading(section.title()).into_any_element());
+            if section == Section::Keyboard {
+                // Keep the capture/restore chrome with the keybind list.
+                matched.retain(|s| s.key != "keybind");
+                out.push(self.keyboard_group(cx).into_any_element());
+            }
+            if macros_hit {
+                out.push(self.macros_group(cx).into_any_element());
+            }
+            out.extend(self.rows_and_groups(&matched, cx));
+        }
+        if out.is_empty() {
+            out.push(
+                div()
+                    .pt_4()
+                    .text_color(hsla(MUTED))
+                    .child(SharedString::from(format!("No settings match \u{201c}{query}\u{201d}")))
+                    .into_any_element(),
+            );
+        }
+        out
     }
+}
 
-    pub(crate) fn terminal_rows(&self, cx: &mut Context<Self>) -> Vec<AnyElement> {
-        let t = Section::Terminal.accent();
-        let blue = theme::Rgb::new(90, 200, 250);
-        vec![
-            self.slider_row(Num::FontSize, "T", t, cx),
-            self.slider_row(Num::CellWidth, "W", blue, cx),
-            self.slider_row(Num::CellHeight, "H", blue, cx),
-            self.slider_row(Num::PaddingX, "X", blue, cx),
-            self.slider_row(Num::PaddingY, "Y", blue, cx),
-            self.slider_row(Num::WindowWidth, "\u{2194}", theme::Rgb::new(88, 86, 214), cx),
-            self.slider_row(Num::WindowHeight, "\u{2195}", theme::Rgb::new(88, 86, 214), cx),
-            self.slider_row(Num::Scrollback, "\u{2630}", theme::Rgb::new(142, 142, 147), cx),
-            self.slider_row(Num::ScrollMultiplier, "\u{2207}", theme::Rgb::new(255, 159, 10), cx),
-            self.toggle_row(Bool::MouseHide, "\u{2196}", theme::Rgb::new(170, 170, 170), cx),
-            self.toggle_row(Bool::SmartSelect, "\u{2318}", theme::Rgb::new(52, 199, 89), cx),
-            self.toggle_row(Bool::MiddleClickPaste, "\u{2504}", theme::Rgb::new(90, 200, 250), cx),
-            self.toggle_row(Bool::FocusFollowsMouse, "\u{2192}", theme::Rgb::new(255, 159, 10), cx),
-            self.toggle_row(Bool::Timestamps, "\u{25f4}", theme::Rgb::new(191, 90, 242), cx),
-            self.toggle_row(Bool::AutosuggestGhost, "\u{2728}", theme::Rgb::new(255, 214, 10), cx),
-            self.toggle_row(Bool::AutosuggestPopup, "\u{25bd}", theme::Rgb::new(10, 132, 255), cx),
-            self.toggle_row(Bool::AutosuggestTab, "\u{21e5}", theme::Rgb::new(52, 199, 89), cx),
-            self.toggle_row(Bool::AutosuggestAi, "\u{2699}", theme::Rgb::new(191, 90, 242), cx),
-            self.toggle_row(Bool::AutosuggestHistory, "\u{2630}", theme::Rgb::new(142, 142, 147), cx),
-            self.toggle_row(Bool::AutosuggestCommands, "\u{2318}", theme::Rgb::new(90, 200, 250), cx),
-            self.toggle_row(Bool::AutosuggestPaths, "\u{1f4c1}", theme::Rgb::new(255, 159, 10), cx),
-            self.toggle_row(Bool::AutosuggestAssist, "\u{2726}", theme::Rgb::new(94, 92, 230), cx),
-            self.slider_row(Num::SplitOpacity, "\u{25d0}", theme::Rgb::new(94, 92, 230), cx),
-            self.slider_row(Num::BgOpacity, "\u{25d1}", theme::Rgb::new(94, 92, 230), cx),
-            self.field_row(Field::BgImage, "\u{1f5bc}", theme::Rgb::new(94, 92, 230), cx),
-            self.field_row(Field::Badge, "\u{25ce}", theme::Rgb::new(142, 142, 147), cx),
-            self.field_row(Field::SplitDivider, "\u{2503}", theme::Rgb::new(99, 99, 102), cx),
-        ]
-    }
+/// Every query word appears in `haystack` (case-insensitive).
+fn word_match(query: &str, haystack: &str) -> bool {
+    let hay = haystack.to_lowercase();
+    query
+        .to_lowercase()
+        .split_whitespace()
+        .all(|w| hay.contains(w))
 }
