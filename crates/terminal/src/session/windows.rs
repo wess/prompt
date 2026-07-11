@@ -1,36 +1,27 @@
-//! A live terminal session: pty child + vt emulation + reader thread.
+//! Windows session backend: blocking ConPTY pipe IO on a reader thread.
 
-use std::collections::VecDeque;
-use std::io;
+use std::fs::File;
+use std::io::{self, Read, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use crate::event::Event;
 use crate::options::SessionOptions;
 
-/// How long the group SIGHUP gets before teardown escalates to SIGKILL.
-const HANGUP_GRACE: Duration = Duration::from_millis(200);
-
-/// Queue capacity kept after a large paste has drained.
-const INPUT_SLACK: usize = 64 * 1024;
-
 /// A running child attached to a [`vt::Terminal`].
 ///
-/// A reader thread pumps pty output into the terminal, drains queued input
-/// when the pty can take it, and reports [`Event`]s on the channel returned
-/// by [`Session::spawn`]. Dropping the session (or calling
-/// [`Session::shutdown`]) hangs up the child's process group, escalating to
-/// SIGKILL, and joins the reader thread; the join is bounded because the
-/// waker always breaks the reader out of its poll.
+/// A reader thread pumps ConPTY output into the terminal and reports
+/// [`Event`]s on the channel returned by [`Session::spawn`]. Dropping the
+/// session (or calling [`Session::shutdown`]) kills the child, which closes
+/// the console and unblocks the reader at EOF; the reader reaps the child
+/// and sends [`Event::Exit`] before ending.
 pub struct Session {
-    control: pty::Control,
-    /// Pending input bytes; the reader thread writes them out in order.
-    input: Arc<Mutex<VecDeque<u8>>>,
-    waker: pty::Waker,
-    stop: Arc<AtomicBool>,
+    pty: Arc<Mutex<pty::Pty>>,
+    /// Clone of the console input pipe for user input; writes need no lock.
+    writer: File,
     term: Arc<Mutex<vt::Terminal>>,
     /// `true` while an unconsumed [`Event::Wakeup`] sits in the channel.
     wakeup_pending: Arc<AtomicBool>,
@@ -39,13 +30,9 @@ pub struct Session {
     reader: Option<JoinHandle<()>>,
 }
 
-/// Everything the reader thread owns, including the child handle so it can
-/// block in `wait` without holding any lock the embedder needs.
+/// Everything the reader thread borrows while pumping output.
 struct Reader {
-    pty: pty::Pty,
-    pump: pty::Pump,
-    input: Arc<Mutex<VecDeque<u8>>>,
-    stop: Arc<AtomicBool>,
+    pty: Arc<Mutex<pty::Pty>>,
     term: Arc<Mutex<vt::Terminal>>,
     pending: Arc<AtomicBool>,
     recorder: Arc<Mutex<Option<cast::Recorder>>>,
@@ -54,7 +41,7 @@ struct Reader {
 }
 
 impl Session {
-    /// Spawn the child on a pty and start the reader thread.
+    /// Spawn the child on a ConPTY and start the reader thread.
     ///
     /// Wakeup contract: `Event::Wakeup` is coalesced. The reader sends one
     /// only when none is pending, then sets the pending flag. The embedder
@@ -72,39 +59,32 @@ impl Session {
         spawn.winsize.rows = rows as u16;
 
         let pty = pty::Pty::spawn(&spawn)?;
-        let control = pty.control()?;
-        let (pump, waker) = pty.pump()?;
+        let output = pty.try_clone_reader()?;
+        let replies = pty.try_clone_writer()?;
+        let writer = pty.try_clone_writer()?;
 
         let term = Arc::new(Mutex::new(vt::Terminal::new(cols, rows, scrollback_limit)));
-        let input = Arc::new(Mutex::new(VecDeque::new()));
-        let stop = Arc::new(AtomicBool::new(false));
+        let pty = Arc::new(Mutex::new(pty));
         let wakeup_pending = Arc::new(AtomicBool::new(false));
         let recorder: Arc<Mutex<Option<cast::Recorder>>> = Arc::new(Mutex::new(None));
         let (events, receiver) = mpsc::channel();
 
-        // On spawn failure the closure is dropped, and with it the pty,
-        // whose Drop kills and reaps the just-started child.
         let reader = thread::Builder::new().name("ptyreader".to_string()).spawn({
             let reader = Reader {
-                pty,
-                pump,
-                input: Arc::clone(&input),
-                stop: Arc::clone(&stop),
+                pty: Arc::clone(&pty),
                 term: Arc::clone(&term),
                 pending: Arc::clone(&wakeup_pending),
                 recorder: Arc::clone(&recorder),
                 events,
                 scrollback_limit,
             };
-            move || read_loop(reader)
+            move || read_loop(output, replies, reader)
         })?;
 
         Ok((
             Session {
-                control,
-                input,
-                waker,
-                stop,
+                pty,
+                writer,
                 term,
                 wakeup_pending,
                 recorder,
@@ -114,30 +94,19 @@ impl Session {
         ))
     }
 
-    /// Queue user input for the child and return immediately. The reader
-    /// thread drains the queue as the pty accepts bytes, so a stopped or
-    /// slow child can never block the caller.
+    /// Send user input to the child. Loops until every byte is written.
     pub fn write(&self, bytes: &[u8]) -> io::Result<()> {
-        if bytes.is_empty() {
-            return Ok(());
-        }
-        self.input
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .extend(bytes);
-        self.waker.wake();
-        Ok(())
+        (&self.writer).write_all(bytes)
     }
 
-    /// Resize both the emulation grid and the kernel pty winsize. The
-    /// kernel delivers SIGWINCH to the child's process group.
+    /// Resize both the emulation grid and the pseudoconsole.
     pub fn resize(&self, cols: usize, rows: usize) -> io::Result<()> {
         self.resize_px(cols, rows, 0, 0)
     }
 
-    /// [`Session::resize`] with per-cell pixel dimensions, so the winsize
-    /// reports `ws_xpixel`/`ws_ypixel` to pixel-addressing programs (kitty
-    /// graphics, sixel).
+    /// [`Session::resize`] with per-cell pixel dimensions. ConPTY has no
+    /// pixel reporting, so the cell sizes only feed the emulation grid's
+    /// winsize bookkeeping.
     pub fn resize_px(
         &self,
         cols: usize,
@@ -150,7 +119,10 @@ impl Session {
             .unwrap_or_else(|e| e.into_inner())
             .resize(cols, rows);
         let size = pty::Winsize::with_cell_size(cols as u16, rows as u16, cell_width, cell_height);
-        self.control.resize(size)
+        self.pty
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .resize(size)
     }
 
     /// Whether an asciinema recording is currently capturing this session.
@@ -184,10 +156,14 @@ impl Session {
         recorder.finish().ok()
     }
 
-    /// Whether a foreground process other than the shell is running on the pty
-    /// (e.g. an editor or a long-running command), for quit/close warnings.
+    /// Whether a foreground process other than the shell is running on the
+    /// console (e.g. an editor or a long-running command), for quit/close
+    /// warnings.
     pub fn foreground_running(&self) -> bool {
-        self.control.foreground_running()
+        self.pty
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .foreground_running()
     }
 
     /// Run `f` with the terminal locked, for rendering or inspection.
@@ -206,27 +182,15 @@ impl Session {
         self.teardown();
     }
 
-    /// SIGHUP the child's process group, escalate to a group SIGKILL after a
-    /// grace period, then break the reader out of its poll and join it. The
-    /// child itself cannot survive the SIGKILL, so the reader's blocking
-    /// `wait` — and therefore the join — always returns, even if some
-    /// descendant keeps the pty slave open.
+    /// Kill the child; closing the console unblocks the reader at EOF, so
+    /// the join is bounded.
     fn teardown(&mut self) {
         let Some(handle) = self.reader.take() else {
             return;
         };
-        if !handle.is_finished() {
-            let _ = self.control.hangup();
-            let deadline = Instant::now() + HANGUP_GRACE;
-            while !handle.is_finished() && Instant::now() < deadline {
-                thread::sleep(Duration::from_millis(10));
-            }
-            if !handle.is_finished() {
-                let _ = self.control.kill();
-            }
+        if let Ok(mut pty) = self.pty.lock() {
+            let _ = pty.kill();
         }
-        self.stop.store(true, Ordering::SeqCst);
-        self.waker.wake();
         let _ = handle.join();
     }
 }
@@ -238,74 +202,32 @@ impl Drop for Session {
     }
 }
 
-/// Pump child output into the terminal and queued input into the pty until
-/// EOF/EIO or a stop request, then reap the child and report its exit.
-fn read_loop(mut r: Reader) {
+/// Pump child output into the terminal until EOF, then reap the child and
+/// report its exit.
+fn read_loop(mut output: File, mut replies: File, r: Reader) {
     let mut buf = [0u8; 65536];
     loop {
-        let want_write = !r
-            .input
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .is_empty();
-        let Ok(ready) = r.pump.wait(want_write) else {
-            break;
-        };
-        if r.stop.load(Ordering::SeqCst) {
-            break;
-        }
-        if ready.writable {
-            drain_input(&r.pump, &r.input);
-        }
-        if ready.readable {
-            match r.pump.read(&mut buf) {
-                Ok(0) => break,
-                Ok(n) => {
-                    if let Ok(mut rec) = r.recorder.lock() {
-                        if let Some(rec) = rec.as_mut() {
-                            let _ = rec.output(&buf[..n]);
-                        }
-                    }
-                    apply_chunk(&buf[..n], &r);
-                }
-                Err(e) if e.kind() == io::ErrorKind::WouldBlock => {}
-                Err(e) if e.kind() == io::ErrorKind::Interrupted => {}
-                Err(_) => break, // EIO once the child side is fully closed
-            }
-        }
-    }
-    let code = r.pty.wait().ok().and_then(|status| status.code());
-    let _ = r.events.send(Event::Exit(code));
-}
-
-/// Write queued input until the pty stops taking it, preserving order. On a
-/// dead pty the queue is discarded; the read side reports the exit.
-fn drain_input(pump: &pty::Pump, input: &Mutex<VecDeque<u8>>) {
-    let mut queue = input.lock().unwrap_or_else(|e| e.into_inner());
-    while !queue.is_empty() {
-        let (front, _) = queue.as_slices();
-        match pump.write(front) {
+        match output.read(&mut buf) {
             Ok(0) => break,
             Ok(n) => {
-                queue.drain(..n);
+                if let Ok(mut rec) = r.recorder.lock() {
+                    if let Some(rec) = rec.as_mut() {
+                        let _ = rec.output(&buf[..n]);
+                    }
+                }
+                apply_chunk(&buf[..n], &mut replies, &r);
             }
-            Err(e) if e.kind() == io::ErrorKind::WouldBlock => break,
-            Err(e) if e.kind() == io::ErrorKind::Interrupted => {}
-            Err(_) => {
-                queue.clear();
-                break;
-            }
+            Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
+            Err(_) => break, // pipe gone once the console is fully closed
         }
     }
-    if queue.is_empty() && queue.capacity() > INPUT_SLACK {
-        queue.shrink_to(INPUT_SLACK);
-    }
+    let _ = r.events.send(Event::Exit(reap(&r.pty)));
 }
 
 /// Feed one chunk into the terminal and emit the resulting events. Replies
-/// the terminal generates (DSR, DA, ...) are queued as input so they leave
-/// in order with user keystrokes.
-fn apply_chunk(chunk: &[u8], r: &Reader) {
+/// the terminal generates (DSR, DA, ...) are written straight back to the
+/// console input pipe.
+fn apply_chunk(chunk: &[u8], replies: &mut File, r: &Reader) {
     let (reply, title, bell, clipboard, notification, command_finished, cwd_changed) = {
         let mut term = r.term.lock().unwrap_or_else(|e| e.into_inner());
         // The reader thread must survive parser bugs, but a panicking feed
@@ -330,10 +252,7 @@ fn apply_chunk(chunk: &[u8], r: &Reader) {
         )
     };
     if !reply.is_empty() {
-        r.input
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .extend(&reply);
+        let _ = replies.write_all(&reply);
     }
     if let Some(title) = title {
         let _ = r.events.send(Event::TitleChanged(title));
@@ -364,6 +283,15 @@ fn apply_chunk(chunk: &[u8], r: &Reader) {
     }
 }
 
-#[cfg(all(test, unix))]
-#[path = "../tests/session.rs"]
-mod tests;
+/// Wait for the child without holding the pty lock while sleeping, so a
+/// concurrent [`Session::shutdown`] can still take the lock to kill.
+fn reap(pty: &Mutex<pty::Pty>) -> Option<i32> {
+    loop {
+        match pty.lock().unwrap_or_else(|e| e.into_inner()).try_wait() {
+            Ok(Some(status)) => return status.code(),
+            Ok(None) => {}
+            Err(_) => return None,
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
+}
