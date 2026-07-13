@@ -115,6 +115,13 @@ impl Inner {
             &mut self.primary
         }
     }
+
+    /// Text area size in pixels: the grid times the host-reported cell size.
+    pub(crate) fn text_area_px(&self) -> (usize, usize) {
+        let grid = &self.screen().grid;
+        let (cw, ch) = self.cell_px;
+        (grid.cols() * cw as usize, grid.rows() * ch as usize)
+    }
 }
 
 impl Terminal {

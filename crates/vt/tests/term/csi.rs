@@ -43,10 +43,50 @@ fn dsr_five_reports_ok() {
 }
 
 #[test]
-fn da1_reports_vt220() {
+fn da1_reports_vt220_with_sixel() {
     let mut t = Terminal::new(10, 3, 0);
     t.feed(b"\x1b[c");
-    assert_eq!(t.take_output(), b"\x1b[?62;22c");
+    assert_eq!(t.take_output(), b"\x1b[?62;4;22c");
+}
+
+#[test]
+fn xtsmgraphics_reports_color_registers() {
+    let mut t = Terminal::new(10, 3, 0);
+    t.feed(b"\x1b[?1;1S");
+    assert_eq!(t.take_output(), b"\x1b[?1;0;256S");
+    t.feed(b"\x1b[?1;4S");
+    assert_eq!(t.take_output(), b"\x1b[?1;0;256S");
+    // Action out of range: status 2.
+    t.feed(b"\x1b[?1;5S");
+    assert_eq!(t.take_output(), b"\x1b[?1;2S");
+}
+
+#[test]
+fn xtsmgraphics_reports_sixel_geometry() {
+    let mut t = Terminal::new(10, 3, 0);
+    t.set_cell_pixels(8, 16);
+    t.feed(b"\x1b[?2;1S");
+    assert_eq!(t.take_output(), b"\x1b[?2;0;80;48S");
+    t.feed(b"\x1b[?2;4S");
+    assert_eq!(t.take_output(), b"\x1b[?2;0;80;48S");
+    // Geometry is not settable: status 3.
+    t.feed(b"\x1b[?2;3;100;100S");
+    assert_eq!(t.take_output(), b"\x1b[?2;3S");
+    // ReGIS (or anything else) is not an item we know: status 1.
+    t.feed(b"\x1b[?3;1S");
+    assert_eq!(t.take_output(), b"\x1b[?3;1S");
+}
+
+#[test]
+fn xtwinops_reports_sizes() {
+    let mut t = Terminal::new(10, 3, 0);
+    t.set_cell_pixels(8, 16);
+    t.feed(b"\x1b[14t");
+    assert_eq!(t.take_output(), b"\x1b[4;48;80t");
+    t.feed(b"\x1b[16t");
+    assert_eq!(t.take_output(), b"\x1b[6;16;8t");
+    t.feed(b"\x1b[18t");
+    assert_eq!(t.take_output(), b"\x1b[8;3;10t");
 }
 
 #[test]

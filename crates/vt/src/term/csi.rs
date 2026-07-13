@@ -54,12 +54,15 @@ pub(crate) fn dispatch(
         ('P', []) => inner.delete_chars(count(p, 0)),
         ('@', []) => inner.insert_blank(count(p, 0)),
         ('S', []) => inner.scroll_up_region(count(p, 0)),
+        ('S', [b'?']) => xtsmgraphics(inner, p),
         ('T', []) => inner.scroll_down_region(count(p, 0)),
         ('X', []) => inner.erase_chars(count(p, 0)),
         ('Z', []) => inner.tab_backward(count(p, 0)),
         ('b', []) => inner.repeat_last(count(p, 0)),
         ('c', []) if arg(p, 0, 0) == 0 => {
-            inner.output.extend_from_slice(b"\x1b[?62;22c");
+            // VT220 with sixel graphics (4) and ANSI color (22); clients
+            // probe DA1 for the 4 to decide whether to emit sixel.
+            inner.output.extend_from_slice(b"\x1b[?62;4;22c");
         }
         ('c', [b'>']) => {
             inner.output.extend_from_slice(b"\x1b[>0;276;0c");
@@ -107,6 +110,25 @@ pub(crate) fn dispatch(
             inner.screen_mut().kitty.set(flags, mode);
         }
         ('t', []) => match arg(p, 0, 0) {
+            14 => {
+                let (w, h) = inner.text_area_px();
+                inner
+                    .output
+                    .extend_from_slice(format!("\x1b[4;{h};{w}t").as_bytes());
+            }
+            16 => {
+                let (cw, ch) = inner.cell_px;
+                inner
+                    .output
+                    .extend_from_slice(format!("\x1b[6;{ch};{cw}t").as_bytes());
+            }
+            18 => {
+                let grid = &inner.screen().grid;
+                let (rows, cols) = (grid.rows(), grid.cols());
+                inner
+                    .output
+                    .extend_from_slice(format!("\x1b[8;{rows};{cols}t").as_bytes());
+            }
             22 if inner.title_stack.len() < TITLE_STACK_MAX => {
                 inner.title_stack.push(inner.title.clone());
             }
@@ -120,6 +142,33 @@ pub(crate) fn dispatch(
         },
         _ => {}
     }
+}
+
+/// XTSMGRAPHICS (`CSI ? Pi ; Pa ; Pv S`): graphics attribute queries, the
+/// channel sixel clients use to learn register count and canvas size.
+/// Response status: 0 = success, 1 = bad item, 2 = bad action, 3 = failure.
+fn xtsmgraphics(inner: &mut Inner, p: &[u16]) {
+    let item = p.first().copied().unwrap_or(0);
+    let action = p.get(1).copied().unwrap_or(0);
+    let reply = match item {
+        // Color registers: the decoder's palette is fixed at 256, so read,
+        // reset, set, and read-max all resolve there.
+        1 => match action {
+            1..=4 => "\x1b[?1;0;256S".to_string(),
+            _ => "\x1b[?1;2S".to_string(),
+        },
+        // Sixel geometry: reads report the text area; not settable.
+        2 => match action {
+            1 | 4 => {
+                let (w, h) = inner.text_area_px();
+                format!("\x1b[?2;0;{w};{h}S")
+            }
+            2 | 3 => "\x1b[?2;3S".to_string(),
+            _ => "\x1b[?2;2S".to_string(),
+        },
+        _ => format!("\x1b[?{item};1S"),
+    };
+    inner.output.extend_from_slice(reply.as_bytes());
 }
 
 /// Parameter `i` with a default for missing-or-zero.

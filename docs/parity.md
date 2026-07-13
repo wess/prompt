@@ -42,7 +42,8 @@ documented limits), **✗** not yet.
 | URL detection (no OSC 8) | ✓ | cmd-click opens detected URLs |
 | Focus reporting (?1004) | ✓ | |
 | Synchronized output (?2026) | ✓ | frame-gated with a 150 ms stuck-sync timeout |
-| XTGETTCAP, DA1/DA2, DSR | ✓ | |
+| XTGETTCAP, DA1/DA2, DSR | ✓ | DA1 advertises sixel (`?62;4;22c`) |
+| XTSMGRAPHICS, XTWINOPS size reports | ✓ | color registers (256) + sixel geometry; `CSI 14/16/18 t` report pixel/cell/grid sizes |
 
 ## Shell integration
 
@@ -64,7 +65,7 @@ documented limits), **✗** not yet.
 | Font features | ✓ | `+liga`/`-calt`/`ss01`/`cv01=2` |
 | Box-drawing / blocks | ◑ | light lines/junctions, blocks, shades, eighths drawn custom; heavy/double/dashed/rounded fall back to font |
 | Cursor styles (DECSCUSR) | ✓ | block/bar/underline, config default |
-| Images (sixel) | ✓ | sixel decoded (RGB/HLS palette, RLE, raster attrs) and GPU-composited, anchored to the grid so it scrolls with text |
+| Images (sixel) | ✓ | sixel decoded (RGB/HLS palette, RLE, raster attrs) and GPU-composited, anchored to the grid so it scrolls with text; advertised via DA1 attribute 4 and XTSMGRAPHICS so clients auto-detect it |
 | Images (kitty graphics) | ✗ | APC `_G` is not delivered by the pinned vte 0.13 (no APC callback); needs a vte bump/fork |
 
 ## UI / workspace
