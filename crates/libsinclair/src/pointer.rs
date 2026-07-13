@@ -35,7 +35,7 @@ fn open_mod(m: &input::Mods) -> bool {
 /// Whether `url` carries a scheme we are willing to open. A real scheme is
 /// non-empty, holds no path separator (otherwise the `:` was inside a path),
 /// and appears in [`OPENABLE_SCHEMES`].
-pub(crate) fn openable(url: &str) -> bool {
+pub fn openable(url: &str) -> bool {
     let Some((scheme, _)) = url.split_once(':') else {
         return false;
     };
@@ -43,6 +43,16 @@ pub(crate) fn openable(url: &str) -> bool {
         return false;
     }
     OPENABLE_SCHEMES.contains(&scheme.to_ascii_lowercase().as_str())
+}
+
+/// What copy-on-select does with the captured text. The default,
+/// [`clipboard_copy`], writes it to the system clipboard; hosts can layer
+/// their own policy (redaction, clipboard history) on top.
+pub type CopyHook = dyn Fn(String, &mut App);
+
+/// The default [`CopyHook`]: a plain system-clipboard write.
+pub fn clipboard_copy(text: String, cx: &mut App) {
+    cx.write_to_clipboard(ClipboardItem::new_string(text));
 }
 
 /// Everything a pointer event needs, captured at paint time.
@@ -56,6 +66,7 @@ pub struct Pointer {
     pub cols: usize,
     pub rows: usize,
     pub copy_on_select: bool,
+    pub copy: Rc<CopyHook>,
     pub smart_select: bool,
     pub middle_click_paste: bool,
 }
@@ -287,9 +298,7 @@ pub fn up(p: &Pointer, e: &MouseUpEvent, window: &mut Window, cx: &mut App) {
     if p.copy_on_select {
         if let Some(text) = p.session.with_term(|t| t.selection_text()) {
             if !text.is_empty() {
-                let text = crate::redact::mask(text, cx);
-                crate::clipboard::remember(&text, cx);
-                cx.write_to_clipboard(ClipboardItem::new_string(text));
+                (p.copy)(text, cx);
             }
         }
     }

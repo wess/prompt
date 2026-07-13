@@ -110,7 +110,7 @@ impl TerminalView {
         if let Some(url) = open {
             self.hints = None;
             let url = with_scheme(&url);
-            if crate::pointer::openable(&url) {
+            if libsinclair::pointer::openable(&url) {
                 cx.open_url(&url);
             } else {
                 eprintln!("sinclair: refused to open link with disallowed scheme: {url}");

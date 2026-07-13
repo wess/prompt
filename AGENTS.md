@@ -129,9 +129,19 @@ The workspace is layered bottom-up; each crate depends only on those below it.
   the mesh in-process — `app/src/relay.rs` starts/stops the bundled binary as a
   detached daemon and launches agents into splits. Reads no env vars; every
   parameter comes from settings, passed explicitly. See `docs/relay.md`.
+- **`libsinclair`** — the terminal as an embeddable library: curated re-exports
+  of the headless stack (`Session` + vt + input + theme) plus the gpui rendering
+  layer moved out of `app` — the `colors`/`metrics`/`mouse`/`boxdraw` policy
+  modules, `element::TerminalElement` (grid painting, damage-aware frame reuse),
+  the pointer glue, the event `bridge`, and `termview::TermView`, a drop-in
+  terminal pane for other gpui apps. gpui sits behind the default `ui` feature,
+  so `default-features = false` is a gpui-free headless core. Consumed as a git
+  dependency; see `docs/libsinclair.md` and `crates/libsinclair/examples/embed.rs`.
 - **`app`** — the gpui application that wires everything together. Owns windows,
-  rendering, splits, settings UI, the About panel, font handling, and the
-  process-entry dispatch in `main.rs`. The window opens with a transparent
+  splits, settings UI, the About panel, font handling, and the process-entry
+  dispatch in `main.rs`. The grid renderer comes from `libsinclair`; `view/`
+  layers Sinclair's pane behavior (search, hints, copy mode, suggestions,
+  triggers) on top of `TerminalElement`. The window opens with a transparent
   native title bar; `titlebar.rs` draws the chrome itself — a themed strip with
   the tabs folded in (`tabbar.rs`), window dragging, and, on Linux, custom
   minimize/maximize/close controls plus resize edges.
@@ -195,6 +205,8 @@ Keep the vt/terminal layers free of gpui types — the boundary is the bridge.
 - `docs/parity.md` — terminal feature coverage and known gaps.
 - `docs/release.md` — signing, notarization, release cutting.
 - `docs/gpui.md` — the gpui/zed dependency recipe.
+- `docs/libsinclair.md` — embedding the terminal in other apps: the
+  `libsinclair` crate, `TermView`, and headless usage.
 - `docs/guise.md` — the guise component-library migration: how `vendor/guise` is
   wired (the single-gpui patch), the theme bridge, and the surface-by-surface
   port status.

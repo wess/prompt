@@ -75,13 +75,13 @@ impl TerminalElement {
         // get a hairline cursor.
         let thick = px((self.cell.width / 6.0).max(2.0));
         match cursor_shape(snap.style, self.cursor_default) {
-            config::CursorStyle::Bar => CursorFrame {
+            CursorShape::Bar => CursorFrame {
                 bounds: Bounds::new(cell_origin, size(thick, cell_h)),
                 color,
                 glyph: None,
                 hollow: false,
             },
-            config::CursorStyle::Underline => CursorFrame {
+            CursorShape::Underline => CursorFrame {
                 bounds: Bounds::new(
                     point(cell_origin.x, cell_origin.y + cell_h - thick),
                     size(width, thick),
@@ -90,7 +90,7 @@ impl TerminalElement {
                 glyph: None,
                 hollow: false,
             },
-            config::CursorStyle::Block => {
+            CursorShape::Block => {
                 let glyph = (snap.ch != ' ').then(|| {
                     let text = snap.ch.to_string();
                     let run = TextRun {
@@ -136,6 +136,7 @@ impl TerminalElement {
             cols: grid.0,
             rows: grid.1,
             copy_on_select: self.copy_on_select,
+            copy: self.copy.clone(),
             smart_select: self.smart_select,
             middle_click_paste: self.middle_click_paste,
         };

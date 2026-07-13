@@ -20,6 +20,7 @@ use terminal::Session;
 use crate::colors::{self, Colors};
 use crate::metrics::{self, CellSize, Padding};
 use crate::mouse::MouseState;
+use crate::pointer::CopyHook;
 
 #[cfg(test)]
 use theme::Rgb;
@@ -30,6 +31,17 @@ mod draw;
 mod snapshot;
 
 pub(crate) use snapshot::*;
+pub use snapshot::SnapCache;
+
+/// How the cursor is drawn when the program leaves the power-on default
+/// (DECSCUSR blinking block). Hosts map their configured style onto this.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum CursorShape {
+    #[default]
+    Block,
+    Bar,
+    Underline,
+}
 
 /// Active search overlay query, recomputed against the live buffer each
 /// frame so highlights never go stale.
@@ -49,9 +61,12 @@ pub struct TerminalElement {
     font_size: Pixels,
     cell: CellSize,
     pad: Padding,
-    cursor_default: config::CursorStyle,
+    cursor_default: CursorShape,
     mouse: Rc<RefCell<MouseState>>,
     copy_on_select: bool,
+    /// What to do with text captured by copy-on-select; hosts can layer
+    /// redaction or clipboard history on top of the plain clipboard write.
+    copy: Rc<CopyHook>,
     smart_select: bool,
     middle_click_paste: bool,
     /// Whether this pane holds keyboard focus; an unfocused pane paints a
@@ -77,9 +92,10 @@ impl TerminalElement {
         font_size: Pixels,
         cell: CellSize,
         pad: Padding,
-        cursor_default: config::CursorStyle,
+        cursor_default: CursorShape,
         mouse: Rc<RefCell<MouseState>>,
         copy_on_select: bool,
+        copy: Rc<CopyHook>,
         smart_select: bool,
         middle_click_paste: bool,
         focused: bool,
@@ -98,6 +114,7 @@ impl TerminalElement {
             cursor_default,
             mouse,
             copy_on_select,
+            copy,
             smart_select,
             middle_click_paste,
             focused,

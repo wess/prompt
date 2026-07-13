@@ -269,9 +269,9 @@ dependencies = [
  "gpui",
  "gpui_platform",
  "guise-ui",
- "image",
  "input",
  "libc",
+ "libsinclair",
  "macros",
  "mcp",
  "objc2 0.6.4",
@@ -285,7 +285,6 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
- "smallvec",
  "terminal",
  "theme",
  "updater",
@@ -4798,6 +4797,23 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f02ab6bace2054fb888a3c16f990117b579d14a3088e472d63c6011fa185c9d3"
 dependencies = [
  "libc",
+]
+
+[[package]]
+name = "libsinclair"
+version = "1.27.2"
+dependencies = [
+ "cast",
+ "futures",
+ "gpui",
+ "gpui_platform",
+ "image",
+ "input",
+ "pty",
+ "smallvec",
+ "terminal",
+ "theme",
+ "vt",
 ]
 
 [[package]]

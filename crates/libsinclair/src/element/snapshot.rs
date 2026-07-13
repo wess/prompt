@@ -156,7 +156,7 @@ pub(crate) fn keyeq(a: &SnapKey, b: &SnapKey) -> bool {
 
 /// The previous frame's snapshot and the inputs it was built from.
 #[derive(Default)]
-pub(crate) struct SnapCache {
+pub struct SnapCache {
     snap: Option<Rc<Snapshot>>,
     key: Option<SnapKey>,
 }
@@ -454,17 +454,14 @@ pub(crate) fn scroll_indicator(
 }
 
 /// The cursor shape to draw: vt DECSCUSR wins, except that the power-on
-/// default (blinking block) defers to the configured style.
-pub(crate) fn cursor_shape(
-    style: vt::CursorStyle,
-    fallback: config::CursorStyle,
-) -> config::CursorStyle {
+/// default (blinking block) defers to the host's configured shape.
+pub(crate) fn cursor_shape(style: vt::CursorStyle, fallback: CursorShape) -> CursorShape {
     match style {
         vt::CursorStyle::BlinkingBlock => fallback,
-        vt::CursorStyle::SteadyBlock => config::CursorStyle::Block,
+        vt::CursorStyle::SteadyBlock => CursorShape::Block,
         vt::CursorStyle::BlinkingUnderline | vt::CursorStyle::SteadyUnderline => {
-            config::CursorStyle::Underline
+            CursorShape::Underline
         }
-        vt::CursorStyle::BlinkingBar | vt::CursorStyle::SteadyBar => config::CursorStyle::Bar,
+        vt::CursorStyle::BlinkingBar | vt::CursorStyle::SteadyBar => CursorShape::Bar,
     }
 }

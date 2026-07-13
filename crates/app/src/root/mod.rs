@@ -43,10 +43,10 @@ use guise::{PaneGroup, PaneGroupEvent};
 use serde_json::{json, Value};
 use terminal::Session;
 
-use crate::bridge;
+use libsinclair::bridge;
 use crate::colors::{self, Colors};
 use crate::keys;
-use crate::metrics::{CellSize, Padding};
+use libsinclair::metrics::{CellSize, Padding};
 use crate::session;
 use crate::view::{TerminalView, ViewEvent};
 
@@ -813,7 +813,7 @@ impl WorkspaceView {
         if font_changed {
             self.font = crate::font::build(&opts);
             self.font_size = px(opts.font_size.max(1.0));
-            self.cell = crate::metrics::measure(cx.text_system(), &self.font, self.font_size);
+            self.cell = libsinclair::metrics::measure(cx.text_system(), &self.font, self.font_size);
         }
         self.pad = Padding {
             x: opts.window_padding_x as f32,
@@ -899,7 +899,7 @@ impl WorkspaceView {
             return;
         }
         self.font_size = size;
-        self.cell = crate::metrics::measure(cx.text_system(), &self.font, self.font_size);
+        self.cell = libsinclair::metrics::measure(cx.text_system(), &self.font, self.font_size);
         self.pushappearance(cx);
         cx.notify();
     }

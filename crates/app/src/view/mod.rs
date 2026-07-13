@@ -15,9 +15,10 @@ use config::{Action, SplitDirection};
 use terminal::{Event, Session};
 
 use crate::colors::{self, Colors};
-use crate::element::TerminalElement;
-use crate::metrics::{CellSize, Padding};
-use crate::mouse::MouseState;
+use libsinclair::element::{CursorShape, TerminalElement};
+use libsinclair::metrics::{CellSize, Padding};
+use libsinclair::mouse::MouseState;
+use libsinclair::pointer::CopyHook;
 
 mod annotate;
 mod assist;
@@ -159,6 +160,15 @@ impl TriggerEvent {
     }
 }
 
+/// Map the configured cursor style onto the renderer's shape vocabulary.
+fn cursor_shape(style: config::CursorStyle) -> CursorShape {
+    match style {
+        config::CursorStyle::Block => CursorShape::Block,
+        config::CursorStyle::Bar => CursorShape::Bar,
+        config::CursorStyle::Underline => CursorShape::Underline,
+    }
+}
+
 /// Pane title: the vt title when set and non-blank, else the fallback.
 pub fn label<'a>(title: Option<&'a str>, fallback: &'a str) -> &'a str {
     match title {
@@ -279,11 +289,14 @@ pub struct TerminalView {
     grid_bounds: gpui::Bounds<Pixels>,
     /// Pointer state shared with the element's per-frame event closures.
     mouse: Rc<RefCell<MouseState>>,
+    /// Copy-on-select hook handed to the element: redaction and clipboard
+    /// history layered over the plain clipboard write.
+    copy: Rc<CopyHook>,
     /// Decoded sixel textures, keyed by placement id; persists across frames.
     image_cache: Rc<RefCell<std::collections::HashMap<u64, Arc<gpui::RenderImage>>>>,
     /// Previous frame's render snapshot, reused while vt reports no damage
     /// and every snapshot input is unchanged.
-    snap_cache: Rc<RefCell<crate::element::SnapCache>>,
+    snap_cache: Rc<RefCell<libsinclair::element::SnapCache>>,
     focus: FocusHandle,
     /// Last vt title (OSC 0/2); `None` until the child sets one.
     title: Option<String>,
@@ -419,8 +432,13 @@ impl TerminalView {
             context_menu: None,
             grid_bounds: gpui::Bounds::default(),
             mouse: Rc::new(RefCell::new(MouseState::default())),
+            copy: Rc::new(|text, cx| {
+                let text = crate::redact::mask(text, cx);
+                crate::clipboard::remember(&text, cx);
+                cx.write_to_clipboard(ClipboardItem::new_string(text));
+            }),
             image_cache: Rc::new(RefCell::new(std::collections::HashMap::new())),
-            snap_cache: Rc::new(RefCell::new(crate::element::SnapCache::default())),
+            snap_cache: Rc::new(RefCell::new(libsinclair::element::SnapCache::default())),
             focus,
             title: None,
             override_title: None,
@@ -746,7 +764,7 @@ impl Render for TerminalView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let matches = self.search_matches();
         let total = matches.len();
-        let query = self.search.as_ref().map(move |s| crate::element::SearchQuery {
+        let query = self.search.as_ref().map(move |s| libsinclair::element::SearchQuery {
             query: s.edit.text(),
             current: s.current,
             matches,
@@ -810,9 +828,10 @@ impl Render for TerminalView {
                 self.font_size,
                 self.cell,
                 self.pad,
-                self.cursor_default,
+                cursor_shape(self.cursor_default),
                 self.mouse.clone(),
                 self.copy_on_select,
+                self.copy.clone(),
                 self.smart_select,
                 self.middle_click_paste,
                 self.pane_active,

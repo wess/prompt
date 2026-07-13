@@ -68,6 +68,7 @@ pub fn selection_point(row: usize, col: usize, display_offset: usize) -> vt::Poi
 
 /// Measure the cell box for a font: advance width of `M` and the terminal
 /// line height. Falls back to a fixed ratio when the glyph is missing.
+#[cfg(feature = "ui")]
 pub fn measure(
     text_system: &gpui::TextSystem,
     font: &gpui::Font,

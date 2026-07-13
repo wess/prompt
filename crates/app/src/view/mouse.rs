@@ -12,7 +12,7 @@ impl TerminalView {
     pub(crate) fn right_down(&mut self, e: &MouseDownEvent, _window: &mut Window, cx: &mut Context<Self>) {
         let reporting = self
             .session
-            .with_term(|t| crate::mouse::reports(t.mouse_mode(), e.modifiers.shift));
+            .with_term(|t| libsinclair::mouse::reports(t.mouse_mode(), e.modifiers.shift));
         if reporting {
             return;
         }
@@ -60,7 +60,7 @@ impl TerminalView {
     /// captured in `render`. Used to offer Open/Copy Link on right-click.
     fn link_at_pos(&self, pos: Point<Pixels>) -> Option<String> {
         let (cols, rows) = self.session.with_term(|t| (t.cols(), t.rows()));
-        let (row, col) = crate::metrics::cell_at(
+        let (row, col) = libsinclair::metrics::cell_at(
             (f32::from(pos.x), f32::from(pos.y)),
             (
                 f32::from(self.grid_bounds.origin.x),
@@ -76,7 +76,7 @@ impl TerminalView {
 
     /// Open a URL via the OS, refusing schemes outside the allow-list.
     pub(crate) fn open_url(&mut self, url: String, cx: &mut Context<Self>) {
-        if crate::pointer::openable(&url) {
+        if libsinclair::pointer::openable(&url) {
             cx.open_url(&url);
         } else {
             eprintln!("sinclair: refused to open link with disallowed scheme: {url}");

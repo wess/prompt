@@ -6,12 +6,9 @@ mod agentpicker;
 mod agentstate;
 mod appid;
 mod appkit;
-mod boxdraw;
-mod bridge;
 mod catalog;
 mod colors;
 mod confwrite;
-mod element;
 mod envpath;
 mod notes;
 mod exportcmd;
@@ -26,8 +23,6 @@ mod keys;
 #[cfg(target_os = "linux")]
 mod linux;
 mod mcpbridge;
-mod metrics;
-mod mouse;
 mod ospicker;
 mod paths;
 mod pluginhost;
@@ -36,7 +31,6 @@ mod pluginwebview;
 mod pluginwindow;
 mod badge;
 mod clipboard;
-mod pointer;
 mod quick;
 mod redact;
 mod trigger;
@@ -65,6 +59,7 @@ mod wasmhost;
 use std::rc::Rc;
 
 use gpui::AppContext as _;
+use libsinclair::metrics;
 use gpui::{point, px, size, App, Bounds, TitlebarOptions, WindowBounds, WindowOptions};
 
 const DEFAULT_COLS: usize = 80;

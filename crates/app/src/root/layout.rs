@@ -30,7 +30,7 @@ impl WorkspaceView {
         } else {
             SPAWN_ROWS
         };
-        let (width, height) = crate::metrics::pixel_size(cols, rows, self.pad, self.cell);
+        let (width, height) = libsinclair::metrics::pixel_size(cols, rows, self.pad, self.cell);
         window.resize(size(px(width), px(height)));
     }
 

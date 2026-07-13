@@ -8,6 +8,7 @@ members = [
     "crates/container",
     "crates/export",
     "crates/input",
+    "crates/libsinclair",
     "crates/macros",
     "crates/mcp",
     "crates/notes",

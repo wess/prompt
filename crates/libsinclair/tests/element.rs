@@ -1,7 +1,7 @@
 use super::*;
 
 fn test_colors() -> Colors {
-    colors::from_config(&config::Options::default(), true)
+    Colors::from_scheme(theme::default_scheme())
 }
 
 /// Call `snapshot` with default cell metrics and a throwaway image cache.
@@ -134,9 +134,9 @@ fn snapshot_cursor_contrast_sees_inverse_cells() {
 
 #[test]
 fn cursor_shape_mapping() {
-    use config::CursorStyle as C;
     use vt::CursorStyle as V;
-    // Power-on default defers to config.
+    use CursorShape as C;
+    // Power-on default defers to the host's configured shape.
     assert_eq!(cursor_shape(V::BlinkingBlock, C::Bar), C::Bar);
     assert_eq!(cursor_shape(V::BlinkingBlock, C::Block), C::Block);
     // Explicit DECSCUSR wins.
@@ -157,11 +157,8 @@ fn snapshot_underlined_space_is_kept() {
 #[test]
 fn snapshot_selection_overrides_colors() {
     // Default fg must differ from selection fg for the span split.
-    let opts = config::Options {
-        foreground: Some("#abb2bf".to_string()),
-        ..Default::default()
-    };
-    let colors = colors::from_config(&opts, true);
+    let mut colors = test_colors();
+    colors.fg = theme::Rgb::new(0xab, 0xb2, 0xbf);
     assert_ne!(colors.fg, colors.selection_fg);
     let mut term = vt::Terminal::new(20, 2, 0);
     term.feed(b"hello");

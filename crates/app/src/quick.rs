@@ -25,9 +25,9 @@ use terminal::{Event, Session};
 
 #[cfg(target_os = "macos")]
 use crate::appkit;
-use crate::bridge;
+use libsinclair::bridge;
 use crate::colors::{self, Colors};
-use crate::metrics::Padding;
+use libsinclair::metrics::Padding;
 use crate::session;
 use crate::view::{TerminalView, ViewEvent};
 
@@ -241,7 +241,7 @@ fn open(cx: &mut App) {
     ));
     let font = crate::font::build(&opts);
     let font_size = px(opts.font_size.max(1.0));
-    let cell = crate::metrics::measure(cx.text_system(), &font, font_size);
+    let cell = libsinclair::metrics::measure(cx.text_system(), &font, font_size);
     let pad = Padding {
         x: opts.window_padding_x as f32,
         y: opts.window_padding_y as f32,
@@ -364,7 +364,7 @@ impl QuickTerminalView {
         colors: Rc<Colors>,
         font: gpui::Font,
         font_size: gpui::Pixels,
-        cell: crate::metrics::CellSize,
+        cell: libsinclair::metrics::CellSize,
         pad: Padding,
         cursor_style: config::CursorStyle,
         copy_on_select: bool,
