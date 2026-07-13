@@ -36,6 +36,12 @@ pub fn encode_key(key: &str, text: Option<&str>, mods: Mods, state: TermState) -
 /// Named (non-printable) keys; `None` means "not a special key".
 fn special(key: &str, mods: Mods, state: TermState) -> Option<Vec<u8>> {
     let bytes = match key {
+        // Legacy encoding cannot spell shift+enter, so borrow alt+enter's
+        // `ESC CR`: line editors (zsh/fish) and REPLs like Claude Code treat
+        // it as "insert newline", which is what shift+enter means everywhere
+        // else. iTerm2's `/terminal-setup` installs the same mapping. Kitty
+        // mode never gets here (`CSI 13;2u` is emitted upstream).
+        "enter" if mods.shift => vec![csi::ESC, b'\r'],
         "enter" => alt_prefixed(mods, vec![b'\r']),
         "tab" => {
             if mods.shift {

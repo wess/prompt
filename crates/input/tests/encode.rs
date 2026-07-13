@@ -192,6 +192,10 @@ fn enter_tab_escape_backspace() {
     let cases: &[(&str, Mods, &[u8])] = &[
         ("enter", NONE, b"\r"),
         ("enter", ALT, b"\x1b\r"),
+        // Legacy shift+enter borrows alt+enter's ESC CR so newline-vs-send
+        // survives outside kitty mode (Claude Code, zsh/fish insert-newline).
+        ("enter", SHIFT, b"\x1b\r"),
+        ("enter", ALT_SHIFT, b"\x1b\r"),
         ("tab", NONE, b"\t"),
         ("tab", SHIFT, b"\x1b[Z"),
         ("tab", ALT, b"\x1b\t"),
