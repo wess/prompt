@@ -6,15 +6,21 @@ use crate::{Mods, TermState};
 
 /// Encode a keystroke. `key` is the gpui keystroke name; `text` is the
 /// platform-resolved typed text for printable keys. Returns `None` when the
-/// key produces no pty bytes (cmd chords, unknown non-printables).
+/// key produces no pty bytes (cmd chords outside the kitty protocol,
+/// unknown non-printables).
 pub fn encode_key(key: &str, text: Option<&str>, mods: Mods, state: TermState) -> Option<Vec<u8>> {
-    if mods.cmd {
-        return None;
-    }
+    // Kitty first: it is the only encoding that can spell cmd (super)
+    // chords, and a program that enabled the protocol asked for the
+    // disambiguated forms. Only chords no app keybinding claimed get here.
     if state.kitty_flags != 0 {
         if let Some(bytes) = kitty::encode(key, mods, state.kitty_flags) {
             return Some(bytes);
         }
+    }
+    // Cmd chords have no legacy spelling; unclaimed ones die here rather
+    // than degrading to their unmodified bytes.
+    if mods.cmd {
+        return None;
     }
     if let Some(bytes) = special(key, mods, state) {
         return Some(bytes);

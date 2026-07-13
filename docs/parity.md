@@ -26,7 +26,7 @@ documented limits), **✗** not yet.
 | Legacy key encoding | ✓ | modifiers, cursor/tilde/function keys, app cursor/keypad |
 | Mouse reporting | ✓ | X10/normal/button/any + SGR (1000/1002/1003/1006), alt-scroll |
 | Bracketed paste | ✓ | |
-| Kitty keyboard protocol | ◑ | negotiation + disambiguation encoding; **press-only** (no release/repeat events from the host, so event-type/alternate-key/associated-text flags are tracked but not encoded) |
+| Kitty keyboard protocol | ◑ | negotiation + disambiguation encoding, super (cmd) reported on the CSI-u path (modified Enter/Tab/Backspace included, so shift+enter / cmd+enter are distinguishable); **press-only** (no release/repeat events from the host, so event-type/alternate-key/associated-text flags are tracked but not encoded) |
 
 ## OSC / clipboard / links
 

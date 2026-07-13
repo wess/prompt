@@ -17,6 +17,7 @@ const CTRL_SHIFT: Mods = Mods {
     shift: true,
     ..NONE
 };
+const CMD: Mods = Mods { cmd: true, ..NONE };
 
 const DIS: u8 = kitty_flags::DISAMBIGUATE;
 const ALL: u8 = kitty_flags::REPORT_ALL_KEYS_AS_ESCAPE_CODES;
@@ -42,6 +43,12 @@ fn alt_letter_becomes_csi_u() {
 }
 
 #[test]
+fn super_letter_becomes_csi_u() {
+    // cmd+a: 1+super(8) = 9.
+    assert_eq!(encode("a", CMD, DIS).unwrap(), b"\x1b[97;9u");
+}
+
+#[test]
 fn plain_and_shift_text_defer_to_legacy_unless_all_keys() {
     // Disambiguate only: plain/shifted printable returns None (legacy).
     assert_eq!(encode("a", NONE, DIS), None);
@@ -64,6 +71,12 @@ fn enter_tab_backspace_disambiguate_only_when_modified_or_all() {
     assert_eq!(encode("backspace", NONE, ALL).unwrap(), b"\x1b[127u");
     // Ctrl modified -> CSI u even in disambiguate mode.
     assert_eq!(encode("enter", CTRL, DIS).unwrap(), b"\x1b[13;5u");
+    // Any modifier disambiguates them, shift and super included, so a
+    // program can tell shift+enter / cmd+enter apart from enter.
+    assert_eq!(encode("enter", SHIFT, DIS).unwrap(), b"\x1b[13;2u");
+    assert_eq!(encode("enter", CMD, DIS).unwrap(), b"\x1b[13;9u");
+    assert_eq!(encode("tab", SHIFT, DIS).unwrap(), b"\x1b[9;2u");
+    assert_eq!(encode("backspace", SHIFT, DIS).unwrap(), b"\x1b[127;2u");
 }
 
 #[test]

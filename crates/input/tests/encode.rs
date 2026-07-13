@@ -62,6 +62,22 @@ fn cmd_chords_return_none() {
 }
 
 #[test]
+fn cmd_chords_reach_the_pty_only_via_kitty() {
+    let kitty = TermState {
+        kitty_flags: crate::kitty_flags::DISAMBIGUATE,
+        ..NORMAL
+    };
+    // cmd+enter: 1 + super(8) = 9. This is what lets a TUI (e.g. an agent
+    // REPL) treat cmd+enter as "insert newline" instead of a bare CR.
+    assert_eq!(enc("enter", None, CMD, kitty).unwrap(), b"\x1b[13;9u");
+    // Unclaimed cmd+letter chords ride the same path.
+    assert_eq!(enc("a", Some("a"), CMD, kitty).unwrap(), b"\x1b[97;9u");
+    // Keys with no CSI-u spelling still vanish rather than degrading to
+    // their unmodified bytes.
+    assert_eq!(enc("up", None, CMD, kitty), None);
+}
+
+#[test]
 fn printable_emits_text() {
     let cases: &[(&str, Option<&str>, Mods, &[u8])] = &[
         ("a", Some("a"), NONE, b"a"),
