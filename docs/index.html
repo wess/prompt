@@ -304,22 +304,32 @@ keybind = "cmd+ctrl+l"</code></pre>
 
       <section class="install" id="install">
         <div>
-          <p class="kicker">Open source. macOS and Linux.</p>
+          <p class="kicker">Open source. macOS, Linux, and Windows.</p>
           <h2>Install it, star it, and help shape the terminal.</h2>
           <p>
-            Sinclair ships from GitHub releases, with a Homebrew cask for macOS
-            and AppImage, deb, and tarball packages for Linux on x86_64 and
-            aarch64.
+            Sinclair ships from GitHub releases — a Homebrew cask and universal
+            <code>.dmg</code> for macOS, AppImage, deb, and tarball packages for
+            Linux on x86_64 and aarch64, and a beta MSI/Scoop build for Windows.
           </p>
+          <div class="downloadhero" data-download-hero hidden>
+            <div class="dlhead">
+              <span class="dlos" data-dl-os>Detecting your platform…</span>
+              <span class="dlver" data-dl-ver></span>
+            </div>
+            <a class="button primary dlbtn" data-dl-primary href="https://github.com/wess/sinclair/releases/latest">Download</a>
+            <p class="dlalt" data-dl-alt></p>
+          </div>
         </div>
         <div class="installpanel">
           <div class="installtabs" role="tablist" aria-label="Install options">
             <button class="active" type="button" data-install-tab="mac">macOS</button>
             <button type="button" data-install-tab="linux">Linux</button>
+            <button type="button" data-install-tab="windows">Windows</button>
             <button type="button" data-install-tab="source">Source</button>
           </div>
           <pre aria-live="polite"><code data-install-code>brew install --cask wess/packages/sinclair</code></pre>
           <button class="copywide" type="button" data-copy="brew install --cask wess/packages/sinclair">Copy command</button>
+          <div class="installdownloads" data-install-downloads aria-label="Direct downloads"></div>
         </div>
       </section>
     </main>

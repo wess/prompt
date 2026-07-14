@@ -618,6 +618,71 @@ h3 {
   background: var(--line);
 }
 
+.downloadhero {
+  margin-top: 1.7rem;
+  padding: 1.1rem 1.2rem 1.2rem;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: linear-gradient(180deg, rgb(110 180 255 / 0.09), rgb(255 255 255 / 0.02));
+}
+
+.downloadhero[hidden] { display: none; }
+
+.dlhead {
+  display: flex;
+  align-items: baseline;
+  gap: 0.6rem;
+  margin-bottom: 0.85rem;
+}
+
+.dlos { font-weight: 820; color: var(--ink); }
+.dlver { font-size: 0.82rem; color: var(--muted); font-variant-numeric: tabular-nums; }
+
+.dlbtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 3rem;
+  font-weight: 800;
+}
+
+.dlalt {
+  margin: 0.75rem 0 0;
+  font-size: 0.82rem;
+  line-height: 1.5;
+  color: var(--muted);
+}
+
+.installdownloads {
+  display: flex;
+  flex-direction: column;
+  border-top: 1px solid var(--line);
+}
+
+.installdownloads .dl {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.85rem clamp(1rem, 3vw, 1.6rem);
+  border-bottom: 1px solid var(--line);
+  color: var(--text);
+  font-weight: 660;
+  font-size: 0.92rem;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.installdownloads .dl:last-child { border-bottom: 0; }
+
+.installdownloads .dl:hover {
+  background: rgb(255 255 255 / 0.05);
+  color: var(--ink);
+}
+
+.installdownloads .dl span { color: var(--muted); font-weight: 700; }
+.installdownloads .dl.ghost { color: var(--muted); font-weight: 600; }
+.installdownloads .dl.ghost:hover { color: var(--ink); }
+
 .trailer {
   width: min(calc(100% - 2rem), var(--max));
   margin: clamp(2.5rem, 5vw, 4.5rem) auto;
