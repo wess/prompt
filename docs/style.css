@@ -618,6 +618,42 @@ h3 {
   background: var(--line);
 }
 
+.trailer {
+  width: min(calc(100% - 2rem), var(--max));
+  margin: clamp(2.5rem, 5vw, 4.5rem) auto;
+}
+
+.trailer .sectionhead {
+  margin-bottom: 1.4rem;
+}
+
+.trailerframe {
+  position: relative;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  overflow: hidden;
+  background: #000;
+  aspect-ratio: 16 / 10;
+  box-shadow: var(--shadow);
+}
+
+.trailerframe::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  border-radius: 16px;
+  box-shadow: inset 0 0 0 1px rgb(110 180 255 / 0.14);
+}
+
+.trailerframe video {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  background: #000;
+}
+
 .proof div {
   min-height: 11rem;
   padding: clamp(1.1rem, 3vw, 2rem);
