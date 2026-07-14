@@ -75,6 +75,8 @@ impl HelpView {
             .px_3()
             .pt(px(58.0))
             .pb_3()
+            .flex()
+            .flex_col()
             .bg(hsla(SIDEBAR_BG))
             .child(self.search());
         if visible.is_empty() {
@@ -89,7 +91,30 @@ impl HelpView {
         for &index in visible {
             col = col.child(self.sidebar_item(index, current == Some(index), cx));
         }
-        col
+        col.child(div().flex_1()).child(self.docs_link(cx))
+    }
+
+    /// Footer row linking to the full documentation site — these articles are
+    /// the offline essentials; the site carries the tutorials and references.
+    fn docs_link(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        const DOCS_URL: &str = "https://wess.io/sinclair/";
+        div()
+            .flex()
+            .items_center()
+            .gap_2()
+            .h(px(32.0))
+            .px_2()
+            .rounded(px(7.0))
+            .text_color(hsla(MUTED))
+            .child(self.icon("\u{2197}", BLUE, px(20.0)))
+            .child(SharedString::from("Full documentation online"))
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|_this, _ev, _window, cx| {
+                    cx.open_url(DOCS_URL);
+                    cx.stop_propagation();
+                }),
+            )
     }
 
     /// Left-aligned article header: icon, title, summary, and a hairline rule.
