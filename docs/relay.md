@@ -26,6 +26,10 @@ works standalone (over SSH, in CI, with any terminal).
   daemon and a **Relay** menu appears.
 - **Start Relay on launch** — bring the mesh up automatically when Sinclair opens.
 - **Relay address** — bind address for the server (default `127.0.0.1:7777`).
+  If the port is already taken, the server walks forward to the next free port
+  (up to nine ahead) and records the address it actually bound in
+  `server.json`; the CLI and the app follow the record, so nothing else needs
+  to change.
 - **Default agent** — the agent CLI used by *Launch Agent…* (default `claude`).
 
 When Relay is enabled the section also shows a live **status dot** (green = the

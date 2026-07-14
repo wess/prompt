@@ -194,11 +194,27 @@ pub fn restart(opts: &config::Options) {
     });
 }
 
+/// The daemon's on-disk record (`server.json`), if present and parseable.
+fn record() -> Option<serde_json::Value> {
+    let bytes = std::fs::read(home().join("server.json")).ok()?;
+    serde_json::from_slice(&bytes).ok()
+}
+
 /// The address the running daemon is bound to, from its record.
 fn bound_addr() -> Option<String> {
-    let bytes = std::fs::read(home().join("server.json")).ok()?;
-    let v: serde_json::Value = serde_json::from_slice(&bytes).ok()?;
-    v["addr"].as_str().map(str::to_string)
+    record()?["addr"].as_str().map(str::to_string)
+}
+
+/// The address the daemon was *asked* to bind — it can bind a nearby port when
+/// the configured one is taken, and that fallback must not read as a config
+/// change. Older records lack the field; fall back to the bound address.
+fn requested_addr() -> Option<String> {
+    let v = record()?;
+    v["requested"]
+        .as_str()
+        .filter(|s| !s.is_empty())
+        .or_else(|| v["addr"].as_str())
+        .map(str::to_string)
 }
 
 /// Reconcile the daemon with current settings after a config reload. A bare
@@ -211,7 +227,7 @@ pub fn on_reload(opts: &config::Options) {
         run_bg(vec!["--home".into(), home_str(), "stop".into()]);
     } else if enabled(opts) {
         // Persistent mesh — keep it up and rebind if the address changed.
-        if running() && bound_addr().as_deref() != Some(opts.relay_address.as_str()) {
+        if running() && requested_addr().as_deref() != Some(opts.relay_address.as_str()) {
             restart(opts);
         } else {
             run_bg(start_args(opts));
@@ -318,20 +334,43 @@ pub fn test_tool(tool: &str, path: Option<&str>) -> Result<String, String> {
     }
 }
 
-/// Whether the relay server is actually listening (reads its record, probes it).
+/// Whether the relay server is actually listening: reads its record, then asks
+/// `/health` and requires relay's marker — a foreign process holding the port
+/// (e.g. after a lost bind race) must not count as a running mesh.
 pub fn running() -> bool {
-    let Ok(bytes) = std::fs::read(home().join("server.json")) else {
+    bound_addr().is_some_and(|addr| health(&addr))
+}
+
+/// Minimal blocking `GET /health` against `addr`, bounded by short timeouts.
+fn health(addr: &str) -> bool {
+    use std::io::{Read, Write};
+    let Some(sa) = addr.to_socket_addrs().ok().and_then(|mut a| a.next()) else {
         return false;
     };
-    let v: serde_json::Value = serde_json::from_slice(&bytes).unwrap_or(serde_json::Value::Null);
-    let Some(addr) = v["addr"].as_str() else {
+    let Ok(mut s) =
+        std::net::TcpStream::connect_timeout(&sa, std::time::Duration::from_millis(200))
+    else {
         return false;
     };
-    addr.to_socket_addrs()
-        .ok()
-        .and_then(|mut a| a.next())
-        .map(|sa| {
-            std::net::TcpStream::connect_timeout(&sa, std::time::Duration::from_millis(200)).is_ok()
+    let _ = s.set_read_timeout(Some(std::time::Duration::from_millis(300)));
+    let _ = s.set_write_timeout(Some(std::time::Duration::from_millis(300)));
+    let req = format!("GET /health HTTP/1.1\r\nHost: {addr}\r\nConnection: close\r\n\r\n");
+    if s.write_all(req.as_bytes()).is_err() {
+        return false;
+    }
+    let mut raw = Vec::new();
+    let _ = s.read_to_end(&mut raw);
+    relay_health_response(&String::from_utf8_lossy(&raw))
+}
+
+/// True when a raw HTTP response body identifies the listener as relay. The
+/// daemon answers `relay <version>`; daemons before the marker said a bare
+/// "ok" — accept both.
+fn relay_health_response(text: &str) -> bool {
+    text.split_once("\r\n\r\n")
+        .map(|(_, body)| {
+            let b = body.trim();
+            b.starts_with("relay") || b == "ok"
         })
         .unwrap_or(false)
 }

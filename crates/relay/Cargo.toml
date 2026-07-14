@@ -3,6 +3,7 @@ name = "relay"
 version = "0.1.0"
 edition = "2021"
 description = "Local mesh that lets coding-agent sessions coordinate (the Relay sidecar for Sinclair)."
+autotests = false
 
 [[bin]]
 name = "relay"

@@ -40,11 +40,26 @@ pub async fn serve(args: ServeArgs) -> Result<()> {
 
     let (addr, db_path) = resolve(&args);
     paths::ensure_dir()?;
+
+    // Bind first: the listener is the mutex between racing daemons. A second
+    // `serve` fails here before it can reap our workers or touch the record.
+    let (listener, bound) = bind_scan(&addr).await?;
+
     paths::reap_stray_workers();
     let pool = db::open(&db_path).await?;
     paths::lock_file(std::path::Path::new(&db_path));
     let token = gen_token();
-    let app = App::new(pool, paths::endpoint(&addr), token.clone());
+    let app = App::new(pool, paths::endpoint(&bound), token.clone());
+
+    // Record the server as soon as the socket is up — `start` polls for this
+    // record — not after worker rehydration, which can take a while.
+    paths::write_info(&ServerInfo {
+        pid: std::process::id(),
+        addr: bound.clone(),
+        requested: addr,
+        db: db_path,
+        token: token.clone(),
+    })?;
 
     // Presence sweep: re-emit the roster exactly when the next agent's activity
     // window lapses, so the app's liveness dot (computed from `last_seen` + the
@@ -79,17 +94,15 @@ pub async fn serve(args: ServeArgs) -> Result<()> {
         .layer(axum::middleware::from_fn_with_state(app.clone(), auth))
         .with_state(app.clone());
     let router = Router::new()
-        .route("/health", get(|| async { "ok" }))
+        .route("/health", get(|| async { HEALTH_BODY }))
         .merge(guarded);
-
-    let listener = tokio::net::TcpListener::bind(&addr).await?;
 
     // Rehydrate background workers persisted by a previous daemon (issue #4).
     // The socket is bound (connections queue), so respawned workers can reach the
     // bus. The bearer token is regenerated each run, so refresh each worker's MCP
     // config in place first, then relaunch it resuming its prior claude session.
     for w in db::load_workers(&app.db).await.unwrap_or_default() {
-        let _ = paths::write_mcp_config(&paths::endpoint(&addr), &w.name, &token);
+        let _ = paths::write_mcp_config(&paths::endpoint(&bound), &w.name, &token);
         let spec = spawn::Spec {
             name: w.name,
             role: w.role,
@@ -105,13 +118,7 @@ pub async fn serve(args: ServeArgs) -> Result<()> {
         }
     }
 
-    paths::write_info(&ServerInfo {
-        pid: std::process::id(),
-        addr: addr.clone(),
-        db: db_path,
-        token,
-    })?;
-    tracing::info!("relay listening on {}", paths::endpoint(&addr));
+    tracing::info!("relay listening on {}", paths::endpoint(&bound));
 
     let shutdown_app = app.clone();
     axum::serve(listener, router)
@@ -119,6 +126,68 @@ pub async fn serve(args: ServeArgs) -> Result<()> {
         .await?;
     paths::clear_info();
     Ok(())
+}
+
+/// What `/health` answers. The "relay" prefix lets clients tell this daemon
+/// apart from whatever else might be squatting on the port.
+const HEALTH_BODY: &str = concat!("relay ", env!("CARGO_PKG_VERSION"));
+
+/// How many consecutive ports to try when the configured one is taken.
+const PORT_SCAN: u16 = 10;
+
+/// `"host:port"` split with a numeric port; None for a bare host.
+fn split_addr(addr: &str) -> Option<(&str, u16)> {
+    let (host, port) = addr.rsplit_once(':')?;
+    Some((host, port.parse().ok()?))
+}
+
+/// Bind `addr`, walking forward up to [`PORT_SCAN`] ports when the configured
+/// one is already taken, so a squatter on the default port can't keep the mesh
+/// down. Returns the listener plus the address actually bound; clients follow
+/// the bound address through the on-disk record, never the configured one.
+async fn bind_scan(addr: &str) -> Result<(tokio::net::TcpListener, String)> {
+    use std::io::ErrorKind;
+    let Some((host, port)) = split_addr(addr) else {
+        let l = tokio::net::TcpListener::bind(addr).await?;
+        return Ok((l, addr.to_string()));
+    };
+    if port == 0 {
+        // OS-assigned: bind once and record the real port.
+        let l = tokio::net::TcpListener::bind(addr).await?;
+        let actual = l.local_addr()?.port();
+        return Ok((l, format!("{host}:{actual}")));
+    }
+    for candidate in (0..PORT_SCAN).filter_map(|o| port.checked_add(o)) {
+        let cand = format!("{host}:{candidate}");
+        match tokio::net::TcpListener::bind(&cand).await {
+            Ok(l) => {
+                if candidate != port {
+                    tracing::warn!("relay: {addr} is in use; listening on {cand} instead");
+                }
+                return Ok((l, cand));
+            }
+            Err(e) if e.kind() == ErrorKind::AddrInUse => continue,
+            Err(e) => return Err(anyhow!("cannot bind {cand}: {e}")),
+        }
+    }
+    Err(anyhow!(
+        "ports {port}-{} on {host} are all in use — free one or pick another address \
+         (Sinclair: Settings → AI → Relay address; CLI: --addr)",
+        port.saturating_add(PORT_SCAN - 1)
+    ))
+}
+
+/// True when `body` is a relay `/health` answer. Daemons before the marker
+/// existed said a bare "ok"; accept both so a newer CLI still recognizes a
+/// running older server.
+fn health_marker(body: &str) -> bool {
+    let b = body.trim();
+    b.starts_with("relay") || b == "ok"
+}
+
+/// True when whatever answers HTTP at `addr` identifies itself as relay.
+fn is_relay(addr: &str) -> bool {
+    http::get(addr, "/health").map(|b| health_marker(&b)).unwrap_or(false)
 }
 
 /// A fresh 256-bit token as hex (two v4 UUIDs concatenated).
@@ -222,19 +291,46 @@ pub fn start(args: ServeArgs) -> Result<()> {
         const CREATE_NO_WINDOW: u32 = 0x0800_0000;
         cmd.creation_flags(DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW);
     }
-    cmd.spawn()?;
+    let mut child = cmd.spawn()?;
 
-    for _ in 0..40 {
+    for _ in 0..80 {
         std::thread::sleep(Duration::from_millis(75));
-        if http::get(&addr, "/health").is_ok() {
-            println!("relay started on {}", paths::endpoint(&addr));
-            return Ok(());
+        // A daemon that couldn't bind (or crashed) exits immediately — surface
+        // its actual error instead of polling a dead address.
+        if let Ok(Some(status)) = child.try_wait() {
+            return Err(anyhow!("server exited at startup ({status}): {}", log_tail()));
         }
+        // Ready means *our* child wrote the record (it does so once the socket
+        // is bound) and the listener answers as relay — a stale record or a
+        // foreign service holding the port can't pass as success.
+        let Ok(info) = paths::read_info() else { continue };
+        if info.pid != child.id() || !is_relay(&info.addr) {
+            continue;
+        }
+        if info.addr != addr {
+            println!(
+                "relay: {addr} was in use; started on {} instead",
+                paths::endpoint(&info.addr)
+            );
+        } else {
+            println!("relay started on {}", paths::endpoint(&info.addr));
+        }
+        return Ok(());
     }
     Err(anyhow!(
-        "server did not come up — see {}",
-        paths::log_path().display()
+        "server did not come up — see {}\n{}",
+        paths::log_path().display(),
+        log_tail()
     ))
+}
+
+/// The last few lines of the server log (`start` truncates it per run, so this
+/// is the current attempt's output).
+fn log_tail() -> String {
+    let text = std::fs::read_to_string(paths::log_path()).unwrap_or_default();
+    let mut lines: Vec<&str> = text.lines().rev().take(6).collect();
+    lines.reverse();
+    lines.join("\n")
 }
 
 pub fn stop() -> Result<()> {
@@ -257,14 +353,19 @@ pub fn stop() -> Result<()> {
 }
 
 pub fn restart(args: ServeArgs) -> Result<()> {
-    let _ = stop();
+    // A record with a live pid must actually stop before we start again, or
+    // the old daemon keeps the address and `start` reports it as "already
+    // running" — propagate that failure rather than pretend we restarted.
+    if paths::read_info().is_ok() {
+        stop()?;
+    }
     start(args)
 }
 
 pub fn status() -> Result<()> {
     match paths::read_info() {
         Ok(info) if paths::alive(info.pid) => {
-            let health = http::get(&info.addr, "/health").is_ok();
+            let health = is_relay(&info.addr);
             println!(
                 "running · pid {} · {} · health {}",
                 info.pid,
@@ -277,3 +378,7 @@ pub fn status() -> Result<()> {
     }
     Ok(())
 }
+
+#[cfg(test)]
+#[path = "../../tests/cli/server.rs"]
+mod tests;

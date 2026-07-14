@@ -59,7 +59,7 @@ pub(super) fn settings() -> Vec<Setting> {
         text(
             "relay-address",
             "Relay address",
-            "Bind address for the Relay server.",
+            "Bind address for the Relay server. If the port is taken, the next free one is used.",
             s,
             |o| o.relay_address.clone(),
             "127.0.0.1:7777",

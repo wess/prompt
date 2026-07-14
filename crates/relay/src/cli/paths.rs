@@ -17,7 +17,13 @@ pub fn set_home(path: PathBuf) {
 #[derive(Serialize, Deserialize)]
 pub struct ServerInfo {
     pub pid: u32,
+    /// The address actually bound — what clients connect to.
     pub addr: String,
+    /// The address `--addr` asked for; differs from `addr` when that port was
+    /// taken and the daemon walked forward to a free one. Defaults empty for
+    /// records written by older daemons.
+    #[serde(default)]
+    pub requested: String,
     pub db: String,
     /// Bearer token clients present on every request. Stored here (0600) so
     /// only the same user can read it; defaults empty for forward/back compat.

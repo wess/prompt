@@ -89,3 +89,17 @@ fn launch_member_omits_empty_agent_flag() {
     assert!(cmd.contains("--optimize"));
     assert!(cmd.contains(" launch 'lead' --role 'supervisor'"));
 }
+
+#[test]
+fn health_response_requires_the_relay_marker() {
+    let ok = "HTTP/1.1 200 OK\r\nContent-Length: 11\r\n\r\nrelay 0.1.0";
+    assert!(relay_health_response(ok));
+    // Daemons before the marker answered a bare "ok".
+    let legacy = "HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok";
+    assert!(relay_health_response(legacy));
+    // A foreign service on the port must not read as a running relay.
+    let foreign = "HTTP/1.1 200 OK\r\nContent-Length: 9\r\n\r\nIt works!";
+    assert!(!relay_health_response(foreign));
+    assert!(!relay_health_response("HTTP/1.1 404 Not Found\r\n\r\n"));
+    assert!(!relay_health_response(""));
+}
