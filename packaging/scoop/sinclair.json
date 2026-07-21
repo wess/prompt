@@ -1,14 +1,14 @@
 {
-    "version": "1.28.0",
+    "version": "1.28.1",
     "description": "A GPU-accelerated terminal emulator.",
     "homepage": "https://github.com/wess/sinclair",
     "license": "Apache-2.0",
     "notes": "Windows builds are beta and currently unsigned.",
     "architecture": {
         "64bit": {
-            "url": "https://github.com/wess/sinclair/releases/download/v1.28.0/sinclair-1.28.0-windows-x86_64.zip",
-            "hash": "42d358756bc1d39fcd3b9659144f4a23fe51389f5066af944243bddbe597ebda",
-            "extract_dir": "sinclair-1.28.0-windows-x86_64"
+            "url": "https://github.com/wess/sinclair/releases/download/v1.28.1/sinclair-1.28.1-windows-x86_64.zip",
+            "hash": "76084e4769c0fa462e85f8ba5d8161dfaf4af88b1af00372c47156f5840ab30e",
+            "extract_dir": "sinclair-1.28.1-windows-x86_64"
         }
     },
     "bin": "sinclair.exe",
