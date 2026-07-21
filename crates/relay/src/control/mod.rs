@@ -216,11 +216,13 @@ fn yes() -> bool {
 }
 
 async fn spawn_worker(State(app): State<App>, Json(req): Json<SpawnReq>) -> Json<Value> {
+    let env = crate::cli::agent::env_for(&req.program, &app.token);
     let spec = spawn::Spec {
         name: req.name,
         role: req.role,
         program: req.program,
         args: req.args,
+        env,
         cwd: req.cwd,
         keep_alive: req.keep_alive,
         session_id: req.session_id,

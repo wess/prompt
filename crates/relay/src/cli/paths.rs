@@ -92,21 +92,36 @@ pub fn clear_info() {
     let _ = std::fs::remove_file(info_path());
 }
 
-/// Write the per-agent MCP config pointing at the bus; returns its absolute
-/// path. The config carries the bearer token so the agent's MCP client can
-/// authenticate to the bus.
-pub fn write_mcp_config(endpoint: &str, name: &str, token: &str) -> Result<String> {
-    ensure_dir()?;
-    let path = abs_dir().join(format!("{name}.mcp.json"));
-    let cfg = serde_json::json!({
+/// Per-server tool-call timeout written into the generated MCP config, in
+/// milliseconds. `wait` parks for up to `tools::WAIT_MAX_SECS` (four minutes);
+/// ten minutes here leaves room for that plus the work a tool does, without
+/// relying on whatever the client's default happens to be. A client whose
+/// default wall-clock limit is shorter than the park would abort every `wait`.
+const TOOL_TIMEOUT_MS: u64 = 600_000;
+
+/// The MCP client config for one agent: where the bus is, how to authenticate,
+/// and how long a tool call may take.
+fn mcp_config(endpoint: &str, token: &str) -> serde_json::Value {
+    serde_json::json!({
         "mcpServers": {
             "relay": {
                 "type": "http",
                 "url": endpoint,
                 "headers": { "Authorization": format!("Bearer {token}") },
+                "timeout": TOOL_TIMEOUT_MS,
             }
         }
-    });
+    })
+}
+
+/// Write the per-agent MCP config pointing at the bus; returns its absolute
+/// path. The config carries the bearer token so the agent's MCP client can
+/// authenticate to the bus, and an explicit tool timeout so a parked `wait` is
+/// not cut short by a client-side default.
+pub fn write_mcp_config(endpoint: &str, name: &str, token: &str) -> Result<String> {
+    ensure_dir()?;
+    let path = abs_dir().join(format!("{name}.mcp.json"));
+    let cfg = mcp_config(endpoint, token);
     std::fs::write(&path, serde_json::to_vec_pretty(&cfg)?)?;
     lock_file(&path);
     Ok(path.to_string_lossy().into_owned())
@@ -185,4 +200,26 @@ pub fn reap_stray_workers() {
         }
     }
     let _ = std::fs::remove_file(workers_pids_path());
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The generated config must pin a tool timeout. Left unset, the client's
+    /// own default governs, and one shorter than a parked `wait` aborts every
+    /// park — which the agent sees as a tool error, not an empty inbox.
+    #[test]
+    fn the_generated_config_pins_a_tool_timeout() {
+        let cfg = mcp_config("http://127.0.0.1:7777/mcp", "sekrit");
+        let relay = &cfg["mcpServers"]["relay"];
+        let timeout = relay["timeout"].as_u64().expect("a timeout must be set");
+        assert_eq!(timeout, TOOL_TIMEOUT_MS);
+        // Comfortably longer than a full park, or it defeats the purpose.
+        let park_ms = crate::tools::WAIT_MAX_SECS * 1000;
+        assert!(timeout > park_ms, "a {timeout}ms timeout cannot outlast a {park_ms}ms park");
+        assert_eq!(relay["type"], "http");
+        assert_eq!(relay["url"], "http://127.0.0.1:7777/mcp");
+        assert_eq!(relay["headers"]["Authorization"], "Bearer sekrit");
+    }
 }

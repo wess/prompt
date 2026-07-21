@@ -103,11 +103,15 @@ pub async fn serve(args: ServeArgs) -> Result<()> {
     // config in place first, then relaunch it resuming its prior claude session.
     for w in db::load_workers(&app.db).await.unwrap_or_default() {
         let _ = paths::write_mcp_config(&paths::endpoint(&bound), &w.name, &token);
+        // The bearer token is per-run, so it is rebuilt here rather than stored
+        // with the worker (see `agent::env_for`).
+        let env = crate::cli::agent::env_for(&w.program, &token);
         let spec = spawn::Spec {
             name: w.name,
             role: w.role,
             program: w.program,
             args: w.args,
+            env,
             cwd: w.cwd,
             keep_alive: w.keep_alive,
             session_id: w.session_id,

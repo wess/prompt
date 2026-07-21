@@ -8,8 +8,10 @@ pub const PROTOCOL_VERSION: &str = "2025-06-18";
 pub enum Outcome {
     /// Immediate JSON-RPC response (application/json).
     Now(Value),
-    /// A tool call to run, possibly long-lived, streamed over SSE.
-    Tool { id: Value, name: String, args: Value },
+    /// A tool call to run, possibly long-lived, streamed over SSE. `progress`
+    /// carries the client's `_meta.progressToken` when it supplied one, so the
+    /// transport can keep the call alive with `notifications/progress`.
+    Tool { id: Value, name: String, args: Value, progress: Option<Value> },
     /// A notification, no response body, just 202.
     Accepted,
 }
@@ -47,7 +49,15 @@ pub fn route(req: RpcRequest) -> Outcome {
             if req.id.is_none() {
                 return Outcome::Accepted;
             }
-            Outcome::Tool { id, name, args }
+            // Clients that want progress updates pass a token in `_meta`; a
+            // parked `wait` echoes it back periodically so the call is not aged
+            // out as idle (see `protocol::progress`).
+            let progress = req
+                .params
+                .get("_meta")
+                .and_then(|m| m.get("progressToken"))
+                .cloned();
+            Outcome::Tool { id, name, args, progress }
         }
         _ if req.id.is_none() => Outcome::Accepted,
         other => Outcome::Now(err(id, -32601, &format!("method not found: {other}"))),
@@ -77,6 +87,43 @@ mod tests {
             };
             assert_eq!(v["error"]["code"], json!(-32600));
         }
+    }
+
+    fn tool_call(meta: Option<Value>) -> RpcRequest {
+        let mut params = json!({ "name": "wait", "arguments": {} });
+        if let Some(m) = meta {
+            params["_meta"] = m;
+        }
+        RpcRequest {
+            jsonrpc: Some("2.0".into()),
+            id: Some(json!(1)),
+            method: "tools/call".into(),
+            params,
+        }
+    }
+
+    /// The client's progress token has to reach the transport, which echoes it
+    /// while a `wait` is parked. Losing it here means no progress frames and a
+    /// park the client aborts as idle.
+    #[test]
+    fn progress_token_is_carried_through() {
+        let Outcome::Tool { progress, .. } = route(tool_call(Some(json!({"progressToken": 7})))) else {
+            panic!("a tool call should route as Outcome::Tool");
+        };
+        assert_eq!(progress, Some(json!(7)));
+    }
+
+    /// A client that asks for no progress updates is still routed normally.
+    #[test]
+    fn a_missing_progress_token_is_none() {
+        let Outcome::Tool { progress, .. } = route(tool_call(None)) else {
+            panic!("a tool call should route as Outcome::Tool");
+        };
+        assert_eq!(progress, None);
+        let Outcome::Tool { progress, .. } = route(tool_call(Some(json!({})))) else {
+            panic!("a tool call should route as Outcome::Tool");
+        };
+        assert_eq!(progress, None, "an empty _meta carries no token");
     }
 
     #[test]

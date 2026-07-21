@@ -46,6 +46,9 @@ pub struct Options<'a> {
 pub struct Built {
     pub program: String,
     pub args: Vec<String>,
+    /// Extra environment the child needs (codex reads its bearer token from a
+    /// named env var rather than a config file).
+    pub env: Vec<(String, String)>,
     /// The agent CLI the options resolved to (an explicit choice, the role's,
     /// or `claude`).
     pub agent: String,
@@ -106,6 +109,7 @@ pub fn worker(endpoint: &str, token: &str, o: &Options) -> Result<Built> {
         channels: &channels,
         skip_perms: o.skip_perms,
         strict_mcp: o.strict_mcp,
+        token,
         allowed_tools: &allowed,
         extra_args: o.extra_args,
     })?;
@@ -121,6 +125,7 @@ pub fn worker(endpoint: &str, token: &str, o: &Options) -> Result<Built> {
     Ok(Built {
         program: launch.program,
         args: launch.args,
+        env: launch.env,
         agent: agent_name,
         session_id,
     })

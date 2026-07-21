@@ -201,12 +201,17 @@ Every launched agent receives an opening **harness** in one of two shapes:
 
 - **Parked worker** (the default) — register under its name, join its channels,
   then enter a `wait`-loop: do work, report back, call `wait` again to stay
-  reachable. Idle costs nothing.
+  reachable. Idle is nearly free.
 - **Driver** — the human-driven lead. It registers and joins, then hands control
   back to the human in its terminal and only calls `wait` to gather replies
   *after* it has delegated, so the human can actually type to it. A team's first
   member (its main pane) launches as the driver, as does any role marked
   `driver = true` (the built-in `supervisor`) or a `relay launch … --lead`.
+
+Both shapes are told explicitly that an empty *or failed* `wait` is routine and
+to call it again. That line is load-bearing: without it an agent reads a park
+that timed out as a failure, writes an explanation instead of another tool call,
+and a headless `claude -p` worker exits the moment the model ends its turn.
 
 Coordination happens through MCP tools the agent calls:
 
@@ -226,9 +231,26 @@ with `stop_worker`. `spawn` is bounded by a concurrent-worker cap (8) so an
 over-eager supervisor can't start runaway agents; past the cap it must
 `stop_worker` one first.
 
-`wait` is the key to zero idle cost: it's a single blocking tool call (held open
-as an SSE response with keepalives), not a poll loop, so a parked agent burns no
-tokens until a message actually arrives.
+`wait` is the key to near-zero idle cost: it's a blocking tool call held open as
+an SSE response, not a poll loop, so a parked agent burns no tokens while it
+waits.
+
+A park lasts up to four minutes and then returns an empty list, which the agent
+answers by calling `wait` again — so an idle agent costs one tool call every four
+minutes, not a spin loop. The deadline is deliberately short: MCP clients abort a
+tool call that goes quiet, and an aborted call reaches the agent as an *error*
+rather than an empty result, which is what makes an agent stop looping. Two
+things keep a park alive inside that window:
+
+- The server emits `notifications/progress` every 30s while a call is running.
+  SSE keepalives alone are transport-level comments the JSON-RPC layer never
+  sees, so they don't reset a client's idle timer.
+- The generated `<name>.mcp.json` pins an explicit `timeout` (10 minutes) rather
+  than inheriting whatever the client defaults to.
+
+If you raise the park deadline, keep it under the shortest idle window any client
+applies — `tools::WAIT_MAX_SECS` versus `CLIENT_IDLE_FLOOR_SECS`, which a unit
+test enforces.
 
 ## Agents
 
@@ -265,6 +287,15 @@ button that checks it's reachable (CLI `--version`, or the Ollama API port).
   the bus still trusts the self-asserted `from`/`name` within a single user's
   mesh. Binding `relay-address` to a public interface is still discouraged: the
   token is the only gate, with no transport encryption.
+- **Sessions.** Every `/mcp` tool call must carry the `mcp-session-id` header
+  returned by `initialize`; a call without one is refused. The header is what
+  binds a connection to a registered name, so treating an absent one as valid
+  would let two agents share a binding — the second to `register` would take over
+  the first's identity, and its `wait` would drain *and ack* the other's inbox.
+- **Codex credentials.** Codex reads no MCP config file, so it takes the bearer
+  token by env-var *name* (`bearer_token_env_var`); relay passes the value to the
+  child as `RELAY_TOKEN`. A rehydrated worker rebuilds this from the current
+  token, since the token is regenerated every daemon run and cannot be persisted.
 - **Ordering.** A *direct* message addressed to an agent that hasn't registered
   yet is now held and delivered the moment it does — the server pre-creates the
   recipient, so a task assigned the instant a team opens is never dropped.
@@ -281,6 +312,12 @@ button that checks it's reachable (CLI `--version`, or the Ollama API port).
   hard cap (past that its cursor is force-bumped and the gap logged in
   `server.log`). When `wait` capacity is saturated, calls queue briefly and
   then return an explicit backoff error instead of an instant empty result.
+- **Worker restarts.** A spawned worker that exits is relaunched with `--resume`,
+  backing off from 3s to a 60s ceiling. The failure budget (20) counts only
+  *consecutive rapid* exits: a run lasting a minute or more clears it, so a
+  long-lived agent is never retired for accumulating restarts across a shift.
+  Only a genuine crash-loop exhausts the budget and stops for good, which is
+  reported in `workers`.
 - **Feed streaming.** `relay feed --follow` consumes a server-sent event
   stream (`/control/feed/live`) instead of polling; one-shot `relay feed`
   still reads `/control/feed`.

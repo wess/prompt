@@ -1,9 +1,37 @@
 use anyhow::{anyhow, Result};
 
+/// Environment variable a codex worker reads its bearer token from. Codex takes
+/// the token by env var name (`bearer_token_env_var`), never inline, so the
+/// value has to reach the child's environment.
+pub const TOKEN_ENV: &str = "RELAY_TOKEN";
+
+/// Extra environment a worker running `program` needs to reach the bus.
+///
+/// Only codex needs anything: it takes the bearer token by env-var *name*, so
+/// the value must be in the child's environment rather than a config file. The
+/// token is regenerated every daemon run and therefore cannot be persisted with
+/// a worker — a rehydrated worker rebuilds its environment through here with the
+/// current token. Matched on the file stem so an explicit `--bin` path still
+/// resolves.
+pub fn env_for(program: &str, token: &str) -> Vec<(String, String)> {
+    let stem = std::path::Path::new(program)
+        .file_stem()
+        .map(|s| s.to_string_lossy().to_lowercase())
+        .unwrap_or_default();
+    if stem == "codex" {
+        vec![(TOKEN_ENV.to_string(), token.to_string())]
+    } else {
+        Vec::new()
+    }
+}
+
 /// A resolved command to run an agent.
 pub struct Launch {
     pub program: String,
     pub args: Vec<String>,
+    /// Extra environment for the child process. Empty for agents that carry
+    /// their credentials in the MCP config file itself.
+    pub env: Vec<(String, String)>,
 }
 
 /// Inputs needed to construct an agent launch.
@@ -24,6 +52,9 @@ pub struct Spec<'a> {
     /// agent keeps its project/user MCP servers *and* gains relay; opt in for a
     /// hermetic worker. See issue #3.
     pub strict_mcp: bool,
+    /// Bearer token for the bus. Most agents get it from the generated MCP
+    /// config; codex only accepts it via an environment variable.
+    pub token: &'a str,
     /// Tool-access allow-list, passed as `claude --allowedTools <rule...>` (one
     /// argv token per rule). Empty = no pre-grant. See issue #8.
     pub allowed_tools: &'a [String],
@@ -74,9 +105,11 @@ pub fn harness_prompt(
     let protocol = match (optimize, interactive) {
         (true, true) => "Protocol: `register` name=\"{name}\" role=\"{role}\".{join} Stay \
              interactive for the human's goal, split it into tasks, delegate with `send`/`post`, \
-             then `wait` for replies and report back.\n",
+             then `wait` for replies and report back. An empty or failed `wait` means replies \
+             are still coming — call it again rather than giving up.\n",
         (true, false) => "Protocol: `register` name=\"{name}\" role=\"{role}\".{join} Then loop: \
-             `wait` for work, do it, report with `send`/`post`, `wait` again. Never stop the loop.\n",
+             `wait` for work, do it, report with `send`/`post`, `wait` again. An empty or failed \
+             `wait` is normal — call it again. Never stop the loop.\n",
         (false, true) => "Protocol — follow exactly:\n\
              - Call `register` with name=\"{name}\" and role=\"{role}\" first.\n\
              {join}\
@@ -86,13 +119,19 @@ pub fn harness_prompt(
              agent) or `post` (to a channel).\n\
              - After delegating, call `wait` to collect replies, integrate them, and \
              report progress back to the human here. Return control to the human \
-             whenever you need their input.\n",
+             whenever you need their input.\n\
+             - `wait` returning no messages, or failing with an error, does NOT mean the \
+             work is finished — it is a normal timeout. Call `wait` again until every \
+             task you delegated has reported back.\n",
         (false, false) => "Protocol — follow exactly:\n\
              - Call `register` with name=\"{name}\" and role=\"{role}\" first.\n\
              {join}\
              - Call `wait` to receive work; it blocks until a message arrives.\n\
              - Do the requested work in this session, then report back with `send` to the \
              message's sender (or `post` to the relevant channel).\n\
+             - `wait` returning no messages, or failing with an error, is normal and \
+             expected — it just means nothing arrived in time. Call `wait` again \
+             immediately. Never treat it as a reason to stop or to report a problem.\n\
              - ALWAYS end your turn by calling `wait` again so you stay reachable. \
              Never stop the wait-loop.\n",
     };
@@ -171,12 +210,19 @@ fn claude(spec: &Spec) -> Launch {
     Launch {
         program: "claude".into(),
         args,
+        env: Vec::new(),
     }
 }
 
 /// Codex speaks streamable-HTTP MCP, wired via `-c mcp_servers.relay.url`.
+///
+/// Unlike claude and gemini, codex reads no MCP config file, so the bearer token
+/// cannot ride along in one: it accepts only the *name* of an environment
+/// variable to read (`bearer_token_env_var`), and the value is passed to the
+/// child through [`Launch::env`]. Without this every codex request 401s.
 fn codex(spec: &Spec) -> Launch {
     let mcp = format!("mcp_servers.relay.url=\"{}\"", spec.url);
+    let auth = format!("mcp_servers.relay.bearer_token_env_var=\"{TOKEN_ENV}\"");
     let mut args: Vec<String> = Vec::new();
     if spec.headless {
         args.push("exec".into());
@@ -188,6 +234,8 @@ fn codex(spec: &Spec) -> Launch {
     }
     args.push("-c".into());
     args.push(mcp);
+    args.push("-c".into());
+    args.push(auth);
     if let Some(m) = spec.model {
         args.push("-c".into());
         args.push(format!("model=\"{m}\""));
@@ -195,6 +243,7 @@ fn codex(spec: &Spec) -> Launch {
     Launch {
         program: "codex".into(),
         args,
+        env: env_for("codex", spec.token),
     }
 }
 
@@ -225,7 +274,11 @@ fn ollama(spec: &Spec) -> Result<Launch> {
         args.push("--channel".into());
         args.push(ch.clone());
     }
-    Ok(Launch { program: exe, args })
+    Ok(Launch {
+        program: exe,
+        args,
+        env: Vec::new(),
+    })
 }
 
 fn gemini_template() -> &'static str {
@@ -240,6 +293,7 @@ fn from_template(tmpl: &str, spec: &Spec) -> Launch {
     Launch {
         program,
         args: tokens.collect(),
+        env: Vec::new(),
     }
 }
 
@@ -269,6 +323,7 @@ mod tests {
             channels: &[],
             skip_perms: false,
             strict_mcp: false,
+            token: "tok",
             allowed_tools: &[],
             extra_args: extra,
         }
@@ -317,6 +372,65 @@ mod tests {
     fn no_allowed_tools_flag_when_empty() {
         let launch = build(&spec("claude", &[])).unwrap();
         assert!(!launch.args.iter().any(|a| a == "--allowedTools"));
+    }
+
+    /// Codex reads no MCP config file, so the bearer token has to arrive by env
+    /// var — it only accepts the variable's *name* in config. Without both
+    /// halves every codex worker 401s on the bus.
+    #[test]
+    fn codex_carries_the_bearer_token() {
+        let mut s = spec("codex", &[]);
+        s.token = "sekrit";
+        let launch = build(&s).unwrap();
+        let cfg = launch.args.join(" ");
+        assert!(
+            cfg.contains(&format!("mcp_servers.relay.bearer_token_env_var=\"{TOKEN_ENV}\"")),
+            "codex must be told which env var holds the token, got: {cfg}"
+        );
+        assert_eq!(
+            launch.env,
+            vec![(TOKEN_ENV.to_string(), "sekrit".to_string())],
+            "and the value must reach the child's environment"
+        );
+    }
+
+    /// Claude gets its credentials from the generated MCP config file, so it
+    /// needs no extra environment — the token should not leak into the process
+    /// environment (and any subprocess it spawns) for no reason.
+    #[test]
+    fn claude_needs_no_token_env() {
+        let mut s = spec("claude", &[]);
+        s.token = "sekrit";
+        assert!(build(&s).unwrap().env.is_empty());
+    }
+
+    /// A rehydrated worker rebuilds its environment from the program name, since
+    /// the token is regenerated every daemon run and cannot be persisted. An
+    /// explicit `--bin` path must still resolve.
+    #[test]
+    fn env_for_matches_codex_by_stem() {
+        assert_eq!(
+            env_for("/opt/homebrew/bin/codex", "t"),
+            vec![(TOKEN_ENV.to_string(), "t".to_string())]
+        );
+        assert_eq!(env_for("codex", "t").len(), 1);
+        assert!(env_for("/usr/local/bin/claude", "t").is_empty());
+        assert!(env_for("", "t").is_empty());
+    }
+
+    /// Every prompt shape must tell the agent that an empty or failed `wait` is
+    /// routine and to call it again. Without this the agent treats a timed-out
+    /// park as a failure, writes an explanation, and — under `claude -p` — the
+    /// process exits.
+    #[test]
+    fn every_shape_survives_an_empty_or_failed_wait() {
+        for (interactive, optimize) in [(false, false), (false, true), (true, false), (true, true)] {
+            let p = harness_prompt("a", "worker", "", &[], None, interactive, optimize);
+            assert!(
+                p.contains("empty or failed `wait`") || p.contains("failing with an error"),
+                "interactive={interactive} optimize={optimize} never mentions a failed wait:\n{p}"
+            );
+        }
     }
 
     #[test]

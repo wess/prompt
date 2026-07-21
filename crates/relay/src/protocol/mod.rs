@@ -36,6 +36,27 @@ pub fn err(id: Value, code: i64, message: &str) -> Value {
     })
 }
 
+/// An MCP `notifications/progress` frame for `token`, emitted periodically while
+/// a long tool call is still running.
+///
+/// A parked `wait` sends nothing for minutes. MCP clients age out a tool call
+/// that goes quiet, and they count *protocol* traffic: an SSE keepalive comment
+/// is transport-level framing the JSON-RPC layer never sees, so it does not
+/// count. Without these frames a park is aborted by the client long before the
+/// server's own deadline — the agent then sees a tool error and, having no
+/// retry instruction, stops looping.
+pub fn progress(token: &Value, n: u64, message: &str) -> Value {
+    serde_json::json!({
+        "jsonrpc": "2.0",
+        "method": "notifications/progress",
+        "params": {
+            "progressToken": token,
+            "progress": n,
+            "message": message
+        }
+    })
+}
+
 pub fn now() -> i64 {
     use std::time::{SystemTime, UNIX_EPOCH};
     SystemTime::now()

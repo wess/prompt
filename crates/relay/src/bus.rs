@@ -202,8 +202,23 @@ pub async fn deliver(
     match (kind, target) {
         ("direct", Some(to)) => app.wake_one(to),
         ("channel", Some(channel)) => {
-            for agent in db::channel_subs(&app.db, channel).await.unwrap_or_default() {
-                app.wake_one(&agent);
+            // A failed subscriber lookup used to be swallowed into an empty
+            // list, waking nobody: the message was stored but every parked
+            // subscriber slept out its full deadline. Falling back to waking
+            // everyone is the safe read — a spurious wake just re-checks the
+            // inbox, a missed one stalls the mesh.
+            match db::channel_subs(&app.db, channel).await {
+                Ok(subs) => {
+                    for agent in subs {
+                        app.wake_one(&agent);
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        "relay: subscriber lookup for #{channel} failed ({e}); waking all waiters"
+                    );
+                    app.wake_all();
+                }
             }
         }
         _ => app.wake_all(),
@@ -458,6 +473,63 @@ mod tests {
             .expect("waiter should wake promptly")
             .unwrap();
         assert_eq!(got, "done");
+        cleanup(&path);
+    }
+
+    /// A channel post must wake a subscriber that is parked on `wait`. The
+    /// subscriber lookup used to swallow errors into an empty list, waking
+    /// nobody: the post landed in the DB but every parked subscriber slept out
+    /// its full deadline before noticing.
+    #[tokio::test]
+    async fn a_channel_post_wakes_a_parked_subscriber() {
+        let (app, path) = app().await;
+        db::upsert_agent(&app.db, "backend", "worker", "").await.unwrap();
+        db::subscribe(&app.db, "backend", "devops").await.unwrap();
+        let waiter = {
+            let app = app.clone();
+            tokio::spawn(async move {
+                await_messages(&app, "backend", true, Duration::from_secs(5))
+                    .await
+                    .unwrap()
+            })
+        };
+        // Let it park, then post to the channel it subscribes to.
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        deliver(&app, "lead", "channel", Some("devops"), "deploy now")
+            .await
+            .unwrap();
+        let msgs = tokio::time::timeout(Duration::from_secs(2), waiter)
+            .await
+            .expect("a channel post must wake its subscribers promptly")
+            .unwrap();
+        assert_eq!(msgs.len(), 1);
+        assert_eq!(msgs[0].body, "deploy now");
+        cleanup(&path);
+    }
+
+    /// A direct message wakes its recipient without waiting out the deadline.
+    #[tokio::test]
+    async fn a_direct_message_wakes_a_parked_recipient() {
+        let (app, path) = app().await;
+        db::upsert_agent(&app.db, "backend", "worker", "").await.unwrap();
+        let waiter = {
+            let app = app.clone();
+            tokio::spawn(async move {
+                await_messages(&app, "backend", true, Duration::from_secs(5))
+                    .await
+                    .unwrap()
+            })
+        };
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        deliver(&app, "lead", "direct", Some("backend"), "ship it")
+            .await
+            .unwrap();
+        let msgs = tokio::time::timeout(Duration::from_secs(2), waiter)
+            .await
+            .expect("a direct message must wake its recipient promptly")
+            .unwrap();
+        assert_eq!(msgs.len(), 1);
+        assert_eq!(msgs[0].body, "ship it");
         cleanup(&path);
     }
 

@@ -6,9 +6,41 @@ use serde_json::{json, Value};
 use std::sync::atomic::Ordering;
 use std::time::Duration;
 
-/// Max time a single `wait` call parks before returning empty (safety net for
-/// transport timeouts). The agent's protocol is to call `wait` again.
-const WAIT_MAX: Duration = Duration::from_secs(1500);
+/// Max time a single `wait` call parks before returning empty, in seconds. The
+/// agent's protocol is to call `wait` again.
+///
+/// This must stay *under* the shortest idle window any MCP client applies to a
+/// tool call, because a park the client aborts surfaces to the agent as an
+/// error rather than an empty result — and an agent that sees an error stops
+/// looping. Claude Code's HTTP/SSE idle default is five minutes, so four leaves
+/// headroom even for a client that ignores the `notifications/progress` frames
+/// the transport emits. Returning empty is cheap: one tool call per agent per
+/// four idle minutes.
+pub const WAIT_MAX_SECS: u64 = 240;
+
+/// The shortest idle window a supported MCP client applies to a tool call
+/// (Claude Code, HTTP/SSE). [`WAIT_MAX_SECS`] must stay below it.
+pub const CLIENT_IDLE_FLOOR_SECS: u64 = 300;
+
+// Enforced at compile time: a park that outlives the client's idle window comes
+// back to the agent as a tool *error* rather than an empty result, and an agent
+// that sees an error stops looping. Several progress frames must also fit inside
+// one park, or a client that honours them still ages the call out.
+const _: () = assert!(
+    WAIT_MAX_SECS < CLIENT_IDLE_FLOOR_SECS,
+    "the park deadline must stay under the shortest client idle window"
+);
+const _: () = assert!(
+    WAIT_MAX_SECS / crate::transport::PROGRESS_INTERVAL_SECS >= 4,
+    "a park should emit several progress frames, not just one"
+);
+
+#[cfg(not(test))]
+const WAIT_MAX: Duration = Duration::from_secs(WAIT_MAX_SECS);
+/// Tests park for milliseconds instead of minutes; the shipped value is
+/// [`WAIT_MAX_SECS`].
+#[cfg(test)]
+const WAIT_MAX: Duration = Duration::from_millis(300);
 
 /// A tool response plus an optional delivery acknowledgement `(agent, last_id)`
 /// the transport runs once the response has actually reached the client — the
@@ -68,7 +100,7 @@ pub fn list() -> Value {
             "properties": { "channel": {"type": "string"} },
             "required": ["channel"]
         })),
-        tool("wait", "Block until messages arrive for you, then return them. Call this whenever you have nothing else to do — it is how you stay reachable. Costs nothing while parked.", json!({
+        tool("wait", "Block until messages arrive for you, then return them. Call this whenever you have nothing else to do — it is how you stay reachable, and it costs nothing while parked. After a few idle minutes it returns an empty list instead: that is a normal timeout, not a failure, so just call `wait` again. Do the same if it returns an error.", json!({
             "type": "object", "properties": {}
         })),
         tool("inbox", "Return any pending messages immediately without blocking (may be empty).", json!({
@@ -159,6 +191,14 @@ fn arg<'a>(args: &'a Value, key: &str) -> Option<&'a str> {
 /// Dispatch a `tools/call`. Returns the CallToolResult plus, for the drain
 /// tools, the delivery ack the transport runs after the response is written.
 pub async fn call(app: &App, session: &str, name: &str, args: &Value) -> Reply {
+    // The transport rejects an absent session header before reaching here; this
+    // guards the other callers. An empty key would be shared by every such
+    // client, letting one agent inherit another's identity.
+    if session.is_empty() {
+        return Reply::plain(fail(
+            "no MCP session on this connection — complete `initialize` first",
+        ));
+    }
     if name == "register" {
         let Some(agent) = arg(args, "name") else {
             return Reply::plain(fail("register requires a 'name'"));
@@ -336,6 +376,7 @@ async fn dispatch(app: &App, me: &str, name: &str, args: &Value) -> Value {
                 role: role.to_string(),
                 program: built.program,
                 args: built.args,
+                env: built.env,
                 cwd,
                 keep_alive,
                 session_id: built.session_id,
@@ -415,5 +456,80 @@ async fn roster_text(app: &App) -> String {
             format!("roster:\n{}", names.join("\n"))
         }
         _ => "roster is empty".into(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::state::App;
+
+    async fn app() -> (App, std::path::PathBuf) {
+        static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let n = N.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let path = std::env::temp_dir().join(format!("relay-tools-{}-{n}.db", std::process::id()));
+        let pool = crate::db::open(path.to_str().unwrap()).await.unwrap();
+        (App::new(pool, "http://127.0.0.1:0".into(), "t".into()), path)
+    }
+
+    fn cleanup(path: &std::path::Path) {
+        let _ = std::fs::remove_file(path);
+        let _ = std::fs::remove_file(path.with_extension("db-wal"));
+        let _ = std::fs::remove_file(path.with_extension("db-shm"));
+    }
+
+    /// A tool call with no bound session must be refused outright. Treating an
+    /// empty session as valid let one agent inherit another's identity.
+    #[tokio::test]
+    async fn a_call_without_a_session_is_refused() {
+        let (app, path) = app().await;
+        let reply = call(&app, "", "whoami", &json!({})).await;
+        assert_eq!(reply.body["isError"], json!(true));
+        assert!(reply.ack.is_none());
+        cleanup(&path);
+    }
+
+    /// An unbound (but non-empty) session is still refused, with the message
+    /// that tells the agent to register.
+    #[tokio::test]
+    async fn an_unregistered_session_is_told_to_register() {
+        let (app, path) = app().await;
+        let reply = call(&app, "s-unknown", "whoami", &json!({})).await;
+        assert_eq!(reply.body["isError"], json!(true));
+        let text = reply.body["content"][0]["text"].as_str().unwrap();
+        assert!(text.contains("register"), "got {text}");
+        cleanup(&path);
+    }
+
+    /// A `wait` that times out must return an empty list as a *success*, with a
+    /// note telling the agent to call again — never an error, which is what
+    /// makes an agent stop looping.
+    #[tokio::test]
+    async fn an_empty_park_is_success_not_an_error() {
+        let (app, path) = app().await;
+        db::upsert_agent(&app.db, "backend", "backend", "").await.unwrap();
+        app.bind("s1", "backend").await;
+        let reply = call(&app, "s1", "wait", &json!({})).await;
+        assert_eq!(reply.body["isError"], json!(false), "an idle park is not a failure");
+        let text = reply.body["content"][0]["text"].as_str().unwrap();
+        assert!(text.contains("call wait again"), "got {text}");
+        assert!(reply.ack.is_none(), "nothing was delivered, so nothing to ack");
+        cleanup(&path);
+    }
+
+    /// The delivered path: a queued message comes back and carries the ack the
+    /// transport runs once the response has actually been written.
+    #[tokio::test]
+    async fn a_delivered_message_carries_its_ack() {
+        let (app, path) = app().await;
+        db::upsert_agent(&app.db, "backend", "backend", "").await.unwrap();
+        app.bind("s1", "backend").await;
+        let id = crate::bus::deliver(&app, "lead", "direct", Some("backend"), "ship it")
+            .await
+            .unwrap();
+        let reply = call(&app, "s1", "wait", &json!({})).await;
+        assert_eq!(reply.body["isError"], json!(false));
+        assert_eq!(reply.ack, Some(("backend".to_string(), id)));
+        cleanup(&path);
     }
 }
