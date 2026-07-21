@@ -121,6 +121,48 @@ fn repaint_after_focus_change(view: &gpui::WeakEntity<TermView>, cx: &mut App) {
     });
 }
 
+/// Bind a view's focus listeners to `window`. Split out of `new` because these
+/// are per-*window* subscriptions: a `TermView` moved between windows keeps
+/// listeners pointed at the old one, which then report that window's focus
+/// instead of its own (see [`TermView::rehome`]).
+fn focus_subs(
+    focus: &FocusHandle,
+    window: &mut Window,
+    cx: &mut Context<TermView>,
+) -> [Subscription; 3] {
+    let on_in = cx.weak_entity();
+    let sub_in = window.on_focus_in(focus, cx, move |_window, cx| {
+        let _ = on_in.update(cx, |this, _| {
+            this.focused = true;
+            this.report_focus(true);
+        });
+        repaint_after_focus_change(&on_in, cx);
+    });
+    let on_out = cx.weak_entity();
+    let sub_out = window.on_focus_out(focus, cx, move |_event, _window, cx| {
+        let _ = on_out.update(cx, |this, _| {
+            this.focused = false;
+            this.report_focus(false);
+        });
+        repaint_after_focus_change(&on_out, cx);
+    });
+    // gpui derives focus in/out from the drawn frame and folds window
+    // activation into it, so a frame drawn before the platform reports the
+    // window active carries an empty focus path. A window that gains focus and
+    // activation together can therefore settle with `focused` never set,
+    // painting a hollow cursor in the pane the user is typing into. Activation
+    // is the one signal that outranks the frame — re-derive `focused` from it.
+    let sub_act = cx.observe_window_activation(window, |this, window, cx| {
+        let focused = window.is_window_active() && this.focus.contains_focused(window, cx);
+        if this.focused != focused {
+            this.focused = focused;
+            this.report_focus(focused);
+            cx.notify();
+        }
+    });
+    [sub_in, sub_out, sub_act]
+}
+
 pub struct TermView {
     session: Arc<Session>,
     colors: Rc<Colors>,
@@ -149,7 +191,9 @@ pub struct TermView {
     /// Last vt title (OSC 0/2); `None` until the child sets one.
     title: Option<String>,
     exited: bool,
-    _focus_subs: [Subscription; 2],
+    /// Focus in/out listeners plus the window-activation resync; together they
+    /// drive focus reporting (?1004) and the focused/unfocused cursor.
+    _focus_subs: [Subscription; 3],
 }
 
 impl TermView {
@@ -179,22 +223,7 @@ impl TermView {
         let cell = metrics::measure(window.text_system(), &opts.font, font_size);
 
         let focus = cx.focus_handle();
-        let on_in = cx.weak_entity();
-        let sub_in = window.on_focus_in(&focus, cx, move |_window, cx| {
-            let _ = on_in.update(cx, |this, _| {
-                this.focused = true;
-                this.report_focus(true);
-            });
-            repaint_after_focus_change(&on_in, cx);
-        });
-        let on_out = cx.weak_entity();
-        let sub_out = window.on_focus_out(&focus, cx, move |_event, _window, cx| {
-            let _ = on_out.update(cx, |this, _| {
-                this.focused = false;
-                this.report_focus(false);
-            });
-            repaint_after_focus_change(&on_out, cx);
-        });
+        let subs = focus_subs(&focus, window, cx);
 
         let mut events = bridge::forward(events);
         cx.spawn(async move |this, cx| {
@@ -228,8 +257,17 @@ impl TermView {
             sync_pending: false,
             title: None,
             exited: false,
-            _focus_subs: [sub_in, sub_out],
+            _focus_subs: subs,
         }
+    }
+
+    /// Move this view's focus listeners onto `window`. Call it after moving a
+    /// `TermView` into a different window (tearing a pane off into its own
+    /// window, say): the listeners are per-window subscriptions, so until they
+    /// are rebound the view reports the *old* window's focus and can arrive
+    /// unfocused with no listener left that can mark it focused again.
+    pub fn rehome(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self._focus_subs = focus_subs(&self.focus, window, cx);
     }
 
     /// The live session, for direct writes and terminal reads.

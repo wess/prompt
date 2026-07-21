@@ -69,6 +69,13 @@ window that quits when the shell exits, runnable with:
 cargo run -p libsinclair --example embed
 ```
 
+A `TermView`'s focus listeners are subscriptions on the window it was built in,
+so a host that moves one into a *different* window — tearing a pane off into
+its own window, say — must call `TermView::rehome(window, cx)` as part of the
+move. Until it does, the view reports the old window's focus, and can arrive in
+its new home unfocused with no listener left that can mark it focused again
+(the cursor stays hollow until the user clicks away and back).
+
 Hosts that outgrow `TermView` (overlays, search UI, split dimming) keep
 `TerminalElement` and build their own view around it — that is exactly what
 the Sinclair app's `TerminalView` does. The element handles grid resize,
