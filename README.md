@@ -386,3 +386,5 @@ Override any color in config (`background`, `foreground`,
 ## License
 
 Licensed under the [Apache License, Version 2.0](LICENSE).
+
+♥ [Sponsor this project](https://github.com/sponsors/wess)
