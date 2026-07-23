@@ -27,6 +27,10 @@ exactly how you work.
 
 - **Tabs & splits** — open tabs, split panes any direction, drag the dividers,
   and move focus by direction. Each pane is its own shell.
+- **OS tabs** — run a fresh Debian, Ubuntu, Alpine, Fedora, or Arch userland (or
+  any OCI image) as a container-backed tab with ⌘⇧T, or attach a shell to an
+  already-running Docker/Podman container with ⌘⇧C. Ephemeral by default; keep
+  the ones you want. See the [OS tabs tutorial](https://wess.io/sinclair/ostabs.html).
 - **Selection & clipboard** — mouse selection by cell, word, or line;
   copy-on-select; paste with bracketing; OSC 52 clipboard support.
 - **Hyperlinks & URLs** — OSC 8 links are underlined and open on ⌘-click, and

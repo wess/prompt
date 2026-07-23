@@ -36,7 +36,7 @@
         <h2>1. Open one</h2>
         <p>
           Press <kbd>⌘⇧T</kbd> (<code>new_os_tab</code>, also in the File menu as
-          <em>New OS Tab…</em>). A small picker window opens with the built-in profiles —
+          <em>OS Tabs…</em>). A small picker window opens with the built-in profiles —
           <strong>Debian, Ubuntu, Alpine, Fedora, and Arch Linux</strong>, each shown with the
           image it runs — plus a text field. Pick one and you're dropped at a root shell
           inside a brand-new container, in a brand-new tab.
@@ -85,19 +85,29 @@
 
         <h2>4. Attach to what's already running</h2>
         <p>
-          The <strong>Containers</strong> sidebar panel lists every running Docker/Podman
-          container — yours, your compose stack's, anything the engine reports. Open it with
-          <code>sidebar:left:containers</code> from the command palette (<kbd>⌘⇧P</kbd>), or
-          click through the sidebar (<kbd>⌘B</kbd>). <strong>Double-click a row</strong> to
-          attach a shell to that container in a tab — if a tab is already attached to it,
-          Sinclair focuses that tab instead of opening a second one. The panel's header row
-          opens the New OS Tab picker, and a refresh row re-lists.
+          Fresh containers aren't the only thing you can open in a tab — you can drop a shell
+          into a container that's <em>already</em> running: your compose stack's database, a
+          long-lived dev box, anything the engine reports. Press <kbd>⌘⇧C</kbd>
+          (<code>attach_container</code>, also in the File menu as <em>Attach to Container…</em>)
+          to open the <strong>Attach to Container</strong> picker. It lists every running
+          Docker/Podman container by name, image, and uptime — click one to attach a shell in a
+          new tab. The text field also takes a container name or id directly, for one that
+          isn't listed.
+        </p>
+        <p>
+          Prefer to browse? The <strong>Containers</strong> sidebar panel shows the same list.
+          Open it with <code>sidebar:left:containers</code> from the command palette
+          (<kbd>⌘⇧P</kbd>) or by clicking through the sidebar (<kbd>⌘B</kbd>), then
+          <strong>double-click a row</strong> to attach. Either way, if a tab is already
+          attached to a container Sinclair focuses that tab instead of opening a second one; a
+          refresh row at the bottom of the panel re-lists.
         </p>
         <div class="callout note">
           <span class="label">Note</span>
           <p>Attaching uses the engine's <code>exec</code>, so you get a fresh shell inside
-          the running container without disturbing its main process. If the panel says
-          <em>No container engine found</em>, install Docker or Podman and refresh.</p>
+          the running container without disturbing its main process. With nothing running the
+          picker shows <em>No running containers</em>; with neither engine installed it shows
+          <em>No container engine found</em> — install Docker or Podman and reopen.</p>
         </div>
 
         <h2>5. Add your own images to the picker</h2>
@@ -127,7 +137,7 @@
         <div class="cards">
           <a href="workspacesetup.html"><strong>Organize your workspace</strong>Mix OS tabs with regular tabs, splits, and saved layouts.</a>
           <a href="recording.html"><strong>Record &amp; share</strong>Record a session inside a throwaway OS — great for clean-room repro clips.</a>
-          <a href="configkeys.html"><strong>Configuration &amp; keybindings</strong>The settings file these <code>container</code> keys live in, and how to rebind <code>new_os_tab</code>.</a>
+          <a href="configkeys.html"><strong>Configuration &amp; keybindings</strong>The settings file these <code>container</code> keys live in, and how to rebind <code>new_os_tab</code> or <code>attach_container</code>.</a>
         </div>
       </article>
     </main>
