@@ -280,6 +280,7 @@ pub fn default_keybinds() -> Vec<Keybind> {
         kb(cmd, "n", Action::NewWindow),
         kb(cmd, "t", Action::NewTab),
         kb(cmd_shift, "t", Action::NewContainerTab),
+        kb(cmd_shift, "c", Action::AttachContainer),
         kb(cmd, "w", Action::CloseSurface),
         kb(cmd_alt, "w", Action::CloseTab),
         kb(cmd_shift, "w", Action::CloseWindow),

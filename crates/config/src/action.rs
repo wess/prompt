@@ -164,6 +164,9 @@ pub enum Action {
     /// Open the OS picker to launch a container-backed tab (a fresh Debian,
     /// Ubuntu, … userland). See the `container` crate.
     NewContainerTab,
+    /// Open the picker listing already-running containers to attach a tab to
+    /// one of them (an interactive shell via `exec`). See the `container` crate.
+    AttachContainer,
     CloseSurface,
     /// Close the current tab and all its panes.
     CloseTab,
@@ -342,6 +345,9 @@ impl Action {
             "new_window" => only(Self::NewWindow, &name, param),
             "new_tab" => only(Self::NewTab, &name, param),
             "new_container_tab" | "new_os_tab" => only(Self::NewContainerTab, &name, param),
+            "attach_container" | "attach_to_container" => {
+                only(Self::AttachContainer, &name, param)
+            }
             "close_surface" => only(Self::CloseSurface, &name, param),
             "close_tab" => only(Self::CloseTab, &name, param),
             "close_window" => only(Self::CloseWindow, &name, param),
@@ -494,6 +500,7 @@ impl Action {
             Self::NewWindow => "new_window".into(),
             Self::NewTab => "new_tab".into(),
             Self::NewContainerTab => "new_container_tab".into(),
+            Self::AttachContainer => "attach_container".into(),
             Self::CloseSurface => "close_surface".into(),
             Self::CloseTab => "close_tab".into(),
             Self::CloseWindow => "close_window".into(),

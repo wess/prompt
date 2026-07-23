@@ -153,7 +153,7 @@ pub(super) fn settings() -> Vec<Setting> {
         ),
         list(
             ListKind::Container,
-            "OS profiles for the New OS Tab picker: label | image | command | lifecycle.",
+            "OS profiles for the OS Tabs picker: label | image | command | lifecycle.",
             s,
         ),
     ]

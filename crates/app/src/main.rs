@@ -6,6 +6,7 @@ mod agentpicker;
 mod agentstate;
 mod appid;
 mod appkit;
+mod attachpicker;
 mod catalog;
 mod colors;
 mod confwrite;

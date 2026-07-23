@@ -30,7 +30,8 @@ pub(crate) fn palette_catalog() -> Vec<(&'static str, Action)> {
     vec![
         ("New Window", Action::NewWindow),
         ("New Tab", Action::NewTab),
-        ("New OS Tab", Action::NewContainerTab),
+        ("OS Tabs", Action::NewContainerTab),
+        ("Attach to Container", Action::AttachContainer),
         ("Close Pane", Action::CloseSurface),
         ("Close Tab", Action::CloseTab),
         ("Close Window", Action::CloseWindow),

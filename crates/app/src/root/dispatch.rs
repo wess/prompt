@@ -77,6 +77,7 @@ impl WorkspaceView {
             Action::NewWindow => self.newwindow(cx),
             Action::NewTab => self.newtab(window, cx),
             Action::NewContainerTab => crate::ospicker::open(window, cx),
+            Action::AttachContainer => crate::attachpicker::open(window, cx),
             Action::CloseSurface | Action::CloseTab => {
                 let item = self.active_item(cx);
                 self.close_item(item, window, cx);

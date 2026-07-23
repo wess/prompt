@@ -191,6 +191,7 @@ fn to_config_round_trips() {
     let cases = [
         Action::NewWindow,
         Action::NewTab,
+        Action::AttachContainer,
         Action::CloseSurface,
         Action::CloseAllWindows,
         Action::NewSplit(SplitDirection::Down),

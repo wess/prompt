@@ -1,12 +1,13 @@
-//! "OS Tabs" picker — a small standalone window (like Settings) listing OS
-//! images to run fresh as a container-backed tab, plus a field for an arbitrary
-//! image. A real window (rather than an in-window overlay) avoids clipping and
-//! does not depend on guise's `deferred` draw pass. Its sibling `attachpicker`
-//! attaches to a container that is already running rather than starting a new
-//! one.
+//! "Attach to Container" picker — the sibling of the "OS Tabs" picker
+//! (`ospicker`). Instead of running a fresh image, it lists the containers the
+//! engine already has running and attaches a tab to the one you pick (an
+//! interactive shell via `exec`). A free-text field also takes a container name
+//! or id directly, for one not shown.
 //!
-//! Selecting an image launches the container on the main workspace window and
-//! closes the picker.
+//! Like the OS picker this is a real window (not an in-window overlay) so it
+//! never clips and does not depend on guise's `deferred` draw pass. The running
+//! list is fetched once at construction (a blocking `docker ps`); reopen the
+//! picker to re-list.
 
 use gpui::prelude::*;
 use gpui::{
@@ -32,15 +33,15 @@ pub fn open(parent: &Window, cx: &mut App) {
             window_bounds: Some(WindowBounds::Windowed(where_)),
             is_resizable: true,
             titlebar: Some(TitlebarOptions {
-                title: Some("OS Tabs".into()),
+                title: Some("Attach to Container".into()),
                 appears_transparent: true,
                 traffic_light_position: Some(point(px(12.0), px(12.0))),
             }),
             ..Default::default()
         },
         |window, cx| {
-            window.set_window_title("OS Tabs");
-            cx.new(|cx| OsPickerView::new(window, cx))
+            window.set_window_title("Attach to Container");
+            cx.new(|cx| AttachPickerView::new(window, cx))
         },
     );
     // Make the new window the key window so its text field receives input.
@@ -54,56 +55,78 @@ pub fn open(parent: &Window, cx: &mut App) {
     }
 }
 
-/// Run `profile` in a new tab on the active workspace window (not an arbitrary
-/// first one — with several windows the container must land where the user
-/// is), then close `picker`.
-fn launch(app: &mut App, profile: container::Profile, picker: &mut Window) {
+/// Attach a tab to `running` on the active workspace window (not an arbitrary
+/// first one — with several windows the tab must land where the user is), then
+/// close `picker`.
+fn attach(app: &mut App, running: container::Running, picker: &mut Window) {
     if let Some(handle) = crate::mcpbridge::active_workspace(app) {
         handle
             .update(app, |ws, window, cx| {
-                ws.launch_container(&profile, window, cx)
+                ws.attach_container(&running, window, cx)
             })
             .ok();
     }
     picker.remove_window();
 }
 
-/// Resolve typed text to a profile: empty → first profile; a matching
-/// label/image → that profile; otherwise a one-off profile for the typed image.
-fn resolve(text: &str, profiles: &[container::Profile]) -> Option<container::Profile> {
+/// Resolve typed text to a container: empty → first running; a matching
+/// name/id (or id prefix) → that container; otherwise attach by the raw string
+/// (the engine resolves names and short ids itself).
+fn resolve(text: &str, running: &[container::Running]) -> Option<container::Running> {
+    let text = text.trim();
     if text.is_empty() {
-        return profiles.first().cloned();
+        return running.first().cloned();
     }
     Some(
-        profiles
+        running
             .iter()
-            .find(|p| p.label.eq_ignore_ascii_case(text) || p.image.eq_ignore_ascii_case(text))
+            .find(|r| {
+                r.name.eq_ignore_ascii_case(text)
+                    || r.id.eq_ignore_ascii_case(text)
+                    || r.id.starts_with(text)
+            })
             .cloned()
-            .unwrap_or_else(|| container::Profile {
-                label: text.to_string(),
-                image: text.to_string(),
-                command: "bash".to_string(),
-                persist: None,
+            .unwrap_or_else(|| container::Running {
+                id: text.to_string(),
+                name: text.to_string(),
+                image: String::new(),
+                status: String::new(),
             }),
     )
 }
 
-pub struct OsPickerView {
+/// List the engine's running containers, blocking on `docker ps`. Returns
+/// whether an engine is installed at all (to distinguish "none running" from
+/// "no engine") plus the rows.
+fn running_containers() -> (bool, Vec<container::Running>) {
+    let (opts, _) = config::load();
+    let Some(engine) = container::Engine::resolve(opts.container_engine.as_deref()) else {
+        return (false, Vec::new());
+    };
+    let argv = container::ps_argv(engine);
+    let rows = match std::process::Command::new(&argv[0]).args(&argv[1..]).output() {
+        Ok(out) if out.status.success() => {
+            container::parse_ps(&String::from_utf8_lossy(&out.stdout))
+        }
+        _ => Vec::new(),
+    };
+    (true, rows)
+}
+
+pub struct AttachPickerView {
     available: bool,
-    profiles: Vec<container::Profile>,
+    running: Vec<container::Running>,
     input: Entity<TextInput>,
     focus: FocusHandle,
     _submit: Subscription,
 }
 
-impl OsPickerView {
+impl AttachPickerView {
     fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let (opts, _) = config::load();
-        let available = container::Engine::resolve(opts.container_engine.as_deref()).is_some();
-        let (profiles, _) = container::profiles(&opts.container);
+        let (available, running) = running_containers();
 
         let input =
-            cx.new(|cx| TextInput::new(cx).placeholder("or type an image, e.g. debian:bookworm"));
+            cx.new(|cx| TextInput::new(cx).placeholder("or type a container name or id"));
         let focus = cx.focus_handle();
 
         // Focus the field after the first paint. Focusing here during
@@ -113,11 +136,11 @@ impl OsPickerView {
         window.on_next_frame(move |window, cx| window.focus(&input_focus, cx));
 
         let submit = {
-            let profiles = profiles.clone();
+            let running = running.clone();
             window.subscribe(&input, cx, move |_input, event, window, app| {
                 if let TextInputEvent::Submit(text) = event {
-                    if let Some(p) = resolve(text.trim(), &profiles) {
-                        launch(app, p, window);
+                    if let Some(r) = resolve(text, &running) {
+                        attach(app, r, window);
                     }
                 }
             })
@@ -125,7 +148,7 @@ impl OsPickerView {
 
         Self {
             available,
-            profiles,
+            running,
             input,
             focus,
             _submit: submit,
@@ -139,7 +162,7 @@ impl OsPickerView {
     }
 }
 
-impl Render for OsPickerView {
+impl Render for AttachPickerView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         // Pull colors from the same guise theme the embedded TextInput uses, so
         // the field and the rest of the dialog track one palette.
@@ -167,7 +190,7 @@ impl Render for OsPickerView {
                 div()
                     .text_size(px(15.0))
                     .font_weight(FontWeight::BOLD)
-                    .child("OS Tabs"),
+                    .child("Attach to Container"),
             );
 
         if !self.available {
@@ -181,43 +204,64 @@ impl Render for OsPickerView {
         }
 
         let mut list = div()
-            .id("os-list")
+            .id("attach-list")
             .flex_1()
             .min_h(px(0.0))
             .overflow_y_scroll()
             .flex()
             .flex_col()
             .gap(px(5.0));
-        for (i, p) in self.profiles.iter().enumerate() {
-            let profile = p.clone();
+        if self.running.is_empty() {
             list = list.child(
                 div()
-                    .id(("os-row", i))
-                    .flex()
-                    .items_center()
-                    .px(px(12.0))
-                    .py(px(9.0))
-                    .rounded(px(7.0))
-                    .bg(surface)
-                    .border_1()
-                    .border_color(border)
-                    .hover(move |s| s.border_color(text))
                     .text_size(px(13.0))
-                    .on_click(move |_ev: &ClickEvent, window, app| {
-                        launch(app, profile.clone(), window);
-                    })
-                    .child(format!("{}  \u{00b7}  {}", p.label, p.image)),
+                    .text_color(dim)
+                    .child("No running containers. Start one, or type a name below."),
             );
         }
+        for (i, r) in self.running.iter().enumerate() {
+            let running = r.clone();
+            let name = if r.name.is_empty() { r.id.clone() } else { r.name.clone() };
+            let mut row = div()
+                .id(("attach-row", i))
+                .flex()
+                .items_center()
+                .gap(px(8.0))
+                .px(px(12.0))
+                .py(px(9.0))
+                .rounded(px(7.0))
+                .bg(surface)
+                .border_1()
+                .border_color(border)
+                .hover(move |s| s.border_color(text))
+                .text_size(px(13.0))
+                .on_click(move |_ev: &ClickEvent, window, app| {
+                    attach(app, running.clone(), window);
+                })
+                .child(
+                    div()
+                        .flex_1()
+                        .child(format!("{name}  \u{00b7}  {}", r.image)),
+                );
+            if !r.status.is_empty() {
+                row = row.child(
+                    div()
+                        .text_size(px(11.0))
+                        .text_color(dim)
+                        .child(r.status.clone()),
+                );
+            }
+            list = list.child(row);
+        }
 
-        root.child(div().text_size(px(11.0)).text_color(dim).child("RUN FRESH"))
+        root.child(div().text_size(px(11.0)).text_color(dim).child("RUNNING"))
             .child(list)
             .child(self.input.clone())
             .child(
                 div()
                     .text_size(px(11.0))
                     .text_color(dim)
-                    .child("Click an image or press Return \u{2022} Esc to cancel"),
+                    .child("Click a container or press Return \u{2022} Esc to cancel"),
             )
             .into_any_element()
     }

@@ -302,7 +302,8 @@ impl WorkspaceView {
             vec![
                 self.pick(a, "New Window", Action::NewWindow),
                 self.pick(a, "New Tab", Action::NewTab),
-                self.pick(a, "New OS Tab\u{2026}", Action::NewContainerTab),
+                self.pick(a, "OS Tabs\u{2026}", Action::NewContainerTab),
+                self.pick(a, "Attach to Container\u{2026}", Action::AttachContainer),
                 Some(MenuItem::separator()),
                 self.pick(a, "Notes", Action::Notes),
                 Some(MenuItem::separator()),
